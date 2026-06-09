@@ -10,9 +10,11 @@ the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
 
 ## Hard constraints
 
-- **Stdlib only.** No third-party runtime or test dependencies. Tests are stdlib
-  `unittest`. epubcheck is an external CLI dependency, not a Python one. If something
-  seems to need a Python package (e.g. lxml for the Phase 2 long tail), stop and ask.
+- **Stdlib-first.** The core (transforms, archive rewrite, gate, library replace) has
+  no third-party runtime deps and stdlib `unittest` tests. The one approved exception is
+  **html5lib**, used only by the opt-in `--reserialize` structural repair and imported
+  lazily (so every other mode runs without it). epubcheck is an external CLI dependency,
+  not a Python one. Before adding any further Python package, stop and ask.
 - **Semantics-preserving transforms only.** Every fix must render identically to the
   author's intent (self-close void, numeric entities, escaped `&`). Never add, remove,
   or reorder visible content. If a fix cannot be made deterministically safe, it does

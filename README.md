@@ -16,7 +16,12 @@ Bindery makes intentionally-broken markup well-formed again. It does not rewrite
 - **NCX-001**: `toc.ncx` `dtb:uid` is synced to the OPF unique identifier.
 - **mimetype** is rewritten first and stored, fixing the common ordering defect.
 
-Anything deeper (genuinely mangled structure, corrupted tag names, embedded VML/SVG) is out of scope and is reported for manual repair, never guessed at.
+Two opt-in fixes go further:
+
+- **`--fix-ids`**: rewrite manifest item ids that are not valid XML names (start with a digit, contain a colon) and update their spine references. Touches the OPF, so it is off by default; the dc: metadata is never altered.
+- **`--reserialize`**: rebuild content documents that are still malformed by re-parsing them with html5lib and re-emitting XHTML, closing unclosed `<p>`/`<div>`/`<span>`/`<blockquote>` that the regex transforms cannot. Runs only on documents that are not already well-formed, so good files are untouched.
+
+Office VML and broken inline SVG can survive even `--reserialize` and are left for manual repair.
 
 ## The safety contract
 
@@ -29,12 +34,14 @@ Introducing a net-new fatal is always rejected. Originals are never modified exc
 
 ## Install
 
-Stdlib only, Python 3.14+, plus epubcheck on `PATH` for the gate.
+Python 3.14+, plus epubcheck on `PATH` for the gate. The core is stdlib-only; the one
+dependency, `html5lib`, is needed only for `--reserialize` and is imported lazily.
 
 ```sh
 uv tool install /path/to/Bindery
 # or from a checkout:
-PYTHONPATH=src python3 -m bindery --help
+PYTHONPATH=src python3 -m bindery --help          # all modes except --reserialize
+PYTHONPATH=src uv run --with html5lib python3 -m bindery --help   # incl. --reserialize
 ```
 
 ## Usage

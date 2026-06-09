@@ -30,11 +30,15 @@ class Outcome:
 
 
 def process_book(
-    epub: Path, workdir: Path, validate: bool, fix_ids: bool = False
+    epub: Path,
+    workdir: Path,
+    validate: bool,
+    fix_ids: bool = False,
+    reserialize: bool = False,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable."""
     repaired = workdir / "repaired.epub"
-    report = repair_epub(epub, repaired, fix_ids=fix_ids)
+    report = repair_epub(epub, repaired, fix_ids=fix_ids, reserialize=reserialize)
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
 
@@ -123,7 +127,9 @@ def run_library(args) -> int:
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         for epub in candidates:
-            o = process_book(epub, work, validate, fix_ids=args.fix_ids)
+            o = process_book(
+                epub, work, validate, fix_ids=args.fix_ids, reserialize=args.reserialize
+            )
             rel = epub.relative_to(root)
             if o.status == "nochange":
                 nochange += 1
@@ -202,7 +208,11 @@ def run_repair(args) -> int:
 
     with tempfile.TemporaryDirectory() as td:
         o = process_book(
-            src, Path(td), validate=not args.no_validate, fix_ids=args.fix_ids
+            src,
+            Path(td),
+            validate=not args.no_validate,
+            fix_ids=args.fix_ids,
+            reserialize=args.reserialize,
         )
         if o.status == "nochange":
             print("no applicable fixes; nothing written.")
@@ -233,6 +243,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--fix-ids",
         action="store_true",
         help="also rewrite invalid manifest ids in the OPF (RSC-005)",
+    )
+    r.add_argument(
+        "--reserialize",
+        action="store_true",
+        help="rebuild still-malformed documents via html5lib (closes unclosed elements)",
     )
     r.set_defaults(func=run_repair)
 
@@ -265,6 +280,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--fix-ids",
         action="store_true",
         help="also rewrite invalid manifest ids in the OPF (RSC-005)",
+    )
+    lib.add_argument(
+        "--reserialize",
+        action="store_true",
+        help="rebuild still-malformed documents via html5lib (closes unclosed elements)",
     )
     lib.add_argument(
         "--no-validate", action="store_true", help="skip the epubcheck gate"

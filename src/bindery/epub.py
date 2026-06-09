@@ -14,6 +14,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .reserialize import reserialize_if_broken
 from .transforms import HTML_TRANSFORMS, XML_TRANSFORMS, apply_transforms
 
 CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")
@@ -135,11 +136,15 @@ def ncx_uid_mismatch(src: Path) -> bool:
         return False
 
 
-def repair_epub(src: Path, dst: Path, *, fix_ids: bool = False) -> RepairReport:
+def repair_epub(
+    src: Path, dst: Path, *, fix_ids: bool = False, reserialize: bool = False
+) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
     With `fix_ids`, also rewrite invalid manifest ids in the OPF (off by default, since
     it touches the OPF; the dc: metadata is never altered, only item ids and their refs).
+    With `reserialize`, rebuild any content document that is still not well-formed via
+    html5lib (closes unclosed non-void elements); good documents are left untouched.
     """
     report = RepairReport()
 
@@ -182,6 +187,10 @@ def repair_epub(src: Path, dst: Path, *, fix_ids: bool = False) -> RepairReport:
             elif low.endswith(CONTENT_SUFFIXES):
                 text = data.decode("utf-8", "replace")
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
+                if reserialize:
+                    text, rn = reserialize_if_broken(text)
+                    if rn:
+                        counts["reserialized"] = counts.get("reserialized", 0) + rn
                 if counts:
                     report.add(counts)
                     report.files_changed += 1

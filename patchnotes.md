@@ -1,5 +1,20 @@
 # Patch notes
 
+## v0.3.0 (2026-06-09)
+
+- **New `--reserialize` (structural repair).** Rebuilds content documents that are still
+  not well-formed by re-parsing them with html5lib (lenient HTML5 recovery, like a
+  browser) and re-emitting XHTML. This closes unclosed non-void elements (`<p>`, `<div>`,
+  `<span>`, `<blockquote>`, `<body>`) that the regex transforms cannot, and even recovers
+  some corrupted tag names. It runs only on documents that are not already well-formed,
+  so good files are left byte-for-byte unchanged, and only when opted in.
+- **New dependency: html5lib** (for `--reserialize` only). Imported lazily; every other
+  mode runs with no third-party dependency. This is the one approved exception to the
+  stdlib-first design.
+- Verified on the 12 markup-fatal library books: `--reserialize --fix-ids` clears 10 of
+  12 to zero fatals (content preserved; the 2 holdouts are Office-VML and broken-SVG
+  foreign content). All gate-accepted.
+
 ## v0.2.0 (2026-06-09)
 
 - **Hardened `self_close_void`.** The matcher now requires a word boundary after the

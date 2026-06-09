@@ -24,10 +24,12 @@
       the `<col`-in-`<colgroup>` bug that introduced fatals on 19 books.
 - [x] **Digit-led / colon id fix (RSC-005)** (v0.2.0): `--fix-ids` renames invalid
       manifest ids and updates their spine references. Off by default (OPF-touching).
-- [ ] **Unclosed non-void elements** (`<p>`, `<span>`, `<div>`, `<blockquote>`, `<body>`):
-      the remaining markup-fatal class. Needs a forgiving HTML reserializer. Dependency
-      decision pending (lxml / html5lib vs a conservative stdlib html.parser inserter).
-      Note: every affected book already reads fine in lenient readers, so this is polish.
+- [x] **Unclosed non-void elements** (`<p>`, `<span>`, `<div>`, `<blockquote>`, `<body>`)
+      (v0.3.0): `--reserialize` rebuilds malformed docs via html5lib. Clears 10 of the 12
+      markup-fatal library books to zero fatals.
+- [ ] **Foreign-content fatals**: Office VML (`v:shapes`) and broken inline SVG (`<circle>`)
+      survive even reserialize (the 2 remaining markup-fatal books). Would need targeted
+      stripping of unbound-namespace attributes / malformed SVG. Low value (2 books).
 - [ ] Report-only JSON output, and a `--manual-list` export for the partial/nochange set
 - [ ] Re-audit integration: run an epubcheck sweep and feed results straight into
       candidate selection without a separate CSV step
