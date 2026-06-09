@@ -19,6 +19,50 @@ from .transforms import HTML_TRANSFORMS, XML_TRANSFORMS, apply_transforms
 CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")
 
 _UID_ATTR_RE = re.compile(r'unique-identifier="([^"]+)"')
+_ITEM_ID_RE = re.compile(r'(<item\b[^>]*?\bid=")([^"]*)(")', re.IGNORECASE)
+
+
+def _is_invalid_ncname(s: str) -> bool:
+    """True if `s` cannot be an XML id (NCName): empty, leading non-letter/underscore,
+    or containing a colon. This is what epubcheck flags as RSC-005 'must be an XML name'."""
+    if not s:
+        return True
+    if ":" in s:
+        return True
+    return not (s[0].isalpha() or s[0] == "_")
+
+
+def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
+    """Rename manifest item ids that are not valid XML names (e.g. start with a digit)
+    and update every reference to them (spine idref, spine toc). Returns (text, count).
+
+    Calibre-converted books often carry manifest ids copied from random filenames that
+    start with a digit; epubcheck rejects them. The href/filenames are untouched.
+    """
+    existing = {m.group(2) for m in _ITEM_ID_RE.finditer(opf_text)}
+    rename: dict[str, str] = {}
+    for old in existing:
+        if not _is_invalid_ncname(old):
+            continue
+        new = "id_" + old.replace(":", "_")
+        while new in existing or new in rename.values():
+            new = "_" + new
+        rename[old] = new
+    if not rename:
+        return opf_text, 0
+
+    def repl_attr(m: re.Match) -> str:
+        return m.group(1) + rename.get(m.group(2), m.group(2)) + m.group(3)
+
+    out = _ITEM_ID_RE.sub(repl_attr, opf_text)
+    # update the references: spine <itemref idref="..."> and <spine toc="...">
+    out = re.sub(r'(\bidref=")([^"]*)(")', repl_attr, out)
+    out = re.sub(
+        r'(<spine\b[^>]*?\btoc=")([^"]*)(")', repl_attr, out, flags=re.IGNORECASE
+    )
+    return out, len(rename)
+
+
 _DTB_UID_RE = re.compile(
     r'(<meta\b[^>]*\bname="dtb:uid"[^>]*\bcontent=")([^"]*)(")', re.IGNORECASE
 )
@@ -91,8 +135,12 @@ def ncx_uid_mismatch(src: Path) -> bool:
         return False
 
 
-def repair_epub(src: Path, dst: Path) -> RepairReport:
-    """Write a repaired copy of `src` to `dst`. Returns a RepairReport."""
+def repair_epub(src: Path, dst: Path, *, fix_ids: bool = False) -> RepairReport:
+    """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
+
+    With `fix_ids`, also rewrite invalid manifest ids in the OPF (off by default, since
+    it touches the OPF; the dc: metadata is never altered, only item ids and their refs).
+    """
     report = RepairReport()
 
     with zipfile.ZipFile(src) as z:
@@ -122,6 +170,13 @@ def repair_epub(src: Path, dst: Path) -> RepairReport:
                         report.ncx_uid_synced = True
                 if counts or report.ncx_uid_synced:
                     report.add(counts)
+                    report.files_changed += 1
+                data = text.encode("utf-8")
+            elif fix_ids and low.endswith(".opf"):
+                text = data.decode("utf-8", "replace")
+                text, n = fix_manifest_ids(text)
+                if n:
+                    report.add({"fix_manifest_ids": n})
                     report.files_changed += 1
                 data = text.encode("utf-8")
             elif low.endswith(CONTENT_SUFFIXES):

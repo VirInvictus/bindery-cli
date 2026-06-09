@@ -16,7 +16,15 @@ from html.entities import html5, name2codepoint
 VOID = "area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr"
 XML_PREDEFINED = {"amp", "lt", "gt", "quot", "apos"}
 
-_VOID_RE = re.compile(rf"<({VOID})((?:[^>]*[^/])?)>", re.IGNORECASE)
+# Match an open void-element tag. The `\b` after the name is essential: without it
+# `<col` matches inside `<colgroup>` and we self-close a non-void element, orphaning
+# its end-tag (the bug that introduced fatals on real books). Attributes are matched
+# quote-aware so a `>` inside an attribute value does not end the tag early. Group 3
+# captures an existing trailing slash so already-self-closed tags are left untouched.
+_VOID_RE = re.compile(
+    rf"""<({VOID})\b((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
+    re.IGNORECASE | re.DOTALL,
+)
 _NAMED_ENTITY_RE = re.compile(r"&([a-zA-Z][a-zA-Z0-9]*);")
 _BARE_AMP_RE = re.compile(r"&(?![a-zA-Z][a-zA-Z0-9]*;|#[0-9]+;|#[xX][0-9a-fA-F]+;)")
 _HTML_TAG_RE = re.compile(r"<html\b[^>]*>", re.IGNORECASE)
@@ -24,8 +32,21 @@ _XMLNS_ATTR_RE = re.compile(r'\s+xmlns="[^"]*"')
 
 
 def self_close_void(s: str) -> tuple[str, int]:
-    """Self-close void elements that were left open (`<br>` -> `<br/>`)."""
-    return _VOID_RE.subn(r"<\1\2/>", s)
+    """Self-close void elements that were left open (`<br>` -> `<br/>`).
+
+    Already-self-closed tags are returned unchanged and not counted, so the fix is
+    idempotent and reports only real changes.
+    """
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        if m.group(3) == "/":  # already self-closed: leave exactly as-is
+            return m.group(0)
+        count += 1
+        return f"<{m.group(1)}{m.group(2)}/>"
+
+    return _VOID_RE.sub(repl, s), count
 
 
 def _resolve_entity(name: str) -> int | None:

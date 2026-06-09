@@ -20,14 +20,14 @@
       a forgiving HTML parser that re-serializes as XHTML. Evaluate a stdlib
       `html.parser` rebuild vs. asking to add `lxml`.
 - [ ] Strip unbound namespace cruft (`v:shapes` and friends from Office HTML)
-- [ ] **Harden `self_close_void`**: on the real-library NCX run it introduced fatals on
-      19 of 523 books (e.g. *Purr*: 0 fatals to 4), which the gate correctly rejected.
-      The regex is matching a `>` it should not (likely inside an attribute value or a
-      comment/CDATA). Tighten it so those books become fixable instead of rejected.
-- [ ] **Digit-led id fix (RSC-005 "must be an XML name")**: Calibre-converted books carry
-      manifest `id`s that start with a digit (invalid NCName); prefix the `id` and update
-      its spine `idref` in lockstep. OPF-touching, so it needs the same gate and care.
-      Reader-invisible polish; only worth it for a green-er library.
+- [x] **Harden `self_close_void`** (v0.2.0): word-boundary + quote-aware matcher, fixing
+      the `<col`-in-`<colgroup>` bug that introduced fatals on 19 books.
+- [x] **Digit-led / colon id fix (RSC-005)** (v0.2.0): `--fix-ids` renames invalid
+      manifest ids and updates their spine references. Off by default (OPF-touching).
+- [ ] **Unclosed non-void elements** (`<p>`, `<span>`, `<div>`, `<blockquote>`, `<body>`):
+      the remaining markup-fatal class. Needs a forgiving HTML reserializer. Dependency
+      decision pending (lxml / html5lib vs a conservative stdlib html.parser inserter).
+      Note: every affected book already reads fine in lenient readers, so this is polish.
 - [ ] Report-only JSON output, and a `--manual-list` export for the partial/nochange set
 - [ ] Re-audit integration: run an epubcheck sweep and feed results straight into
       candidate selection without a separate CSV step

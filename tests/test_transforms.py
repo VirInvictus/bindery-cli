@@ -38,6 +38,30 @@ class TestVoidElements(unittest.TestCase):
         self.assertEqual(n, 0)
         self.assertEqual(out, "<p>hi</p><div>x</div>")
 
+    def test_void_name_as_prefix_of_other_tag_untouched(self):
+        # Regression: `<col` must not match inside `<colgroup>` (the Purr bug, which
+        # self-closed <colgroup> and orphaned its </colgroup>). Same for meta/source/etc.
+        for frag in (
+            "<colgroup><col/></colgroup>",
+            "<metadata>x</metadata>",
+            "<sourcefile>y</sourcefile>",
+            "<embedded>z</embedded>",
+        ):
+            out, n = self_close_void(frag)
+            self.assertEqual(n, 0, frag)
+            self.assertEqual(out, frag)
+
+    def test_gt_inside_attribute_value(self):
+        # A `>` inside a quoted attribute must not end the tag early.
+        out, n = self_close_void('<img alt="2 > 1" src="x.jpg">')
+        self.assertEqual(n, 1)
+        self.assertEqual(out, '<img alt="2 > 1" src="x.jpg"/>')
+
+    def test_self_closed_with_space_untouched(self):
+        out, n = self_close_void("<br />")
+        self.assertEqual(n, 0)
+        self.assertEqual(out, "<br />")
+
 
 class TestEntities(unittest.TestCase):
     def test_nbsp_deg_eacute_to_numeric(self):

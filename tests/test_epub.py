@@ -6,7 +6,13 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from bindery.epub import ncx_uid_mismatch, opf_unique_id, repair_epub, sync_ncx_uid
+from bindery.epub import (
+    fix_manifest_ids,
+    ncx_uid_mismatch,
+    opf_unique_id,
+    repair_epub,
+    sync_ncx_uid,
+)
 
 OPF = (
     '<?xml version="1.0"?>'
@@ -49,6 +55,40 @@ class TestParts(unittest.TestCase):
         # syncing an already-correct uid is a no-op
         _, changed2 = sync_ncx_uid(out, "urn:uuid:THE-RIGHT-ID")
         self.assertFalse(changed2)
+
+
+class TestManifestIds(unittest.TestCase):
+    def test_digit_led_ids_renamed_with_refs(self):
+        opf = (
+            "<manifest>"
+            '<item id="7cgqkgid" href="a.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="24l5xjpf" href="b.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+            "</manifest>"
+            '<spine toc="ncx">'
+            '<itemref idref="7cgqkgid"/><itemref idref="24l5xjpf"/>'
+            "</spine>"
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 2)
+        self.assertIn('id="id_7cgqkgid"', out)
+        self.assertIn('idref="id_7cgqkgid"', out)
+        self.assertIn('idref="id_24l5xjpf"', out)
+        # valid ids and hrefs untouched
+        self.assertIn('id="ncx"', out)
+        self.assertIn('toc="ncx"', out)
+        self.assertIn('href="a.xhtml"', out)
+
+    def test_valid_ids_untouched(self):
+        opf = '<item id="chapter1" href="c.xhtml" media-type="x"/>'
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_colon_id_renamed(self):
+        out, n = fix_manifest_ids('<item id="a:b" href="x"/><itemref idref="a:b"/>')
+        self.assertEqual(n, 1)
+        self.assertIn('id="id_a_b"', out)
+        self.assertIn('idref="id_a_b"', out)
 
 
 class TestRepairEpub(unittest.TestCase):

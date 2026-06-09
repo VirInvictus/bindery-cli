@@ -29,10 +29,12 @@ class Outcome:
     summary: str
 
 
-def process_book(epub: Path, workdir: Path, validate: bool) -> Outcome:
+def process_book(
+    epub: Path, workdir: Path, validate: bool, fix_ids: bool = False
+) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable."""
     repaired = workdir / "repaired.epub"
-    report = repair_epub(epub, repaired)
+    report = repair_epub(epub, repaired, fix_ids=fix_ids)
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
 
@@ -121,7 +123,7 @@ def run_library(args) -> int:
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         for epub in candidates:
-            o = process_book(epub, work, validate)
+            o = process_book(epub, work, validate, fix_ids=args.fix_ids)
             rel = epub.relative_to(root)
             if o.status == "nochange":
                 nochange += 1
@@ -199,7 +201,9 @@ def run_repair(args) -> int:
         return 1
 
     with tempfile.TemporaryDirectory() as td:
-        o = process_book(src, Path(td), validate=not args.no_validate)
+        o = process_book(
+            src, Path(td), validate=not args.no_validate, fix_ids=args.fix_ids
+        )
         if o.status == "nochange":
             print("no applicable fixes; nothing written.")
             return 0
@@ -225,6 +229,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("path")
     r.add_argument("output", nargs="?")
     r.add_argument("--no-validate", action="store_true", help="skip the epubcheck gate")
+    r.add_argument(
+        "--fix-ids",
+        action="store_true",
+        help="also rewrite invalid manifest ids in the OPF (RSC-005)",
+    )
     r.set_defaults(func=run_repair)
 
     lib = sub.add_parser("library", help="scan/repair a Calibre library tree")
@@ -251,6 +260,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lib.add_argument(
         "--limit", type=int, help="process at most N candidates (for sampling)"
+    )
+    lib.add_argument(
+        "--fix-ids",
+        action="store_true",
+        help="also rewrite invalid manifest ids in the OPF (RSC-005)",
     )
     lib.add_argument(
         "--no-validate", action="store_true", help="skip the epubcheck gate"

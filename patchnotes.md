@@ -1,5 +1,18 @@
 # Patch notes
 
+## v0.2.0 (2026-06-09)
+
+- **Hardened `self_close_void`.** The matcher now requires a word boundary after the
+  element name and is quote-aware, fixing a bug where `<col` matched inside `<colgroup>`
+  (self-closing it and orphaning the end-tag) and where a `>` inside an attribute value
+  ended the tag early. This introduced fatals on 19 books during the library run; the
+  gate rejected them, and they are now repaired cleanly. Already-self-closed tags are
+  left untouched and not counted.
+- **New `--fix-ids` (RSC-005).** Optionally rewrite manifest item ids that are not valid
+  XML names (start with a digit, contain a colon) and update their spine references.
+  Off by default, since it touches the OPF; the dc: metadata is never altered. On a
+  real book this cleared 36 bad ids (794 to 723 errors), gate-accepted.
+
 ## v0.1.0 (2026-06-09)
 
 First release. A focused EPUB repair tool, sibling to oceanstrip, born from auditing a
