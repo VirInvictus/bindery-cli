@@ -1,5 +1,17 @@
 # Patch notes
 
+## v0.4.0 (2026-06-09)
+
+- **New `--strip-bad-attrs`.** Drops attributes that are invalid XML and so make a
+  document unparseable: a name starting with a digit (e.g. a mangled `31=""`) or a
+  namespaced name whose prefix is never declared (e.g. Office VML `v:shapes` with no
+  `xmlns:v`). It is surgical (only the offending attribute is removed) and a no-op on
+  well-formed files, since those cannot contain such attributes. Off by default.
+- This cleared the last 2 markup-fatal library books that survived `--reserialize`:
+  The Selfish Gene (`v:shapes`) and The Rustonomicon (broken SVG `31=""`). Both now
+  validate with zero fatals, open in Calibre, and preserve their full text. With this,
+  the entire 38-book fatal set from the original audit is resolved.
+
 ## v0.3.0 (2026-06-09)
 
 - **New `--reserialize` (structural repair).** Rebuilds content documents that are still

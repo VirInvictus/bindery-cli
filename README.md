@@ -20,8 +20,7 @@ Two opt-in fixes go further:
 
 - **`--fix-ids`**: rewrite manifest item ids that are not valid XML names (start with a digit, contain a colon) and update their spine references. Touches the OPF, so it is off by default; the dc: metadata is never altered.
 - **`--reserialize`**: rebuild content documents that are still malformed by re-parsing them with html5lib and re-emitting XHTML, closing unclosed `<p>`/`<div>`/`<span>`/`<blockquote>` that the regex transforms cannot. Runs only on documents that are not already well-formed, so good files are untouched.
-
-Office VML and broken inline SVG can survive even `--reserialize` and are left for manual repair.
+- **`--strip-bad-attrs`**: drop attributes that are invalid XML (a name starting with a digit, or a namespaced name whose prefix is never declared, like Office VML `v:shapes`). Surgical and a no-op on well-formed files.
 
 ## The safety contract
 

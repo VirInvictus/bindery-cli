@@ -6,13 +6,14 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from bindery.transforms import (
+    HTML_TRANSFORMS,
     apply_transforms,
     drop_duplicate_xmlns,
     escape_bare_amp,
     fix_named_entities,
     self_close_void,
+    strip_invalid_attributes,
     strip_prolog_junk,
-    HTML_TRANSFORMS,
 )
 
 
@@ -116,6 +117,35 @@ class TestPrologAndXmlns(unittest.TestCase):
         out, n = drop_duplicate_xmlns(s)
         self.assertEqual(n, 0)
         self.assertEqual(out, s)
+
+
+class TestStripInvalidAttributes(unittest.TestCase):
+    def test_digit_led_attribute_dropped(self):
+        # the real Rustonomicon case: a mangled `31=""`
+        out, n = strip_invalid_attributes('<circle stroke-dasharray="31" 31="" r="7"/>')
+        self.assertEqual(n, 1)
+        self.assertEqual(out, '<circle stroke-dasharray="31" r="7"/>')
+
+    def test_unbound_prefix_attribute_dropped(self):
+        # the real Selfish Gene case: Office VML v:shapes with no xmlns:v
+        out, n = strip_invalid_attributes(
+            '<img src="a.jpg" v:shapes="Picture_356" class="x"/>'
+        )
+        self.assertEqual(n, 1)
+        self.assertNotIn("v:shapes", out)
+        self.assertIn('src="a.jpg"', out)
+        self.assertIn('class="x"', out)
+
+    def test_declared_prefix_kept(self):
+        s = '<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="c.png"/></svg>'
+        out, n = strip_invalid_attributes(s)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, s)
+
+    def test_well_formed_untouched(self):
+        s = '<p class="a" id="b">text</p><br/>'
+        out, n = strip_invalid_attributes(s)
+        self.assertEqual((out, n), (s, 0))
 
 
 class TestPipeline(unittest.TestCase):

@@ -27,6 +27,10 @@ _VOID_RE = re.compile(
 )
 _NAMED_ENTITY_RE = re.compile(r"&([a-zA-Z][a-zA-Z0-9]*);")
 _BARE_AMP_RE = re.compile(r"&(?![a-zA-Z][a-zA-Z0-9]*;|#[0-9]+;|#[xX][0-9a-fA-F]+;)")
+# A start tag (quote-aware) and an attribute within it, for invalid-attribute stripping.
+_START_TAG_RE = re.compile(r"""<[a-zA-Z][\w:.-]*(?:"[^"]*"|'[^']*'|[^>])*>""")
+_ATTR_RE = re.compile(r"""(\s+)([^\s=/>]+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)""")
+_XMLNS_DECL_RE = re.compile(r"xmlns:([A-Za-z_][\w.-]*)\s*=")
 _HTML_TAG_RE = re.compile(r"<html\b[^>]*>", re.IGNORECASE)
 _XMLNS_ATTR_RE = re.compile(r'\s+xmlns="[^"]*"')
 
@@ -47,6 +51,35 @@ def self_close_void(s: str) -> tuple[str, int]:
         return f"<{m.group(1)}{m.group(2)}/>"
 
     return _VOID_RE.sub(repl, s), count
+
+
+def strip_invalid_attributes(s: str) -> tuple[str, int]:
+    """Remove attributes that make the XML unparseable: a name starting with a digit
+    (e.g. a mangled `31=""`), or a namespaced name whose prefix is not declared anywhere
+    in the document (e.g. Office VML `v:shapes` with no `xmlns:v`).
+
+    A well-formed document has no such attributes by definition, so this is a no-op on
+    good files and only touches already-malformed ones. The fix is surgical: only the
+    offending attribute is dropped, everything else is preserved byte-for-byte.
+    """
+    declared = set(_XMLNS_DECL_RE.findall(s)) | {"xml", "xmlns"}
+    count = 0
+
+    def fix_tag(tag: re.Match) -> str:
+        nonlocal count
+
+        def drop(attr: re.Match) -> str:
+            nonlocal count
+            name = attr.group(2)
+            prefix = name.split(":", 1)[0] if ":" in name else None
+            if name[0].isdigit() or (prefix is not None and prefix not in declared):
+                count += 1
+                return ""
+            return attr.group(0)
+
+        return _ATTR_RE.sub(drop, tag.group(0))
+
+    return _START_TAG_RE.sub(fix_tag, s), count
 
 
 def _resolve_entity(name: str) -> int | None:

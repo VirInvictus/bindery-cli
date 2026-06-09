@@ -27,9 +27,9 @@
 - [x] **Unclosed non-void elements** (`<p>`, `<span>`, `<div>`, `<blockquote>`, `<body>`)
       (v0.3.0): `--reserialize` rebuilds malformed docs via html5lib. Clears 10 of the 12
       markup-fatal library books to zero fatals.
-- [ ] **Foreign-content fatals**: Office VML (`v:shapes`) and broken inline SVG (`<circle>`)
-      survive even reserialize (the 2 remaining markup-fatal books). Would need targeted
-      stripping of unbound-namespace attributes / malformed SVG. Low value (2 books).
+- [x] **Foreign-content fatals** (v0.4.0): `--strip-bad-attrs` drops invalid attributes
+      (digit-led names, unbound namespace prefixes), clearing the Office-VML (`v:shapes`)
+      and broken-SVG (`31=""`) holdouts. The whole audit fatal set is now resolved.
 - [ ] Report-only JSON output, and a `--manual-list` export for the partial/nochange set
 - [ ] Re-audit integration: run an epubcheck sweep and feed results straight into
       candidate selection without a separate CSV step

@@ -35,10 +35,17 @@ def process_book(
     validate: bool,
     fix_ids: bool = False,
     reserialize: bool = False,
+    strip_attrs: bool = False,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable."""
     repaired = workdir / "repaired.epub"
-    report = repair_epub(epub, repaired, fix_ids=fix_ids, reserialize=reserialize)
+    report = repair_epub(
+        epub,
+        repaired,
+        fix_ids=fix_ids,
+        reserialize=reserialize,
+        strip_attrs=strip_attrs,
+    )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
 
@@ -128,7 +135,12 @@ def run_library(args) -> int:
         work = Path(td)
         for epub in candidates:
             o = process_book(
-                epub, work, validate, fix_ids=args.fix_ids, reserialize=args.reserialize
+                epub,
+                work,
+                validate,
+                fix_ids=args.fix_ids,
+                reserialize=args.reserialize,
+                strip_attrs=args.strip_bad_attrs,
             )
             rel = epub.relative_to(root)
             if o.status == "nochange":
@@ -213,6 +225,7 @@ def run_repair(args) -> int:
             validate=not args.no_validate,
             fix_ids=args.fix_ids,
             reserialize=args.reserialize,
+            strip_attrs=args.strip_bad_attrs,
         )
         if o.status == "nochange":
             print("no applicable fixes; nothing written.")
@@ -248,6 +261,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--reserialize",
         action="store_true",
         help="rebuild still-malformed documents via html5lib (closes unclosed elements)",
+    )
+    r.add_argument(
+        "--strip-bad-attrs",
+        action="store_true",
+        help="drop invalid attributes (digit-led names, unbound namespace prefixes)",
     )
     r.set_defaults(func=run_repair)
 
@@ -285,6 +303,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--reserialize",
         action="store_true",
         help="rebuild still-malformed documents via html5lib (closes unclosed elements)",
+    )
+    lib.add_argument(
+        "--strip-bad-attrs",
+        action="store_true",
+        help="drop invalid attributes (digit-led names, unbound namespace prefixes)",
     )
     lib.add_argument(
         "--no-validate", action="store_true", help="skip the epubcheck gate"

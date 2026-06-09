@@ -15,7 +15,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .reserialize import reserialize_if_broken
-from .transforms import HTML_TRANSFORMS, XML_TRANSFORMS, apply_transforms
+from .transforms import (
+    HTML_TRANSFORMS,
+    XML_TRANSFORMS,
+    apply_transforms,
+    strip_invalid_attributes,
+)
 
 CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")
 
@@ -137,12 +142,19 @@ def ncx_uid_mismatch(src: Path) -> bool:
 
 
 def repair_epub(
-    src: Path, dst: Path, *, fix_ids: bool = False, reserialize: bool = False
+    src: Path,
+    dst: Path,
+    *,
+    fix_ids: bool = False,
+    reserialize: bool = False,
+    strip_attrs: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
     With `fix_ids`, also rewrite invalid manifest ids in the OPF (off by default, since
     it touches the OPF; the dc: metadata is never altered, only item ids and their refs).
+    With `strip_attrs`, drop attributes that are invalid XML (digit-led names, unbound
+    namespace prefixes like Office VML `v:shapes`).
     With `reserialize`, rebuild any content document that is still not well-formed via
     html5lib (closes unclosed non-void elements); good documents are left untouched.
     """
@@ -187,6 +199,12 @@ def repair_epub(
             elif low.endswith(CONTENT_SUFFIXES):
                 text = data.decode("utf-8", "replace")
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
+                if strip_attrs:
+                    text, an = strip_invalid_attributes(text)
+                    if an:
+                        counts["stripped_invalid_attrs"] = (
+                            counts.get("stripped_invalid_attrs", 0) + an
+                        )
                 if reserialize:
                     text, rn = reserialize_if_broken(text)
                     if rn:
