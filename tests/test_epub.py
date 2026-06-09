@@ -1,0 +1,88 @@
+"""End-to-end repair on an in-memory EPUB: NCX-001 sync, entity/void fixes in content,
+mimetype repair, and untouched binaries."""
+
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+
+from bindery.epub import ncx_uid_mismatch, opf_unique_id, repair_epub, sync_ncx_uid
+
+OPF = (
+    '<?xml version="1.0"?>'
+    '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+    '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+    '<dc:identifier id="bookid">urn:uuid:THE-RIGHT-ID</dc:identifier>'
+    "</metadata></package>"
+)
+NCX_BAD = (
+    '<?xml version="1.0"?>'
+    '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
+    '<meta name="dtb:uid" content="urn:uuid:THE-WRONG-ID"/>'
+    "</head></ncx>"
+)
+CONTENT = (
+    '<?xml version="1.0"?>'
+    '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+    '<link rel="stylesheet" href="s.css"></head>'
+    "<body><p>caf&eacute;&nbsp;<br>x</p></body></html>"
+)
+
+
+def build(path: Path) -> None:
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("OEBPS/c1.xhtml", CONTENT)
+        z.writestr("OEBPS/toc.ncx", NCX_BAD)
+        z.writestr("OEBPS/content.opf", OPF)
+        z.writestr("OEBPS/img.jpg", b"\xff\xd8\xffBINARY")
+        z.writestr("mimetype", "application/epub+zip")  # wrong place + deflated
+
+
+class TestParts(unittest.TestCase):
+    def test_opf_unique_id(self):
+        self.assertEqual(opf_unique_id(OPF), "urn:uuid:THE-RIGHT-ID")
+
+    def test_sync_ncx_uid(self):
+        out, changed = sync_ncx_uid(NCX_BAD, "urn:uuid:THE-RIGHT-ID")
+        self.assertTrue(changed)
+        self.assertIn('content="urn:uuid:THE-RIGHT-ID"', out)
+        # syncing an already-correct uid is a no-op
+        _, changed2 = sync_ncx_uid(out, "urn:uuid:THE-RIGHT-ID")
+        self.assertFalse(changed2)
+
+
+class TestRepairEpub(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = Path(self.tmp.name) / "in.epub"
+        self.dst = Path(self.tmp.name) / "out.epub"
+        build(self.src)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_detects_ncx_mismatch(self):
+        self.assertTrue(ncx_uid_mismatch(self.src))
+
+    def test_repair_report_and_output(self):
+        report = repair_epub(self.src, self.dst)
+        self.assertTrue(report)
+        self.assertTrue(report.ncx_uid_synced)
+        self.assertIn("fix_named_entities", report.fixes)
+        self.assertIn("self_close_void", report.fixes)
+
+        with zipfile.ZipFile(self.dst) as z:
+            first = z.infolist()[0]
+            self.assertEqual(first.filename, "mimetype")
+            self.assertEqual(first.compress_type, zipfile.ZIP_STORED)
+            self.assertIn("urn:uuid:THE-RIGHT-ID", z.read("OEBPS/toc.ncx").decode())
+            c = z.read("OEBPS/c1.xhtml").decode()
+            self.assertNotIn("&nbsp;", c)
+            self.assertNotIn("&eacute;", c)
+            self.assertEqual(z.read("OEBPS/img.jpg"), b"\xff\xd8\xffBINARY")
+        # the repaired book no longer has the mismatch
+        self.assertFalse(ncx_uid_mismatch(self.dst))
+
+
+if __name__ == "__main__":
+    unittest.main()

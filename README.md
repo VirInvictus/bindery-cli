@@ -1,0 +1,76 @@
+<div align="center">
+  <img src="logo.svg" width="96" height="96" alt="Bindery logo"/>
+  <h1>Bindery</h1>
+  <p>Repair broken EPUBs with safe, deterministic fixes, validated by epubcheck, with optional in-place replacement in a Calibre library.</p>
+</div>
+
+## What it fixes
+
+Bindery makes intentionally-broken markup well-formed again. It does not rewrite or reflow content; it only applies a small set of deterministic, semantics-preserving fixes that real-world EPUBs (especially Calibre conversions) trip over:
+
+- **Unclosed void elements** (`<link>`, `<br>`, `<img>`, ...) get self-closed.
+- **Undeclared named entities** (`&nbsp;`, `&deg;`, `&eacute;`, ...) become numeric character references that every XML parser understands.
+- **Bare `&`** (common in `toc.ncx`) is escaped to `&amp;`.
+- **Junk before the XML prolog** (BOM, stray bytes) is stripped.
+- **Duplicate `xmlns`** on the root `<html>` is collapsed to one.
+- **NCX-001**: `toc.ncx` `dtb:uid` is synced to the OPF unique identifier.
+- **mimetype** is rewritten first and stored, fixing the common ordering defect.
+
+Anything deeper (genuinely mangled structure, corrupted tag names, embedded VML/SVG) is out of scope and is reported for manual repair, never guessed at.
+
+## The safety contract
+
+Every repair is gated by [epubcheck](https://github.com/w3c/epubcheck). The acceptance rule is two-mode, because a fatal parse error makes epubcheck stop reading a file and hides every downstream error:
+
+- If a book **had fatals**, success means **fewer fatals**. The error count may rise as previously-hidden schema warnings become visible once the file parses; that is the book going from "won't open" to "opens with nits," not a regression.
+- If a book had **no fatals**, an error increase is a real regression, so a strict error decrease is required.
+
+Introducing a net-new fatal is always rejected. Originals are never modified except by an explicit, atomic in-place replace (see below), and even then only after the gate accepts the result.
+
+## Install
+
+Stdlib only, Python 3.14+, plus epubcheck on `PATH` for the gate.
+
+```sh
+uv tool install /path/to/Bindery
+# or from a checkout:
+PYTHONPATH=src python3 -m bindery --help
+```
+
+## Usage
+
+Repair one book to a new file (gated; writes only if it is an improvement):
+
+```sh
+bindery repair broken.epub                 # -> "broken (repaired).epub"
+bindery repair broken.epub fixed.epub
+```
+
+Scan a Calibre library and see what would be fixed, writing nothing:
+
+```sh
+bindery library ~/docs/Calibre\ Library --only fatals --audit epub_audit.csv
+```
+
+Apply accepted repairs in place, atomically, with backups:
+
+```sh
+bindery library ~/docs/Calibre\ Library --only fatals --apply --backup ~/bindery-backups
+```
+
+- `--only {fatals,ncx,all}` restricts the candidate set. `ncx` targets NCX-001 mismatches (detected without epubcheck); `fatals` needs `--audit`.
+- `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast.
+- `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file.
+- Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
+
+## Development
+
+```sh
+./run_tests.sh        # stdlib unittest suite
+```
+
+See [spec.md](spec.md) for the full contract and [roadmap.md](roadmap.md) for what is planned.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

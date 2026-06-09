@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Bindery logo">
+  <rect width="128" height="128" rx="24" fill="#181616"/>
+  <!-- book spine / cover being rebound -->
+  <rect x="30" y="26" width="68" height="76" rx="5" fill="none" stroke="#c5c9c5" stroke-width="5"/>
+  <line x1="46" y1="26" x2="46" y2="102" stroke="#c5c9c5" stroke-width="4"/>
+  <!-- binding stitches down the spine -->
+  <g stroke="#8a9a7b" stroke-width="4" stroke-linecap="round">
+    <line x1="38" y1="40" x2="38" y2="50"/>
+    <line x1="38" y1="60" x2="38" y2="70"/>
+    <line x1="38" y1="80" x2="38" y2="90"/>
+  </g>
+  <!-- a torn page line, mended -->
+  <path d="M62 44 l18 8 l-16 10 l18 8 l-16 10" fill="none" stroke="#c4746e" stroke-width="4"
+        stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bindery"
+version = "0.1.0"
+description = "Repair EPUBs (well-formedness fixes), epubcheck-gated, with in-place Calibre library replacement"
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "MIT" }
+authors = [
+  { name = "vrnvctss" },
+]
+dependencies = []
+
+[project.scripts]
+bindery = "bindery.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bindery"]
