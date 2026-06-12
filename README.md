@@ -69,6 +69,12 @@ bindery library ~/docs/Calibre\ Library --only fatals --apply --backup ~/bindery
 - `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
 
+## Companion Scripts
+
+The `scripts/` directory contains standalone utilities that fall outside Bindery's strict well-formedness repair contract, but are useful for EPUB maintenance:
+
+- `find_missing_images.py`: Scans a directory of EPUBs, unpacks them, and cross-references every `<img>` tag against the actual files in the ZIP archive. Lists all books containing tags that point to missing images (a common defect in ripped/converted EPUBs).
+
 ## Development
 
 ```sh
