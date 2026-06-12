@@ -6,7 +6,7 @@
 
 ## What it fixes
 
-Bindery makes intentionally-broken markup well-formed again. It does not rewrite or reflow content; it only applies a small set of deterministic, semantics-preserving fixes that real-world EPUBs (especially Calibre conversions) trip over:
+Bindery makes accidentally broken markup well-formed again. It does not rewrite or reflow content; it only applies a small set of deterministic, semantics-preserving fixes that real-world EPUBs (especially Calibre conversions) trip over:
 
 - **Unclosed void elements** (`<link>`, `<br>`, `<img>`, ...) get self-closed.
 - **Undeclared named entities** (`&nbsp;`, `&deg;`, `&eacute;`, ...) become numeric character references that every XML parser understands.
@@ -16,7 +16,7 @@ Bindery makes intentionally-broken markup well-formed again. It does not rewrite
 - **NCX-001**: `toc.ncx` `dtb:uid` is synced to the OPF unique identifier.
 - **mimetype** is rewritten first and stored, fixing the common ordering defect.
 
-Two opt-in fixes go further:
+Three opt-in fixes go further:
 
 - **`--fix-ids`**: rewrite manifest item ids that are not valid XML names (start with a digit, contain a colon) and update every reference to them (spine, fallback, media-overlay, the EPUB 2 cover meta). Touches the OPF, so it is off by default; the dc: metadata is never altered.
 - **`--reserialize`**: rebuild content documents that are still malformed by re-parsing them with html5lib and re-emitting XHTML, closing unclosed `<p>`/`<div>`/`<span>`/`<blockquote>` that the regex transforms cannot. Runs only on documents that are not already well-formed, so good files are untouched.
@@ -69,11 +69,11 @@ bindery library ~/docs/Calibre\ Library --only fatals --apply --backup ~/bindery
 - `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
 
-## Companion Scripts
+## Companion scripts
 
-The `scripts/` directory contains standalone utilities that fall outside Bindery's strict well-formedness repair contract, but are useful for EPUB maintenance:
+`scripts/` holds standalone, read-only utilities that are useful for EPUB maintenance but fall outside Bindery's repair contract (fixing what they find would be a content change, which Bindery never makes):
 
-- `find_missing_images.py`: Scans a directory of EPUBs, unpacks them, and cross-references every `<img>` tag against the actual files in the ZIP archive. Lists all books containing tags that point to missing images (a common defect in ripped/converted EPUBs).
+- `find_missing_images.py`: scans a library tree and reports every book whose `<img>` tags point at files that do not exist inside the archive (a common defect in converted EPUBs). Reads the archives in place; nothing is unpacked or written. The library path is set at the bottom of the script.
 
 ## Development
 

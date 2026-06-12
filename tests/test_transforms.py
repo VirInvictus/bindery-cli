@@ -32,10 +32,10 @@ class TestVoidElements(unittest.TestCase):
         out, n = self_close_void('<img src="a.jpg"></img>')
         self.assertEqual(n, 2)
         self.assertEqual(out, '<img src="a.jpg"/>')
-        
-        out, n = self_close_void('<br></br>')
+
+        out, n = self_close_void("<br></br>")
         self.assertEqual(n, 2)
-        self.assertEqual(out, '<br/>')
+        self.assertEqual(out, "<br/>")
 
     def test_already_self_closed_untouched(self):
         for frag in ("<br/>", '<img src="a.jpg"/>', '<link href="x"/>'):

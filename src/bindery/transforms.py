@@ -40,7 +40,9 @@ _ATTR_RE = re.compile(r"""(\s+)([^\s=/>]+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)""")
 _XMLNS_DECL_RE = re.compile(r"xmlns:([A-Za-z_][\w.-]*)\s*=")
 _HTML_TAG_RE = re.compile(r"<html\b[^>]*>", re.IGNORECASE)
 _XMLNS_ATTR_RE = re.compile(r'\s+xmlns="[^"]*"')
-_EPUB_PREFIX_ATTR_RE = re.compile(r"""(?:\bepub:)?prefix\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_EPUB_PREFIX_ATTR_RE = re.compile(
+    r"""(?:\bepub:)?prefix\s*=\s*(?:"([^"]*)"|'([^']*)')"""
+)
 _EPUB_PREFIX_VAL_RE = re.compile(r"(?:^|\s)([A-Za-z_][\w.-]*)\s*:\s*\S+")
 
 # CDATA sections and comments hold literal text: a bare `&`, an entity name, or a
@@ -85,12 +87,12 @@ def self_close_void(s: str) -> tuple[str, int]:
         return f"<{m.group(1)}{m.group(2)}/>"
 
     s = _VOID_RE.sub(repl, s)
-    
-    # Strip any remaining end tags for void elements (e.g. </br>) which would 
+
+    # Strip any remaining end tags for void elements (e.g. </br>) which would
     # otherwise cause fatal XML parse errors since we self-closed their start tags.
     s, end_count = _VOID_END_RE.subn("", s)
     count += end_count
-    
+
     return s, count
 
 
