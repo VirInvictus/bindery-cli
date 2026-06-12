@@ -1,5 +1,66 @@
 # Patch notes
 
+## v0.4.2 (2026-06-11)
+
+- **EPUB 3 namespace prefixes are preserved.** `--strip-bad-attrs` no longer drops perfectly valid EPUB 3 prefixed attributes. It now correctly parses `epub:prefix` and `prefix` declarations (e.g. `epub:prefix="math: ..."`) instead of strictly requiring an `xmlns:` declaration to bind a prefix.
+- **Nested orphaned void end tags are swallowed globally.** `self_close_void` now completely strips *all* explicit end tags for void elements globally (like `</br>` and `</img>`) after self-closing the start tag, preventing fatal XML parse errors when tools generate deeply nested orphaned void end tags (e.g., `<br><br></br></br>`).
+
+## v0.4.1 (2026-06-11)
+
+Bugfix and cleanup sweep. No new fixes or flags; several of these close real holes in
+the safety contract.
+
+- **CDATA sections and comments are never rewritten.** The transforms used to escape
+  `&`, convert entities, and self-close `<br>` inside `<![CDATA[...]]>` and
+  `<!-- -->`, where that content is literal and already legal XML; escaping a `&`
+  in CDATA-wrapped CSS/JS changes what renders. All body-text transforms (including
+  `--strip-bad-attrs`) now skip these spans. This is now a spec invariant.
+- **Hyphenated custom elements are no longer mangled.** `-`, `:`, and `.` are valid
+  XML name characters but not word characters, so the v0.2.0 `\b` boundary still let
+  `<col` match inside `<col-group>` and self-close it. The matcher now requires
+  whitespace, `/`, or `>` after the element name.
+- **The OPF is located via `META-INF/container.xml`** instead of "first `.opf` in
+  archive order", so a stray duplicate OPF can no longer win and sync the wrong uid
+  into the NCX. Falls back to the old behavior when container.xml is absent.
+- **`--fix-ids` updates all references, not just the spine.** `fallback=`,
+  `media-overlay=`, and the EPUB 2 `<meta name="cover" content="...">` also point at
+  manifest ids; leaving them stale orphaned fallback chains and broke Calibre's cover
+  detection when the cover item's id was renamed.
+- **Duplicate entry names survive the rewrite.** `ZipFile.read(name)` returns the
+  first entry's bytes for every same-named duplicate (seen in broken EPUBs); entries
+  are now read individually.
+- **Multi-codepoint entities are converted** (`&NotEqualTilde;` and friends become
+  one numeric reference per codepoint) instead of being skipped.
+- **`atomic_replace` cleans up after itself and syncs the directory.** A failure
+  mid-replace no longer leaves a `.bindery.tmp` in the library, and the rename is
+  fsynced so a crash right after a replace cannot lose it.
+- `--limit 0` now means "process nothing" instead of being ignored; Ctrl-C during a
+  long run exits cleanly (130) instead of dumping a traceback.
+
+- **`repair` now writes the exact bytes the gate accepted.** It used to produce the
+  final output with a second repair pass that dropped `--fix-ids`, `--reserialize`,
+  and `--strip-bad-attrs`, so the written file could be missing the very repairs
+  epubcheck had just validated. The gated temp file is now copied to the output.
+- **An epubcheck failure no longer bypasses the gate.** When epubcheck crashed, timed
+  out, or produced unparsable output mid-run, the book was classified `unvalidated`
+  and `library --apply` replaced it as if it had passed. Such books are now a distinct
+  `error` outcome: reported, counted, and never applied or written. Only an explicit
+  `--no-validate` skips the gate.
+- **Unchanged archive entries are copied byte-for-byte.** Eligible entries were
+  decoded with `utf-8/replace` and re-encoded even when no transform fired, which
+  would silently swap non-UTF-8 bytes for U+FFFD in otherwise untouched files.
+- **`library --only fatals` without `--audit` is an error.** It used to silently
+  treat every book in the library as a candidate; the README always said `fatals`
+  needs the audit CSV, and now the CLI enforces it.
+- Audit CSVs without a header row no longer lose their first book; blank rows are
+  skipped instead of crashing the load.
+- NCX `dtb:uid` replacement inserts the uid literally (a uid containing `\1` was
+  previously parsed as a regex replacement template), and per-file change accounting
+  no longer leaks across multiple `.ncx` entries in one archive.
+- Cleanup: shared CLI flags are defined once for both subcommands, the transform
+  pipeline is properly typed, and the spec/README document the new `error` outcome
+  and the byte-preservation guarantee.
+
 ## v0.4.0 (2026-06-09)
 
 - **New `--strip-bad-attrs`.** Drops attributes that are invalid XML and so make a

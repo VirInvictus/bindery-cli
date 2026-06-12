@@ -3,6 +3,7 @@ mimetype repair, and untouched binaries."""
 
 import tempfile
 import unittest
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -56,6 +57,14 @@ class TestParts(unittest.TestCase):
         _, changed2 = sync_ncx_uid(out, "urn:uuid:THE-RIGHT-ID")
         self.assertFalse(changed2)
 
+    def test_sync_ncx_uid_with_backslash(self):
+        # A uid containing backslashes must be inserted literally, not parsed as a
+        # regex replacement template (where \1 would be a group reference).
+        uid = r"urn:weird\1id"
+        out, changed = sync_ncx_uid(NCX_BAD, uid)
+        self.assertTrue(changed)
+        self.assertIn(f'content="{uid}"', out)
+
 
 class TestManifestIds(unittest.TestCase):
     def test_digit_led_ids_renamed_with_refs(self):
@@ -90,6 +99,22 @@ class TestManifestIds(unittest.TestCase):
         self.assertIn('id="id_a_b"', out)
         self.assertIn('idref="id_a_b"', out)
 
+    def test_fallback_and_cover_meta_references_updated(self):
+        # fallback= and the EPUB 2 cover meta point at manifest ids too; leaving them
+        # stale would orphan the fallback chain and break Calibre's cover detection.
+        opf = (
+            '<metadata><meta name="cover" content="31img"/></metadata>'
+            "<manifest>"
+            '<item id="31img" href="c.jpg" media-type="image/jpeg"/>'
+            '<item id="2x" href="a.xhtml" fallback="31img" media-type="x"/>'
+            "</manifest>"
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 2)
+        self.assertIn('id="id_31img"', out)
+        self.assertIn('fallback="id_31img"', out)
+        self.assertIn('<meta name="cover" content="id_31img"/>', out)
+
 
 class TestRepairEpub(unittest.TestCase):
     def setUp(self):
@@ -122,6 +147,57 @@ class TestRepairEpub(unittest.TestCase):
             self.assertEqual(z.read("OEBPS/img.jpg"), b"\xff\xd8\xffBINARY")
         # the repaired book no longer has the mismatch
         self.assertFalse(ncx_uid_mismatch(self.dst))
+
+    def test_opf_located_via_container_xml(self):
+        # A stray decoy .opf earlier in archive order must not win over the rootfile
+        # declared in META-INF/container.xml: the wrong uid would be synced.
+        src = Path(self.tmp.name) / "decoy.epub"
+        decoy_opf = OPF.replace("urn:uuid:THE-RIGHT-ID", "urn:uuid:DECOY-ID")
+        with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("AAA/decoy.opf", decoy_opf)
+            z.writestr(
+                "META-INF/container.xml",
+                '<container><rootfiles><rootfile full-path="OEBPS/content.opf" '
+                'media-type="application/oebps-package+xml"/></rootfiles></container>',
+            )
+            z.writestr("OEBPS/content.opf", OPF)
+            z.writestr("OEBPS/toc.ncx", NCX_BAD)
+        self.assertTrue(ncx_uid_mismatch(src))
+        repair_epub(src, self.dst)
+        with zipfile.ZipFile(self.dst) as z:
+            self.assertIn("urn:uuid:THE-RIGHT-ID", z.read("OEBPS/toc.ncx").decode())
+
+    def test_duplicate_entry_names_preserved(self):
+        # zin.read(name) returns the first entry's bytes for every duplicate; each
+        # entry must be read individually so no data is silently swapped.
+        src = Path(self.tmp.name) / "dupes.epub"
+        with zipfile.ZipFile(src, "w") as z, warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/a.txt", b"first")
+            z.writestr("OEBPS/a.txt", b"second")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            repair_epub(src, self.dst)
+        with zipfile.ZipFile(self.dst) as z:
+            datas = [z.read(i) for i in z.infolist() if i.filename == "OEBPS/a.txt"]
+        self.assertEqual(datas, [b"first", b"second"])
+
+    def test_unchanged_entry_bytes_preserved(self):
+        # A clean document that is not valid UTF-8 must be copied verbatim: the old
+        # unconditional decode("utf-8", "replace") + re-encode swapped its non-UTF-8
+        # bytes for U+FFFD even when no transform fired.
+        raw = (
+            '<?xml version="1.0" encoding="iso-8859-1"?>\n'
+            '<html xmlns="http://www.w3.org/1999/xhtml">'
+            "<body><p>caf\xe9</p></body></html>"
+        ).encode("latin-1")
+        with zipfile.ZipFile(self.src, "a", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("OEBPS/clean.xhtml", raw)
+        repair_epub(self.src, self.dst)
+        with zipfile.ZipFile(self.dst) as z:
+            self.assertEqual(z.read("OEBPS/clean.xhtml"), raw)
 
 
 if __name__ == "__main__":

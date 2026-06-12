@@ -28,6 +28,15 @@ class TestVoidElements(unittest.TestCase):
             self.assertEqual(n, 1, frag)
             self.assertTrue(out.endswith("/>"), out)
 
+    def test_orphaned_end_tag_swallowed(self):
+        out, n = self_close_void('<img src="a.jpg"></img>')
+        self.assertEqual(n, 2)
+        self.assertEqual(out, '<img src="a.jpg"/>')
+        
+        out, n = self_close_void('<br></br>')
+        self.assertEqual(n, 2)
+        self.assertEqual(out, '<br/>')
+
     def test_already_self_closed_untouched(self):
         for frag in ("<br/>", '<img src="a.jpg"/>', '<link href="x"/>'):
             out, n = self_close_void(frag)
@@ -63,6 +72,18 @@ class TestVoidElements(unittest.TestCase):
         self.assertEqual(n, 0)
         self.assertEqual(out, "<br />")
 
+    def test_hyphenated_custom_element_untouched(self):
+        # `-`, `:`, `.` are XML name characters but not \w, so the old `\b` boundary
+        # still matched `<col` inside `<col-group>` and self-closed it.
+        for frag in (
+            "<col-group><p>a</p></col-group>",
+            "<source-list>s</source-list>",
+            "<img.caption>t</img.caption>",
+        ):
+            out, n = self_close_void(frag)
+            self.assertEqual(n, 0, frag)
+            self.assertEqual(out, frag)
+
 
 class TestEntities(unittest.TestCase):
     def test_nbsp_deg_eacute_to_numeric(self):
@@ -79,6 +100,12 @@ class TestEntities(unittest.TestCase):
         out, n = fix_named_entities("&notarealentity;")
         self.assertEqual(n, 0)
         self.assertEqual(out, "&notarealentity;")
+
+    def test_multi_codepoint_entity_expanded(self):
+        # &NotEqualTilde; is U+2242 U+0338: one reference per codepoint, same glyph.
+        out, n = fix_named_entities("a&NotEqualTilde;b")
+        self.assertEqual(n, 1)
+        self.assertEqual(out, "a&#8770;&#824;b")
 
 
 class TestBareAmp(unittest.TestCase):
@@ -146,6 +173,38 @@ class TestStripInvalidAttributes(unittest.TestCase):
         s = '<p class="a" id="b">text</p><br/>'
         out, n = strip_invalid_attributes(s)
         self.assertEqual((out, n), (s, 0))
+
+    def test_epub3_prefix_kept(self):
+        s = '<html xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="math: http://www.w3.org/1998/Math/MathML z3998: http://www.daisy.org/"><body z3998:role="section"><math:math display="block"/></body></html>'
+        out, n = strip_invalid_attributes(s)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, s)
+
+
+class TestProtectedSpans(unittest.TestCase):
+    # Inside CDATA and comments a bare `&`, an entity name, or a `<br>` is literal,
+    # legal content; rewriting it would change what renders.
+
+    def test_cdata_left_alone(self):
+        cdata = '<script><![CDATA[ if (a & b) say("<br>&nbsp;") ]]></script>'
+        s = f"<p>Salt & Pepper</p>{cdata}"
+        out, _ = apply_transforms(s, HTML_TRANSFORMS)
+        self.assertIn("<p>Salt &amp; Pepper</p>", out)  # outside: still fixed
+        self.assertIn(cdata, out)  # inside: byte-for-byte
+
+    def test_comment_left_alone(self):
+        comment = "<!-- legal & comment with <hr> and &nbsp; -->"
+        s = f"{comment}<p>x<br></p>"
+        out, _ = apply_transforms(s, HTML_TRANSFORMS)
+        self.assertIn(comment, out)
+        self.assertIn("<br/>", out)
+
+    def test_invalid_attrs_in_comment_kept(self):
+        s = '<!-- <img v:shapes="x"> --><img v:shapes="y" src="a.jpg"/>'
+        out, n = strip_invalid_attributes(s)
+        self.assertEqual(n, 1)
+        self.assertIn('<!-- <img v:shapes="x"> -->', out)
+        self.assertNotIn('v:shapes="y"', out)
 
 
 class TestPipeline(unittest.TestCase):

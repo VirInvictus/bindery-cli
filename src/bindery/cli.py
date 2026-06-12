@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ from .validate import (
 @dataclass
 class Outcome:
     epub: Path
-    status: str  # accept | reject | nochange | equal | unvalidated
+    status: str  # accept | partial | reject | nochange | equal | unvalidated | error
     before: CheckResult | None
     after: CheckResult | None
     summary: str
@@ -58,30 +59,30 @@ def process_book(
 
     before, after = run_epubcheck(epub), run_epubcheck(repaired)
     if before is None or after is None:
-        return Outcome(
-            epub, "unvalidated", before, after, summary + " (epubcheck failed)"
-        )
+        # Validation was requested but the oracle failed (crash, timeout, unparsable
+        # output). This is "error", not "unvalidated": the gate did not accept the
+        # repair, so it must never be applied. Only --no-validate skips the gate.
+        return Outcome(epub, "error", before, after, summary + " (epubcheck failed)")
     verdict = gate(before, after)
     if verdict == "reject":
         summary += " (REGRESSION)"
     elif verdict == "noop":
         summary += " (no measurable gain)"
-    status = {
-        "accept": "accept",
-        "partial": "partial",
-        "reject": "reject",
-        "noop": "equal",
-    }[verdict]
+    status = "equal" if verdict == "noop" else verdict
     return Outcome(epub, status, before, after, summary)
 
 
 def _load_audit(path: Path) -> dict[str, tuple[int, int, int]]:
     out: dict[str, tuple[int, int, int]] = {}
     with path.open() as fh:
-        r = csv.reader(fh)
-        next(r, None)
-        for f, e, w, p in r:
-            out[p] = (int(f), int(e), int(w))
+        for row in csv.reader(fh):
+            if len(row) != 4:
+                continue
+            f, e, w, p = row
+            try:
+                out[p] = (int(f), int(e), int(w))
+            except ValueError:  # the header row, if present
+                continue
     return out
 
 
@@ -107,6 +108,11 @@ def run_library(args) -> int:
     if not root.is_dir():
         print(f"error: not a directory: {root}", file=sys.stderr)
         return 1
+    if args.only == "fatals" and not args.audit:
+        # Without an audit CSV there is no fatal-count data, and silently scanning
+        # every book is not what --only fatals promised.
+        print("error: --only fatals needs --audit CSV", file=sys.stderr)
+        return 1
 
     validate = not args.no_validate
     if validate and not epubcheck_available():
@@ -119,7 +125,7 @@ def run_library(args) -> int:
     audit = _load_audit(Path(args.audit).expanduser()) if args.audit else None
     backup_dir = Path(args.backup).expanduser() if args.backup else None
     candidates = list(_select(iter_epubs(root), args.only, audit))
-    if args.limit:
+    if args.limit is not None:
         candidates = candidates[: args.limit]
 
     mode = "APPLY" if args.apply else "DRY-RUN"
@@ -129,6 +135,7 @@ def run_library(args) -> int:
     )
 
     accepted = applied = rejected = equal = nochange = unvalidated = partials = 0
+    errors = 0
     still_fatal = []
 
     with tempfile.TemporaryDirectory() as td:
@@ -154,6 +161,10 @@ def run_library(args) -> int:
                 continue
             if o.status == "equal":
                 equal += 1
+                continue
+            if o.status == "error":
+                errors += 1
+                print(f"  ERROR   {rel}\n            {o.summary}; not applied")
                 continue
             if o.status == "partial":
                 # Fewer fatals but not zero: a real improvement, but the book still will
@@ -192,6 +203,7 @@ def run_library(args) -> int:
     print(f"no change:       {nochange}")
     print(f"equal (skipped): {equal}")
     print(f"unvalidated:     {unvalidated}")
+    print(f"epubcheck errors:{errors}")
     print(f"REJECTED:        {rejected}")
     if still_fatal:
         print(f"\nimproved but STILL FATAL ({len(still_fatal)}) -- manual follow-up:")
@@ -219,9 +231,10 @@ def run_repair(args) -> int:
         return 1
 
     with tempfile.TemporaryDirectory() as td:
+        work = Path(td)
         o = process_book(
             src,
-            Path(td),
+            work,
             validate=not args.no_validate,
             fix_ids=args.fix_ids,
             reserialize=args.reserialize,
@@ -235,10 +248,39 @@ def run_repair(args) -> int:
                 f"repair REJECTED (regression): {o.before} -> {o.after}; nothing written."
             )
             return 1
-        repair_epub(src, dst)
+        if o.status == "error":
+            print(
+                "epubcheck failed; nothing written (pass --no-validate to skip the gate).",
+                file=sys.stderr,
+            )
+            return 1
+        # Copy the exact bytes the gate accepted. Re-repairing src here would silently
+        # drop the opt-in flags (--fix-ids, --reserialize, --strip-bad-attrs) and write
+        # a file that differs from the one epubcheck validated.
+        shutil.copyfile(work / "repaired.epub", dst)
         ba = f"{o.before} -> {o.after}  " if o.before else ""
         print(f"repaired: {ba}{o.summary}\nwrote {dst}")
     return 0
+
+
+def _add_repair_flags(p: argparse.ArgumentParser) -> None:
+    """The fix-selection and gate flags shared by both subcommands."""
+    p.add_argument(
+        "--fix-ids",
+        action="store_true",
+        help="also rewrite invalid manifest ids in the OPF (RSC-005)",
+    )
+    p.add_argument(
+        "--reserialize",
+        action="store_true",
+        help="rebuild still-malformed documents via html5lib (closes unclosed elements)",
+    )
+    p.add_argument(
+        "--strip-bad-attrs",
+        action="store_true",
+        help="drop invalid attributes (digit-led names, unbound namespace prefixes)",
+    )
+    p.add_argument("--no-validate", action="store_true", help="skip the epubcheck gate")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -251,22 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("repair", help="repair a single EPUB to a new file")
     r.add_argument("path")
     r.add_argument("output", nargs="?")
-    r.add_argument("--no-validate", action="store_true", help="skip the epubcheck gate")
-    r.add_argument(
-        "--fix-ids",
-        action="store_true",
-        help="also rewrite invalid manifest ids in the OPF (RSC-005)",
-    )
-    r.add_argument(
-        "--reserialize",
-        action="store_true",
-        help="rebuild still-malformed documents via html5lib (closes unclosed elements)",
-    )
-    r.add_argument(
-        "--strip-bad-attrs",
-        action="store_true",
-        help="drop invalid attributes (digit-led names, unbound namespace prefixes)",
-    )
+    _add_repair_flags(r)
     r.set_defaults(func=run_repair)
 
     lib = sub.add_parser("library", help="scan/repair a Calibre library tree")
@@ -294,24 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     lib.add_argument(
         "--limit", type=int, help="process at most N candidates (for sampling)"
     )
-    lib.add_argument(
-        "--fix-ids",
-        action="store_true",
-        help="also rewrite invalid manifest ids in the OPF (RSC-005)",
-    )
-    lib.add_argument(
-        "--reserialize",
-        action="store_true",
-        help="rebuild still-malformed documents via html5lib (closes unclosed elements)",
-    )
-    lib.add_argument(
-        "--strip-bad-attrs",
-        action="store_true",
-        help="drop invalid attributes (digit-led names, unbound namespace prefixes)",
-    )
-    lib.add_argument(
-        "--no-validate", action="store_true", help="skip the epubcheck gate"
-    )
+    _add_repair_flags(lib)
     lib.set_defaults(func=run_library)
     return ap
 
@@ -324,4 +334,11 @@ def main(argv: list[str] | None = None) -> int:
     except AttributeError:
         pass
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        # A library run can take a long time; end a Ctrl-C cleanly instead of with a
+        # traceback. In-flight work is safe: the original is only ever touched by the
+        # atomic os.replace.
+        print("\ninterrupted", file=sys.stderr)
+        return 130

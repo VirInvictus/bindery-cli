@@ -18,7 +18,7 @@ Bindery makes intentionally-broken markup well-formed again. It does not rewrite
 
 Two opt-in fixes go further:
 
-- **`--fix-ids`**: rewrite manifest item ids that are not valid XML names (start with a digit, contain a colon) and update their spine references. Touches the OPF, so it is off by default; the dc: metadata is never altered.
+- **`--fix-ids`**: rewrite manifest item ids that are not valid XML names (start with a digit, contain a colon) and update every reference to them (spine, fallback, media-overlay, the EPUB 2 cover meta). Touches the OPF, so it is off by default; the dc: metadata is never altered.
 - **`--reserialize`**: rebuild content documents that are still malformed by re-parsing them with html5lib and re-emitting XHTML, closing unclosed `<p>`/`<div>`/`<span>`/`<blockquote>` that the regex transforms cannot. Runs only on documents that are not already well-formed, so good files are untouched.
 - **`--strip-bad-attrs`**: drop attributes that are invalid XML (a name starting with a digit, or a namespaced name whose prefix is never declared, like Office VML `v:shapes`). Surgical and a no-op on well-formed files.
 
@@ -29,7 +29,7 @@ Every repair is gated by [epubcheck](https://github.com/w3c/epubcheck). The acce
 - If a book **had fatals**, success means **fewer fatals**. The error count may rise as previously-hidden schema warnings become visible once the file parses; that is the book going from "won't open" to "opens with nits," not a regression.
 - If a book had **no fatals**, an error increase is a real regression, so a strict error decrease is required.
 
-Introducing a net-new fatal is always rejected. Originals are never modified except by an explicit, atomic in-place replace (see below), and even then only after the gate accepts the result.
+Introducing a net-new fatal is always rejected. If epubcheck itself fails to run (crash, timeout, unparsable output), the book is reported as an error and never applied; only an explicit `--no-validate` skips the gate. Originals are never modified except by an explicit, atomic in-place replace (see below), and even then only after the gate accepts the result.
 
 ## Install
 

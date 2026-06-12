@@ -26,6 +26,24 @@ CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")
 
 _UID_ATTR_RE = re.compile(r'unique-identifier="([^"]+)"')
 _ITEM_ID_RE = re.compile(r'(<item\b[^>]*?\bid=")([^"]*)(")', re.IGNORECASE)
+_ROOTFILE_RE = re.compile(r'full-path="([^"]+)"')
+
+
+def _locate_opf(z: zipfile.ZipFile) -> str | None:
+    """The package document path, from META-INF/container.xml when possible.
+
+    Falling back to the first .opf in archive order is a last resort: broken EPUBs
+    sometimes carry stray duplicate .opf entries, and picking the wrong one would
+    sync the wrong uid into the NCX.
+    """
+    try:
+        container = z.read("META-INF/container.xml").decode("utf-8", "replace")
+    except KeyError:
+        container = ""
+    m = _ROOTFILE_RE.search(container)
+    if m and m.group(1) in z.namelist():
+        return m.group(1)
+    return next((n for n in z.namelist() if n.lower().endswith(".opf")), None)
 
 
 def _is_invalid_ncname(s: str) -> bool:
@@ -40,7 +58,8 @@ def _is_invalid_ncname(s: str) -> bool:
 
 def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
     """Rename manifest item ids that are not valid XML names (e.g. start with a digit)
-    and update every reference to them (spine idref, spine toc). Returns (text, count).
+    and update every reference to them: spine idref, spine toc, item fallback and
+    media-overlay, and the EPUB 2 cover meta. Returns (text, count).
 
     Calibre-converted books often carry manifest ids copied from random filenames that
     start with a digit; epubcheck rejects them. The href/filenames are untouched.
@@ -61,10 +80,25 @@ def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
         return m.group(1) + rename.get(m.group(2), m.group(2)) + m.group(3)
 
     out = _ITEM_ID_RE.sub(repl_attr, opf_text)
-    # update the references: spine <itemref idref="..."> and <spine toc="...">
     out = re.sub(r'(\bidref=")([^"]*)(")', repl_attr, out)
+    out = re.sub(r'(\bfallback=")([^"]*)(")', repl_attr, out)
+    out = re.sub(r'(\bmedia-overlay=")([^"]*)(")', repl_attr, out)
     out = re.sub(
         r'(<spine\b[^>]*?\btoc=")([^"]*)(")', repl_attr, out, flags=re.IGNORECASE
+    )
+    # The EPUB 2 cover convention points at a manifest id; Calibre and most readers
+    # find the cover through it, so a renamed cover item must be re-pointed.
+    out = re.sub(
+        r'(<meta\b[^>]*\bname="cover"[^>]*\bcontent=")([^"]*)(")',
+        repl_attr,
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r'(<meta\b[^>]*\bcontent=")([^"]*)("[^>]*\bname="cover")',
+        repl_attr,
+        out,
+        flags=re.IGNORECASE,
     )
     return out, len(rename)
 
@@ -116,9 +150,15 @@ def sync_ncx_uid(ncx_text: str, uid: str) -> tuple[str, bool]:
         return ncx_text, False
     if cur.group(2) == uid:
         return ncx_text, False
-    new = _DTB_UID_RE.sub(rf"\g<1>{uid}\g<3>", ncx_text)
+
+    # Replace via a function so a uid containing backslashes is inserted literally
+    # instead of being parsed as a regex replacement template.
+    def repl(m: re.Match) -> str:
+        return m.group(1) + uid + m.group(3)
+
+    new = _DTB_UID_RE.sub(repl, ncx_text)
     if new == ncx_text:
-        new = _DTB_UID_RE_REV.sub(rf"\g<1>{uid}\g<3>", ncx_text)
+        new = _DTB_UID_RE_REV.sub(repl, ncx_text)
     return new, True
 
 
@@ -126,9 +166,8 @@ def ncx_uid_mismatch(src: Path) -> bool:
     """Cheaply detect NCX-001 (toc.ncx dtb:uid != OPF unique-identifier) without epubcheck."""
     try:
         with zipfile.ZipFile(src) as z:
-            names = z.namelist()
-            opf = next((n for n in names if n.lower().endswith(".opf")), None)
-            ncx = next((n for n in names if n.lower().endswith(".ncx")), None)
+            opf = _locate_opf(z)
+            ncx = next((n for n in z.namelist() if n.lower().endswith(".ncx")), None)
             if not opf or not ncx:
                 return False
             uid = opf_unique_id(z.read(opf).decode("utf-8", "replace"))
@@ -161,8 +200,7 @@ def repair_epub(
     report = RepairReport()
 
     with zipfile.ZipFile(src) as z:
-        names = z.namelist()
-        opf = next((n for n in names if n.lower().endswith(".opf")), None)
+        opf = _locate_opf(z)
         uid = opf_unique_id(z.read(opf).decode("utf-8", "replace")) if opf else None
 
     with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
@@ -171,48 +209,52 @@ def repair_epub(
                 "mimetype", zin.read("mimetype"), compress_type=zipfile.ZIP_STORED
             )
 
+        # An entry is re-encoded only when a fix actually fired; an untouched entry is
+        # copied byte-for-byte. Re-encoding the decode("utf-8", "replace") round-trip
+        # of an unchanged file would silently swap any non-UTF-8 bytes for U+FFFD.
         for item in zin.infolist():
             name = item.filename
             if name == "mimetype":
                 continue
-            data = zin.read(name)
+            # read(item), not read(name): with duplicate entry names (seen in broken
+            # EPUBs), read(name) returns the first entry's bytes for every duplicate.
+            data = zin.read(item)
             low = name.lower()
 
             if low.endswith(".ncx"):
                 text = data.decode("utf-8", "replace")
                 text, counts = apply_transforms(text, XML_TRANSFORMS)
+                synced = False
                 if uid:
                     text, synced = sync_ncx_uid(text, uid)
                     if synced:
                         report.ncx_uid_synced = True
-                if counts or report.ncx_uid_synced:
+                if counts or synced:
                     report.add(counts)
                     report.files_changed += 1
-                data = text.encode("utf-8")
+                    data = text.encode("utf-8")
             elif fix_ids and low.endswith(".opf"):
                 text = data.decode("utf-8", "replace")
                 text, n = fix_manifest_ids(text)
                 if n:
                     report.add({"fix_manifest_ids": n})
                     report.files_changed += 1
-                data = text.encode("utf-8")
+                    data = text.encode("utf-8")
             elif low.endswith(CONTENT_SUFFIXES):
                 text = data.decode("utf-8", "replace")
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
                 if strip_attrs:
-                    text, an = strip_invalid_attributes(text)
-                    if an:
-                        counts["stripped_invalid_attrs"] = (
-                            counts.get("stripped_invalid_attrs", 0) + an
-                        )
+                    text, n = strip_invalid_attributes(text)
+                    if n:
+                        counts["stripped_invalid_attrs"] = n
                 if reserialize:
-                    text, rn = reserialize_if_broken(text)
-                    if rn:
-                        counts["reserialized"] = counts.get("reserialized", 0) + rn
+                    text, n = reserialize_if_broken(text)
+                    if n:
+                        counts["reserialized"] = n
                 if counts:
                     report.add(counts)
                     report.files_changed += 1
-                data = text.encode("utf-8")
+                    data = text.encode("utf-8")
 
             zout.writestr(item, data, compress_type=item.compress_type)
 

@@ -11,20 +11,27 @@ scope and is left for the epubcheck gate to reject. See spec.md.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable
+from functools import wraps
 from html.entities import html5, name2codepoint
+
+Transform = Callable[[str], tuple[str, int]]
 
 VOID = "area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr"
 XML_PREDEFINED = {"amp", "lt", "gt", "quot", "apos"}
 
-# Match an open void-element tag. The `\b` after the name is essential: without it
-# `<col` matches inside `<colgroup>` and we self-close a non-void element, orphaning
-# its end-tag (the bug that introduced fatals on real books). Attributes are matched
+# Match an open void-element tag. The lookahead after the name is essential: without
+# it `<col` matches inside `<colgroup>` and we self-close a non-void element, orphaning
+# its end-tag (the bug that introduced fatals on real books). A plain `\b` is not
+# enough either: `-`, `:`, and `.` are valid XML name characters but not \w, so `\b`
+# still matched `<col` inside a custom `<col-group>`. Attributes are matched
 # quote-aware so a `>` inside an attribute value does not end the tag early. Group 3
 # captures an existing trailing slash so already-self-closed tags are left untouched.
 _VOID_RE = re.compile(
-    rf"""<({VOID})\b((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
+    rf"""<({VOID})(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
     re.IGNORECASE | re.DOTALL,
 )
+_VOID_END_RE = re.compile(rf"""</(?:{VOID})\s*>""", re.IGNORECASE)
 _NAMED_ENTITY_RE = re.compile(r"&([a-zA-Z][a-zA-Z0-9]*);")
 _BARE_AMP_RE = re.compile(r"&(?![a-zA-Z][a-zA-Z0-9]*;|#[0-9]+;|#[xX][0-9a-fA-F]+;)")
 # A start tag (quote-aware) and an attribute within it, for invalid-attribute stripping.
@@ -33,8 +40,35 @@ _ATTR_RE = re.compile(r"""(\s+)([^\s=/>]+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)""")
 _XMLNS_DECL_RE = re.compile(r"xmlns:([A-Za-z_][\w.-]*)\s*=")
 _HTML_TAG_RE = re.compile(r"<html\b[^>]*>", re.IGNORECASE)
 _XMLNS_ATTR_RE = re.compile(r'\s+xmlns="[^"]*"')
+_EPUB_PREFIX_ATTR_RE = re.compile(r"""(?:\bepub:)?prefix\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_EPUB_PREFIX_VAL_RE = re.compile(r"(?:^|\s)([A-Za-z_][\w.-]*)\s*:\s*\S+")
+
+# CDATA sections and comments hold literal text: a bare `&`, an entity name, or a
+# `<br>` inside them is already legal XML, and rewriting it would change the content
+# (e.g. `&` in CDATA-wrapped CSS/JS renders as `&`; escaped, it renders as `&amp;`).
+# Splitting on this regex yields alternating outside/protected segments, so the
+# markup transforms run only on the even (outside) indices.
+_PROTECTED_RE = re.compile(r"(<!\[CDATA\[.*?\]\]>|<!--.*?-->)", re.DOTALL)
 
 
+def _outside_protected(fn: Transform) -> Transform:
+    """Wrap a transform so it never touches CDATA sections or comments."""
+
+    @wraps(fn)
+    def wrapped(s: str) -> tuple[str, int]:
+        if "<!" not in s:  # fast path: nothing to protect
+            return fn(s)
+        parts = _PROTECTED_RE.split(s)
+        total = 0
+        for i in range(0, len(parts), 2):
+            parts[i], n = fn(parts[i])
+            total += n
+        return "".join(parts), total
+
+    return wrapped
+
+
+@_outside_protected
 def self_close_void(s: str) -> tuple[str, int]:
     """Self-close void elements that were left open (`<br>` -> `<br/>`).
 
@@ -45,12 +79,19 @@ def self_close_void(s: str) -> tuple[str, int]:
 
     def repl(m: re.Match) -> str:
         nonlocal count
-        if m.group(3) == "/":  # already self-closed: leave exactly as-is
+        if m.group(0).endswith("/>"):
             return m.group(0)
         count += 1
         return f"<{m.group(1)}{m.group(2)}/>"
 
-    return _VOID_RE.sub(repl, s), count
+    s = _VOID_RE.sub(repl, s)
+    
+    # Strip any remaining end tags for void elements (e.g. </br>) which would 
+    # otherwise cause fatal XML parse errors since we self-closed their start tags.
+    s, end_count = _VOID_END_RE.subn("", s)
+    count += end_count
+    
+    return s, count
 
 
 def strip_invalid_attributes(s: str) -> tuple[str, int]:
@@ -62,12 +103,16 @@ def strip_invalid_attributes(s: str) -> tuple[str, int]:
     good files and only touches already-malformed ones. The fix is surgical: only the
     offending attribute is dropped, everything else is preserved byte-for-byte.
     """
+    # The declared-prefix set is computed over the whole document (over-collecting
+    # from comments only makes the fix more conservative), but tags are rewritten
+    # only outside CDATA/comment spans.
     declared = set(_XMLNS_DECL_RE.findall(s)) | {"xml", "xmlns"}
+    for m in _EPUB_PREFIX_ATTR_RE.finditer(s):
+        val = m.group(1) or m.group(2) or ""
+        declared.update(_EPUB_PREFIX_VAL_RE.findall(val))
     count = 0
 
     def fix_tag(tag: re.Match) -> str:
-        nonlocal count
-
         def drop(attr: re.Match) -> str:
             nonlocal count
             name = attr.group(2)
@@ -79,17 +124,28 @@ def strip_invalid_attributes(s: str) -> tuple[str, int]:
 
         return _ATTR_RE.sub(drop, tag.group(0))
 
-    return _START_TAG_RE.sub(fix_tag, s), count
+    parts = _PROTECTED_RE.split(s)
+    for i in range(0, len(parts), 2):
+        parts[i] = _START_TAG_RE.sub(fix_tag, parts[i])
+    return "".join(parts), count
 
 
-def _resolve_entity(name: str) -> int | None:
-    """Codepoint for an HTML entity name, or None if it is not a single-char entity."""
+def _entity_refs(name: str) -> str | None:
+    """Numeric character reference(s) for an HTML entity name, or None if unknown.
+
+    Most entities are one codepoint; the handful that expand to several (`&fjlig;`,
+    `&NotEqualTilde;`, ...) become one numeric reference per codepoint, which renders
+    identically.
+    """
     if name in name2codepoint:
-        return name2codepoint[name]
+        return f"&#{name2codepoint[name]};"
     ch = html5.get(name + ";") or html5.get(name)
-    return ord(ch) if ch and len(ch) == 1 else None
+    if not ch:
+        return None
+    return "".join(f"&#{ord(c)};" for c in ch)
 
 
+@_outside_protected
 def fix_named_entities(s: str) -> tuple[str, int]:
     """Replace undeclared HTML named entities with numeric refs (`&nbsp;` -> `&#160;`).
 
@@ -104,15 +160,16 @@ def fix_named_entities(s: str) -> tuple[str, int]:
         name = m.group(1)
         if name in XML_PREDEFINED:
             return m.group(0)
-        cp = _resolve_entity(name)
-        if cp is None:
+        refs = _entity_refs(name)
+        if refs is None:
             return m.group(0)
         count += 1
-        return f"&#{cp};"
+        return refs
 
     return _NAMED_ENTITY_RE.sub(repl, s), count
 
 
+@_outside_protected
 def escape_bare_amp(s: str) -> tuple[str, int]:
     """Escape a `&` that does not begin a valid entity/character reference."""
     return _BARE_AMP_RE.subn("&amp;", s)
@@ -168,7 +225,9 @@ XML_TRANSFORMS = (
 )
 
 
-def apply_transforms(s: str, transforms) -> tuple[str, dict[str, int]]:
+def apply_transforms(
+    s: str, transforms: Iterable[Transform]
+) -> tuple[str, dict[str, int]]:
     """Run a pipeline of transforms, returning the result and per-transform counts."""
     counts: dict[str, int] = {}
     for fn in transforms:

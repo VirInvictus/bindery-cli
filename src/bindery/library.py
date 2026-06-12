@@ -38,12 +38,25 @@ def atomic_replace(target: Path, new_file: Path) -> None:
     """Replace `target` with the contents of `new_file`, atomically and in place.
 
     `new_file` is copied into the target's directory first so the final os.replace is a
-    same-filesystem rename (atomic). File mode of the original is preserved.
+    same-filesystem rename (atomic). File mode of the original is preserved. On any
+    failure the temp file is removed, so a half-written .bindery.tmp never lingers in
+    the library.
     """
     mode = target.stat().st_mode
     tmp = target.with_name(target.name + ".bindery.tmp")
-    shutil.copyfile(new_file, tmp)
-    os.chmod(tmp, mode)
-    with open(tmp, "rb") as fh:
-        os.fsync(fh.fileno())
-    os.replace(tmp, target)
+    try:
+        shutil.copyfile(new_file, tmp)
+        os.chmod(tmp, mode)
+        with open(tmp, "rb") as fh:
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    # fsync the directory too, so the rename itself survives a crash (either the old
+    # or the new file is durable; never a missing or partial one).
+    dfd = os.open(target.parent, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)

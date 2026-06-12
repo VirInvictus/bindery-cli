@@ -21,20 +21,25 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
    reference with `&amp;`.
 4. **fix_named_entities**: replace any HTML named entity that XML does not predefine
    (everything but `amp`, `lt`, `gt`, `quot`, `apos`) with its numeric character
-   reference, when the name resolves to a single codepoint.
+   reference; the few entities that expand to several codepoints become one
+   reference per codepoint. Unknown names are left alone.
 5. **self_close_void**: self-close void elements (`area base br col embed hr img input
    link meta param source track wbr`) that were left open.
 
 Applied to the NCX sidecar (`.ncx`): strip_prolog_junk, escape_bare_amp,
 fix_named_entities, plus **dtb:uid sync** to the OPF unique identifier (NCX-001).
 
-The OPF is left untouched, to keep Calibre's embedded metadata pristine.
+The OPF is located via `META-INF/container.xml` (falling back to the first `.opf`
+in the archive) and is left untouched, to keep Calibre's embedded metadata pristine.
 
 ### Transform invariants
 
 - **Semantics preserved.** A self-closed void element, a numeric character reference,
   and an escaped ampersand render identically to the author's intent. No visible text,
   attribute, or element is added or removed beyond making the markup parseable.
+- **CDATA sections and comments are never rewritten.** Their content is literal and
+  already legal XML; escaping a `&` or self-closing a `<br>` inside them would change
+  the content (e.g. corrupt CDATA-wrapped CSS/JS).
 - **Idempotent.** Re-running changes nothing once a document is well-formed.
 - **Already-correct markup is untouched.** Self-closed void elements, predefined and
   numeric entities, and single `xmlns` declarations are left exactly as they are.
@@ -43,8 +48,10 @@ The OPF is left untouched, to keep Calibre's embedded metadata pristine.
 
 Entries are copied one at a time; `mimetype` is written first and `ZIP_STORED`. Content
 documents and the NCX get the transforms above; every other entry is copied verbatim
-with its original compression. A `RepairReport` records per-transform counts and whether
-the NCX uid was synced.
+with its original compression. An eligible entry that no transform changed is also
+copied byte-for-byte, never decoded and re-encoded, so a clean non-UTF-8 file cannot
+be silently mangled. A `RepairReport` records per-transform counts and whether the
+NCX uid was synced.
 
 ## The epubcheck gate
 
@@ -58,8 +65,10 @@ the NCX uid was synced.
   else `noop`.
 
 Only `accept` repairs are applied in place. `partial` repairs are reported for manual
-follow-up and never auto-applied (the book still does not open). With `--no-validate`,
-the gate is skipped and repairs are trusted on the RepairReport alone.
+follow-up and never auto-applied (the book still does not open). If epubcheck cannot
+be run or its output cannot be parsed during a validated run, the book is an `error`:
+the gate has not accepted anything, so nothing is applied or written. With
+`--no-validate`, the gate is skipped and repairs are trusted on the RepairReport alone.
 
 ## Library replacement
 
