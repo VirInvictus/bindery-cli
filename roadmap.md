@@ -34,6 +34,20 @@
 - [ ] Re-audit integration: run an epubcheck sweep and feed results straight into
       candidate selection without a separate CSV step
 
+## Phase 4: opt-in lossy content repair (shipped, v0.5.0)
+
+*A deliberate, fenced-off exception to "semantics-preserving only": remove content a
+converter injected, never content the author wrote.*
+
+- [x] **`--strip-pagination`**: remove print page numbers and running headers a PDF/OCR
+      conversion baked into the body text (they reflow mid-sentence). Rejoins paragraphs
+      only on a confident interrupt (lowercase continuation, word split); deletes the
+      whole arabic page-number layer when a book has both a dense number run and several
+      interrupts; preserves roman chapter numbers, page-list anchors, and years. Guarded
+      by character conservation, tag balance, and a `no_worse` epubcheck bar (the strip's
+      gain is invisible to epubcheck). Validated on /tmp copies: Fingersmith 372 removed,
+      Animal Farm 54 removed (roman chapters intact), zero prose characters changed.
+
 ## Phase 3: integration (maybe)
 
 - [ ] Calibre post-import hook or plugin so books are repaired on add

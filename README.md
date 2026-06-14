@@ -22,6 +22,10 @@ Three opt-in fixes go further:
 - **`--reserialize`**: rebuild content documents that are still malformed by re-parsing them with html5lib and re-emitting XHTML, closing unclosed `<p>`/`<div>`/`<span>`/`<blockquote>` that the regex transforms cannot. Runs only on documents that are not already well-formed, so good files are untouched.
 - **`--strip-bad-attrs`**: drop attributes that are invalid XML (a name starting with a digit, or a namespaced name whose prefix is never declared, like Office VML `v:shapes`). Surgical and a no-op on well-formed files.
 
+One opt-in fix is **lossy** and stands apart from the semantics-preserving rest:
+
+- **`--strip-pagination`**: remove print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs (so they reflow into the middle of a sentence: "where the hay cart **16** was taking him"). It removes only that injected furniture, never the author's prose: where a number split a sentence it rejoins the two paragraphs (closing up a word split like `compli-` / `mentary`), and it preserves roman chapter numbers, page-list nav anchors, and years. A book is only treated as paginated when it has both a dense run of arabic numbers and several confident mid-sentence interrupts, so a merely chapter-numbered book is left alone. Three safety nets guard every edit (character conservation, tag balance, and an epubcheck no-regression check); any failure leaves the document untouched. Because its benefit is invisible to epubcheck, it is accepted when the result is *no worse* rather than measurably better.
+
 ## The safety contract
 
 Every repair is gated by [epubcheck](https://github.com/w3c/epubcheck). The acceptance rule is two-mode, because a fatal parse error makes epubcheck stop reading a file and hides every downstream error:
@@ -30,6 +34,8 @@ Every repair is gated by [epubcheck](https://github.com/w3c/epubcheck). The acce
 - If a book had **no fatals**, an error increase is a real regression, so a strict error decrease is required.
 
 Introducing a net-new fatal is always rejected. If epubcheck itself fails to run (crash, timeout, unparsable output), the book is reported as an error and never applied; only an explicit `--no-validate` skips the gate. Originals are never modified except by an explicit, atomic in-place replace (see below), and even then only after the gate accepts the result.
+
+The lossy `--strip-pagination` mode is the exception to "must improve": removing a baked-in page number leaves epubcheck counts unchanged (the number was valid markup), so that mode is accepted when the result is **no worse** (no net-new fatals or errors), the same bar oceanstrip uses, on top of its own character-conservation and tag-balance checks.
 
 ## Install
 
@@ -50,6 +56,7 @@ Repair one book to a new file (gated; writes only if it is an improvement):
 ```sh
 bindery repair broken.epub                 # -> "broken (repaired).epub"
 bindery repair broken.epub fixed.epub
+bindery repair scanned.epub --strip-pagination   # also remove baked-in page numbers
 ```
 
 Scan a Calibre library and see what would be fixed, writing nothing:
@@ -71,7 +78,7 @@ bindery library ~/docs/Calibre\ Library --only fatals --apply --backup ~/bindery
 
 ## Companion scripts
 
-`scripts/` holds standalone, read-only utilities that are useful for EPUB maintenance but fall outside Bindery's repair contract (fixing what they find would be a content change, which Bindery never makes):
+`scripts/` holds standalone, read-only utilities that are useful for EPUB maintenance but fall outside Bindery's repair contract (fixing what they find would be a content change, which Bindery makes only via the opt-in `--strip-pagination`):
 
 - `find_missing_images.py`: scans a library tree and reports every book whose `<img>` tags point at files that do not exist inside the archive (a common defect in converted EPUBs). Reads the archives in place; nothing is unpacked or written. The library path is set at the bottom of the script.
 

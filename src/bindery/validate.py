@@ -70,3 +70,16 @@ def gate(before: CheckResult, after: CheckResult) -> str:
     if after.errors > before.errors:
         return "reject"
     return "accept" if after.errors < before.errors else "noop"
+
+
+def no_worse(before: CheckResult, after: CheckResult) -> bool:
+    """The acceptance bar for a lossy content repair (page-number stripping), whose
+    benefit epubcheck cannot see. Unlike `gate`, it does not demand a measured
+    improvement; it only forbids a regression: no net-new fatals, and no new errors
+    unless fatals were already masking them. Mirrors oceanstrip's 'no more fatals or
+    errors than the original' bar."""
+    if after.fatals > before.fatals:
+        return False
+    if before.fatals == 0 and after.errors > before.errors:
+        return False
+    return True

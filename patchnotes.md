@@ -1,5 +1,14 @@
 # Patch notes
 
+## v0.5.0 (2026-06-14)
+
+**New: `--strip-pagination` (opt-in, lossy).** Removes print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs, which reflow into the middle of sentences ("where the hay cart 16 was taking him"). This is the first mode that removes visible content, so it is a deliberate, fenced-off exception to Bindery's semantics-preserving rule: off by default, and accepted by a new `no_worse` bar (no net-new fatals or errors) instead of the improvement-demanding `gate`, because a baked page number is valid markup that epubcheck cannot see.
+
+- Removes only injected furniture, never the author's prose. Where a number split a sentence it rejoins the two paragraphs (closing up a word split like `compli-`/`mentary`); page-list `id` anchors are hoisted into the merged paragraph so navigation still resolves.
+- A book is treated as paginated only when it has both a dense run of standalone arabic numbers (>= 20) and several confident mid-sentence interrupts (>= 3), so a merely chapter-numbered book is never touched. Roman chapter/front-matter numerals and year-range values are preserved.
+- Three independent safety nets guard every edit, any failure leaving the document unchanged: character conservation (no prose character lost or fabricated), `<p>`/`<a>` tag balance, and the epubcheck no-regression check.
+- Validated on /tmp copies of the real library: Fingersmith 372 numbers removed (zero left), Animal Farm 54 removed with all ten roman chapter numbers intact, zero prose characters changed in either, epubcheck no worse.
+
 ## v0.4.2 (2026-06-11)
 
 - **EPUB 3 namespace prefixes are preserved.** `--strip-bad-attrs` no longer drops perfectly valid EPUB 3 prefixed attributes. It now correctly parses `epub:prefix` and `prefix` declarations (e.g. `epub:prefix="math: ..."`) instead of strictly requiring an `xmlns:` declaration to bind a prefix.

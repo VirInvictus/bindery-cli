@@ -14,6 +14,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .pagination import collect_runheads, detect_page_layer, strip_pagination_doc
 from .reserialize import reserialize_if_broken
 from .transforms import (
     HTML_TRANSFORMS,
@@ -187,6 +188,7 @@ def repair_epub(
     fix_ids: bool = False,
     reserialize: bool = False,
     strip_attrs: bool = False,
+    strip_pagination: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -202,6 +204,18 @@ def repair_epub(
     with zipfile.ZipFile(src) as z:
         opf = _locate_opf(z)
         uid = opf_unique_id(z.read(opf).decode("utf-8", "replace")) if opf else None
+        # Running-header detection and the page-layer decision need the whole book, so
+        # collect content text once up front. Only when the lossy strip is requested.
+        runheads: set[str] = set()
+        delete_layer = False
+        if strip_pagination:
+            htmls = [
+                z.read(i).decode("utf-8", "replace")
+                for i in z.infolist()
+                if i.filename.lower().endswith(CONTENT_SUFFIXES)
+            ]
+            runheads = collect_runheads(htmls)
+            delete_layer = detect_page_layer(htmls, runheads)
 
     with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
         if "mimetype" in zin.namelist():
@@ -251,6 +265,10 @@ def repair_epub(
                     text, n = reserialize_if_broken(text)
                     if n:
                         counts["reserialized"] = n
+                if strip_pagination:
+                    text, n = strip_pagination_doc(text, runheads, delete_layer)
+                    if n:
+                        counts["stripped_pagination"] = n
                 if counts:
                     report.add(counts)
                     report.files_changed += 1

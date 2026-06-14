@@ -11,6 +11,11 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
+The one deliberate exception to "semantics-preserving" is the **opt-in
+`--strip-pagination` mode** (see "Page-number strip"). It removes content a converter
+injected, not content the author wrote, so it is off by default and gated differently.
+Everything else in this spec is the always-safe core.
+
 ## Transforms
 
 Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
@@ -69,6 +74,50 @@ follow-up and never auto-applied (the book still does not open). If epubcheck ca
 be run or its output cannot be parsed during a validated run, the book is an `error`:
 the gate has not accepted anything, so nothing is applied or written. With
 `--no-validate`, the gate is skipped and repairs are trusted on the RepairReport alone.
+
+## Page-number strip (opt-in, lossy)
+
+`--strip-pagination` removes print page numbers and running headers that a PDF/OCR
+conversion baked into the body as literal paragraphs (so they reflow mid-sentence:
+"where the hay cart 16 was taking him"). This is the one mode that removes visible
+content; it is off by default and never runs unless requested.
+
+Scope is `<p>` elements (where the defect is carried). For each book:
+
+- **Running headers** are short `<p>` blocks repeated >= 8 times across the whole book
+  (the title, an author byline, a download watermark); they are page furniture.
+- A standalone `<p>` whose entire text is a bare number is a candidate. It is removed
+  when it is **baked** (interrupts prose: a lowercase continuation after it, a word
+  split across it where the previous block ends in a hyphen, an unfinished previous
+  sentence, or it sits between two running headers) or, when the book has a confirmed
+  **page-number layer**, when it is any arabic page number in the body.
+- A **page-number layer** is confirmed only when BOTH hold: >= 20 standalone arabic
+  numbers AND >= 3 confident interrupts. A chapter-numbered book has zero interrupts, so
+  its chapter numbers are never touched. Roman numerals are removed only as a confident
+  interrupt, preserving roman chapter and front-matter numbering. Year-range values
+  (1500-2099) are never page numbers.
+- **Merging:** only a confident interrupt (lowercase continuation or word split) rejoins
+  the two surrounding prose paragraphs (a word split closes up its hyphen). Every other
+  removal is delete-only, leaving the existing paragraph break. `id` anchors (page-list
+  nav targets) inside removed blocks are hoisted into the merged paragraph so navigation
+  still resolves.
+
+### Safety nets
+
+Any failure aborts the edit and returns the document unchanged:
+
+1. **Character conservation**: the visible text after the strip equals the text before
+   minus exactly the removed numbers/headers (whitespace and hyphens normalized away),
+   so not one character of prose can be lost or fabricated.
+2. **Tag balance**: `<p>` and `<a>` remain balanced after splicing.
+3. **The `no_worse` gate** (below) is the final oracle.
+
+### Acceptance: `no_worse`
+
+The strip's benefit is invisible to epubcheck (a baked page number is valid markup), so
+the improvement-demanding `gate` does not apply. `no_worse(before, after)` accepts when
+the result is no worse: no net-new fatals, and no new errors unless fatals were already
+masking them. A net-new fatal or error is a `reject`. This mirrors oceanstrip's bar.
 
 ## Library replacement
 

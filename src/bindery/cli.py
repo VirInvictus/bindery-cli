@@ -17,6 +17,7 @@ from .validate import (
     CheckResult,
     epubcheck_available,
     gate,
+    no_worse,
     run_epubcheck,
 )
 
@@ -37,6 +38,7 @@ def process_book(
     fix_ids: bool = False,
     reserialize: bool = False,
     strip_attrs: bool = False,
+    strip_pagination: bool = False,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable."""
     repaired = workdir / "repaired.epub"
@@ -46,6 +48,7 @@ def process_book(
         fix_ids=fix_ids,
         reserialize=reserialize,
         strip_attrs=strip_attrs,
+        strip_pagination=strip_pagination,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -64,6 +67,10 @@ def process_book(
         # repair, so it must never be applied. Only --no-validate skips the gate.
         return Outcome(epub, "error", before, after, summary + " (epubcheck failed)")
     verdict = gate(before, after)
+    if report.fixes.get("stripped_pagination"):
+        # The strip's gain (in-body page numbers removed) is invisible to epubcheck, so
+        # 'no measurable gain' is expected; accept as long as nothing regressed.
+        verdict = "accept" if no_worse(before, after) else "reject"
     if verdict == "reject":
         summary += " (REGRESSION)"
     elif verdict == "noop":
@@ -148,6 +155,7 @@ def run_library(args) -> int:
                 fix_ids=args.fix_ids,
                 reserialize=args.reserialize,
                 strip_attrs=args.strip_bad_attrs,
+                strip_pagination=args.strip_pagination,
             )
             rel = epub.relative_to(root)
             if o.status == "nochange":
@@ -239,6 +247,7 @@ def run_repair(args) -> int:
             fix_ids=args.fix_ids,
             reserialize=args.reserialize,
             strip_attrs=args.strip_bad_attrs,
+            strip_pagination=args.strip_pagination,
         )
         if o.status == "nochange":
             print("no applicable fixes; nothing written.")
@@ -279,6 +288,13 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         "--strip-bad-attrs",
         action="store_true",
         help="drop invalid attributes (digit-led names, unbound namespace prefixes)",
+    )
+    p.add_argument(
+        "--strip-pagination",
+        action="store_true",
+        help="LOSSY: remove print page numbers/running headers baked into the body "
+        "text by a bad conversion, rejoining sentences they split (epubcheck-gated, "
+        "accepted when no worse)",
     )
     p.add_argument("--no-validate", action="store_true", help="skip the epubcheck gate")
 
