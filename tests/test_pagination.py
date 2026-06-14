@@ -96,6 +96,16 @@ class TestStripAggressive(unittest.TestCase):
         self.assertEqual(n, 0)
         self.assertIn(">IV<", out)
 
+    def test_self_closing_p_does_not_abort(self):
+        # Real EPUBs carry self-closing <p/>; the tag-balance net must not read those
+        # as an imbalance and revert the whole document (it once did).
+        nums = "".join(
+            f"<p>{LONG} and</p><p>{n}</p><p>more {LONG}.</p>" for n in range(1, 6)
+        )
+        body = nums + '<p class="ornament"/>'
+        out, n = strip_pagination_doc(_doc(body), set(), delete_layer=True)
+        self.assertGreaterEqual(n, 5)
+
     def test_prose_conserved(self):
         body = "".join(
             f"<p>{LONG} and</p><p>{n}</p><p>more {LONG}.</p>" for n in range(1, 6)

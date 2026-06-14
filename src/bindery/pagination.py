@@ -337,7 +337,10 @@ def _safe(before: str, after: str, blocks: list[_Block], drop: set[int]) -> bool
     ):
         return False
     for tag in ("p", "a"):
-        opens = len(re.findall(rf"<{tag}\b", after, re.IGNORECASE))
+        # Count opening tags that are NOT self-closing (`<p/>` needs no `</p>`), so
+        # the pre-existing self-closing tags these messy EPUBs carry do not read as an
+        # imbalance. A correct splice keeps real opens == closes.
+        opens = len(re.findall(rf"<{tag}\b[^>]*?(?<!/)>", after, re.IGNORECASE))
         closes = len(re.findall(rf"</{tag}\b", after, re.IGNORECASE))
         if opens != closes:
             return False
