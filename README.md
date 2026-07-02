@@ -14,7 +14,7 @@ Bindery makes accidentally broken markup well-formed again. It does not rewrite 
 - **Junk before the XML prolog** (BOM, stray bytes) is stripped.
 - **Duplicate `xmlns`** on the root `<html>` is collapsed to one.
 - **NCX-001**: `toc.ncx` `dtb:uid` is synced to the OPF unique identifier.
-- **mimetype** is rewritten first and stored, fixing the common ordering defect.
+- **mimetype** is rewritten first and stored, fixing the common ordering defect; a missing entry is added and wrong or whitespace-padded content is normalized to the OCF constant.
 
 Three opt-in fixes go further:
 
@@ -74,6 +74,8 @@ bindery library ~/docs/Calibre\ Library --only fatals --apply --backup ~/bindery
 
 - `--only {fatals,ncx,all}` restricts the candidate set. `ncx` targets NCX-001 mismatches (detected without epubcheck); `fatals` needs `--audit`.
 - `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast. Paths are resolved on both sides, and a CSV that matches nothing triggers a loud warning instead of silently selecting zero books.
+- `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. Combine with `--only fatals` for a self-contained "find and fix the broken books" run.
+- `--json FILE` writes a machine-readable report of the whole run (per-book status, before/after counts, applied flag, summary totals). `--manual-list FILE` writes the paths of every book that was not auto-repaired, one per line, ready for manual follow-up.
 - `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
 - A per-book progress line goes to stderr (stdout stays a clean report); `--quiet` suppresses it. A corrupt or unreadable book is reported and skipped, never aborting the sweep.

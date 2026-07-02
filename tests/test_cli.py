@@ -5,6 +5,7 @@ and label partial output honestly, and candidate selection must refuse --only fa
 without an audit."""
 
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -283,6 +284,74 @@ class TestLimitIsLazy(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(probe.call_count, 2)
         self.assertIn("candidates:      2", out.getvalue())
+
+
+class TestJsonAndManualList(unittest.TestCase):
+    def test_json_report_and_manual_list(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "lib"
+            root.mkdir()
+            good = root / "good.epub"
+            build(good)
+            bad = root / "bad.epub"
+            bad.write_bytes(b"not a zip")
+            jout = Path(td) / "report.json"
+            mout = Path(td) / "manual.txt"
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = main(
+                    [
+                        "library",
+                        str(root),
+                        "--no-validate",
+                        "--json",
+                        str(jout),
+                        "--manual-list",
+                        str(mout),
+                    ]
+                )
+            self.assertEqual(rc, 2)
+            data = json.loads(jout.read_text())
+            self.assertEqual(data["summary"]["unreadable"], 1)
+            self.assertEqual(data["summary"]["unvalidated"], 1)
+            statuses = {b["path"]: b["status"] for b in data["books"]}
+            self.assertEqual(statuses[str(bad)], "unreadable")
+            self.assertEqual(statuses[str(good)], "unvalidated")
+            # the unreadable book needs manual work; the unvalidated one does not
+            self.assertEqual(mout.read_text().splitlines(), [str(bad)])
+
+
+class TestSweepSelection(unittest.TestCase):
+    def test_sweep_selects_fatals_and_reuses_before(self):
+        with tempfile.TemporaryDirectory() as td:
+            build(Path(td) / "a.epub")
+            build(Path(td) / "b.epub")
+            results = [
+                CheckResult(1, 0, 0),  # sweep a: fatal, selected
+                CheckResult(0, 0, 0),  # sweep b: clean, skipped
+                CheckResult(0, 0, 0),  # 'after' for a (its 'before' is the sweep hit)
+            ]
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("bindery.cli.epubcheck_available", return_value=True),
+                mock.patch("bindery.cli.run_epubcheck", side_effect=results) as oracle,
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = main(["library", td, "--only", "fatals", "--sweep"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(oracle.call_count, 3)  # not 4: the sweep result was reused
+        self.assertIn("ACCEPT", out.getvalue())
+
+    def test_sweep_flag_conflicts(self):
+        with tempfile.TemporaryDirectory() as td:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(main(["library", td, "--sweep", "--no-validate"]), 1)
+                self.assertEqual(
+                    main(["library", td, "--sweep", "--audit", "x.csv"]), 1
+                )
+                self.assertEqual(main(["library", td, "--sweep", "--only", "ncx"]), 1)
 
 
 if __name__ == "__main__":

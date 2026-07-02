@@ -116,6 +116,40 @@ class TestManifestIds(unittest.TestCase):
         self.assertIn('<meta name="cover" content="id_31img"/>', out)
 
 
+class TestMimetypeRepair(unittest.TestCase):
+    def _repair(self, mimetype_payload):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                if mimetype_payload is not None:
+                    z.writestr("mimetype", mimetype_payload)
+                z.writestr("OEBPS/c1.xhtml", CONTENT)
+            report = repair_epub(src, dst)
+            with zipfile.ZipFile(dst) as z:
+                first = z.infolist()[0]
+                data = z.read("mimetype")
+            return report, first, data
+
+    def test_missing_mimetype_added(self):
+        report, first, data = self._repair(None)
+        self.assertEqual(report.fixes.get("mimetype_added"), 1)
+        self.assertEqual(first.filename, "mimetype")
+        self.assertEqual(first.compress_type, zipfile.ZIP_STORED)
+        self.assertEqual(data, b"application/epub+zip")
+
+    def test_padded_mimetype_normalized(self):
+        report, _, data = self._repair("application/epub+zip\n")
+        self.assertEqual(report.fixes.get("mimetype_normalized"), 1)
+        self.assertEqual(data, b"application/epub+zip")
+
+    def test_correct_mimetype_untouched(self):
+        report, first, data = self._repair("application/epub+zip")
+        self.assertNotIn("mimetype_added", report.fixes)
+        self.assertNotIn("mimetype_normalized", report.fixes)
+        self.assertEqual(first.compress_type, zipfile.ZIP_STORED)
+        self.assertEqual(data, b"application/epub+zip")
+
+
 OPF_SQ = OPF.replace('"', "'")
 NCX_BAD_SQ = NCX_BAD.replace('"', "'")
 

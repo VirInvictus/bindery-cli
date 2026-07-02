@@ -29,7 +29,10 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
    reference; the few entities that expand to several codepoints become one
    reference per codepoint. Unknown names are left alone.
 5. **self_close_void**: self-close void elements (`area base br col embed hr img input
-   link meta param source track wbr`) that were left open.
+   link meta param source track wbr`) that were left open. Orphaned **end tags** for
+   void elements (`</br>`, `</col>`, ...) are removed outright: a void element can
+   never legally carry an end tag, so the tag is always invalid and its removal cannot
+   change what renders. Removed end tags are counted in the fix total.
 
 Applied to the NCX sidecar (`.ncx`): strip_prolog_junk, escape_bare_amp,
 fix_named_entities, plus **dtb:uid sync** to the OPF unique identifier (NCX-001).
@@ -51,12 +54,15 @@ in the archive) and is left untouched, to keep Calibre's embedded metadata prist
 
 ## Archive rewrite
 
-Entries are copied one at a time; `mimetype` is written first and `ZIP_STORED`. Content
-documents and the NCX get the transforms above; every other entry is copied verbatim
-with its original compression. An eligible entry that no transform changed is also
-copied byte-for-byte, never decoded and re-encoded, so a clean non-UTF-8 file cannot
-be silently mangled. A `RepairReport` records per-transform counts and whether the
-NCX uid was synced.
+Entries are copied one at a time; `mimetype` is written first and `ZIP_STORED`. Its
+content is the OCF constant `application/epub+zip` (exact bytes, no trailing newline):
+a missing entry is added (`mimetype_added`) and wrong or whitespace-padded content is
+normalized (`mimetype_normalized`), both counted in the report and gate-checked like
+any other fix. Content documents and the NCX get the transforms above; every other
+entry is copied verbatim with its original compression. An eligible entry that no
+transform changed is also copied byte-for-byte, never decoded and re-encoded, so a
+clean non-UTF-8 file cannot be silently mangled. A `RepairReport` records
+per-transform counts and whether the NCX uid was synced.
 
 ## The epubcheck gate
 

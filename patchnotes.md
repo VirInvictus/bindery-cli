@@ -1,5 +1,30 @@
 # Patch notes
 
+## v0.7.0 (2026-07-02)
+
+Phase 2 closes out: the audit workflow is now self-contained, and the mimetype fix
+joins the core repair set.
+
+- **`--sweep`: re-audit integration.** `library --only fatals --sweep` runs a live
+  epubcheck sweep for candidate selection, replacing the separate CSV step (and with
+  it the whole audit-path-mismatch bug class). Each sweep result is reused as that
+  book's before-measurement, so no book is epubchecked twice. Mutually exclusive with
+  `--audit` and `--no-validate`; `--limit` keeps the sweep lazy.
+- **`--json FILE`: machine-readable run report.** Per-book path, status, before/after
+  counts, fix summary, and applied flag, plus the summary totals, for scripting and
+  cross-run comparison.
+- **`--manual-list FILE`: the manual follow-up export.** One path per line for every
+  book the run did not (or could not) auto-repair: nochange, equal, partial, reject,
+  error, unreadable.
+- **A missing `mimetype` entry is added, and wrong or whitespace-padded content is
+  normalized** to the OCF constant `application/epub+zip`. The content is
+  spec-constant, so this is deterministic and semantics-preserving; it is counted
+  (`mimetype_added` / `mimetype_normalized`) and gate-checked like any other fix.
+- **spec.md documents void end-tag swallowing** (the 5.6 gap): `self_close_void` also
+  removes orphaned end tags for void elements (`</br>`, `</col>`), which are always
+  invalid and cannot change what renders. Behavior unchanged since v0.4.2; the spec
+  now says so.
+
 ## v0.6.0 (2026-07-02)
 
 The Phase 5 audit sweep: three confirmed safety bugs fixed, packaging honesty, and a

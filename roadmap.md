@@ -14,12 +14,14 @@
 - [x] Validated on the real library: 24 of ~40 fatal books fully de-fataled with zero
       epubcheck regressions; the rest reported for manual follow-up
 
-## Phase 2: the long tail (planned)
+## Phase 2: the long tail (shipped across v0.2.0-v0.7.0)
 
-- [ ] Unclosed **non-void** elements (`<p>`, `<span>`, `<body>`, `<blockquote>`): needs
+- [x] Unclosed **non-void** elements (`<p>`, `<span>`, `<body>`, `<blockquote>`): needs
       a forgiving HTML parser that re-serializes as XHTML. Evaluate a stdlib
-      `html.parser` rebuild vs. asking to add `lxml`.
-- [ ] Strip unbound namespace cruft (`v:shapes` and friends from Office HTML)
+      `html.parser` rebuild vs. asking to add `lxml`. *(shipped as `--reserialize`
+      via html5lib, v0.3.0; duplicate of the entry below)*
+- [x] Strip unbound namespace cruft (`v:shapes` and friends from Office HTML)
+      *(shipped as `--strip-bad-attrs`, v0.4.0; duplicate of the entry below)*
 - [x] **Harden `self_close_void`** (v0.2.0): word-boundary + quote-aware matcher, fixing
       the `<col`-in-`<colgroup>` bug that introduced fatals on 19 books.
 - [x] **Digit-led / colon id fix (RSC-005)** (v0.2.0): `--fix-ids` renames invalid
@@ -30,9 +32,13 @@
 - [x] **Foreign-content fatals** (v0.4.0): `--strip-bad-attrs` drops invalid attributes
       (digit-led names, unbound namespace prefixes), clearing the Office-VML (`v:shapes`)
       and broken-SVG (`31=""`) holdouts. The whole audit fatal set is now resolved.
-- [ ] Report-only JSON output, and a `--manual-list` export for the partial/nochange set
-- [ ] Re-audit integration: run an epubcheck sweep and feed results straight into
-      candidate selection without a separate CSV step
+- [x] Report-only JSON output, and a `--manual-list` export for the partial/nochange set
+      *(v0.7.0: `library --json FILE` writes the full machine-readable run report;
+      `--manual-list FILE` exports every book that was not auto-repaired)*
+- [x] Re-audit integration: run an epubcheck sweep and feed results straight into
+      candidate selection without a separate CSV step *(v0.7.0: `--sweep`; each sweep
+      result is reused as that book's `before` measurement, so nothing is checked
+      twice, and the audit-CSV path-mismatch bug class does not exist on this path)*
 
 ## Phase 4: opt-in lossy content repair (shipped, v0.5.0)
 
@@ -53,8 +59,9 @@ converter injected, never content the author wrote.*
 *A full bugfix/UX/usefulness audit of v0.5.0. The three items in 5.1 were confirmed
 bugs, reproduced by executing the real code paths (not just by reading). Sections
 5.1 through 5.4 shipped in v0.6.0, each fix with a stdlib-unittest regression test;
-still open are the low-priority epubcheck locale hardening (5.2), the new fix
-candidates (5.5), and the spec-gap decision (5.6).*
+the mimetype fix (5.5) and the spec documentation (5.6) followed in v0.7.0. Still
+open: the low-priority epubcheck locale hardening (5.2) and the opt-in
+unknown-entity escape (5.5, awaiting a flag-name/spec decision).*
 
 ### 5.1 Confirmed bugs (safety and correctness)
 
@@ -216,7 +223,8 @@ candidates (5.5), and the spec-gap decision (5.6).*
 
 ### 5.5 New fix candidates (usefulness)
 
-- [ ] **Add a missing `mimetype` entry (and normalize wrong content).** The archive
+- [x] **Add a missing `mimetype` entry (and normalize wrong content).**
+      *(done, v0.7.0)* The archive
       rewrite in `epub.py:repair_epub` writes `mimetype` first and stored only *if
       present*; when absent, the output still has no mimetype (epubcheck PKG/OCF
       error). The content is a constant (`application/epub+zip`, no trailing
@@ -243,7 +251,7 @@ candidates (5.5), and the spec-gap decision (5.6).*
 
 ### 5.6 Documentation debt
 
-- [ ] **Spec gap: void end-tag swallowing.** Since v0.4.2, `self_close_void` also
+- [x] **Spec gap: void end-tag swallowing.** *(documented in spec.md, v0.7.0)* Since v0.4.2, `self_close_void` also
       deletes orphaned void end tags (`</br>`, `</col>`; the `_VOID_END_RE.subn` in
       `transforms.py`), and counts them in the fix total, but spec.md's transform
       list only documents the self-closing of open tags. Either document the

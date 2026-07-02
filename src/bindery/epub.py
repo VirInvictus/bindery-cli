@@ -25,6 +25,9 @@ from .transforms import (
 
 CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")
 
+# The OCF-mandated content of the mimetype entry: exact bytes, no trailing newline.
+MIMETYPE = b"application/epub+zip"
+
 # Attribute regexes accept either quote style: a single-quoting toolchain would
 # otherwise make the NCX-001 sync and OPF location silently no-op. The ([\"']) group
 # plus the tempered (?:(?!\1).)* body match a value up to its own quote character.
@@ -226,10 +229,15 @@ def repair_epub(
             delete_layer = detect_page_layer(htmls, runheads)
 
     with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
-        if "mimetype" in zin.namelist():
-            zout.writestr(
-                "mimetype", zin.read("mimetype"), compress_type=zipfile.ZIP_STORED
-            )
+        # The mimetype content is an OCF constant, so adding a missing entry and
+        # normalizing wrong or whitespace-padded content is deterministic and
+        # semantics-preserving; the gate checks it like any other fix.
+        payload = zin.read("mimetype") if "mimetype" in zin.namelist() else None
+        if payload is None:
+            report.add({"mimetype_added": 1})
+        elif payload != MIMETYPE:
+            report.add({"mimetype_normalized": 1})
+        zout.writestr("mimetype", MIMETYPE, compress_type=zipfile.ZIP_STORED)
 
         # An entry is re-encoded only when a fix actually fired; an untouched entry is
         # copied byte-for-byte. Re-encoding the decode("utf-8", "replace") round-trip
