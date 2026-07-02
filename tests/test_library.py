@@ -7,7 +7,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bindery.library import atomic_replace, backup_path, make_backup
+from bindery.library import atomic_replace, backup_path, iter_epubs, make_backup
+
+
+class TestIterEpubs(unittest.TestCase):
+    def test_uppercase_suffix_found(self):
+        # rglob is case-sensitive by default; Calibre emits lowercase, but a
+        # hand-added Book.EPUB must not be invisible to the scan.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "a.epub").write_bytes(b"x")
+            (root / "b.EPUB").write_bytes(b"x")
+            names = [p.name for p in iter_epubs(root)]
+        self.assertEqual(names, ["a.epub", "b.EPUB"])
 
 
 class TestAtomicReplace(unittest.TestCase):

@@ -1,5 +1,66 @@
 # Patch notes
 
+## v0.6.0 (2026-07-02)
+
+The Phase 5 audit sweep: three confirmed safety bugs fixed, packaging honesty, and a
+round of CLI hardening and UX. Every fix ships with a stdlib-unittest regression test.
+
+**Safety and correctness:**
+
+- **`--strip-pagination` can no longer auto-apply a still-fatal book.** The `no_worse`
+  acceptance bar for the lossy strip used to overwrite the gate's verdict outright, so
+  a book going 3 fatals -> 1 fatal was classified `accept` and `library --apply`
+  atomically replaced a book that still does not open. `no_worse` now relaxes only the
+  improvement demand: a result with remaining fatals is demoted to `partial` and never
+  applied. This closes a hole in the hard rule that still-fatal books are manual work.
+- **One corrupt `.epub` no longer aborts an entire `library` run.** A non-zip,
+  truncated, or encrypted book raised out of the sweep and killed a multi-hour run with
+  a traceback. Each book is now guarded individually; unreadable books are reported,
+  counted in a new `unreadable:` summary line, and skipped. `repair` prints a clean
+  error for the same case instead of a traceback.
+- **The pagination strip no longer deletes `<p id=...>` navigation targets.** An id on
+  the removed paragraph itself (the common `<p id="page7">7</p>` page-anchor shape)
+  vanished with the block, breaking NCX page-lists and internal links; only inner
+  `<a id=...>` anchors were rescued. Both removal paths now preserve it: delete-only
+  keeps an emptied `<p id=...></p>` shell, and a merge hoists the id as an empty
+  anchor. Single-quoted ids are recognized too.
+
+**Packaging:**
+
+- **`html5lib` is now the optional extra the docs always promised.** It moved from
+  `dependencies` to `[project.optional-dependencies]`, so a plain install is genuinely
+  stdlib-only; `bindery[reserialize]` pulls it in for `--reserialize`.
+
+**CLI hardening:**
+
+- **`repair` labels partial output honestly.** A book whose fatals were reduced but not
+  cleared was written with a `repaired:` line that read as fixed; it now prints
+  `PARTIAL (still has fatals; needs manual work):`.
+- **`repair` refuses to overwrite an existing output file** unless `--force` is given.
+- **Single-quoted attributes are visible to the OPF/NCX regexes.** The NCX-001 sync,
+  OPF location, and unique-identifier lookup all required double quotes, so a
+  single-quoting toolchain made them silently no-op. All accept either quote now.
+- **`Book.EPUB` is found.** The library scan matches the `.epub` suffix
+  case-insensitively (Calibre emits lowercase, but a hand-added file should not be
+  invisible).
+
+**UX:**
+
+- **Progress output for long runs.** A `[123/4051] Author/Title.epub` line per book
+  goes to stderr, so a mostly-clean library no longer shows hours of silence; stdout
+  stays a clean report. `--quiet` suppresses it.
+- **A warning fires when the audit CSV matches zero scanned books** (the silent
+  path-mismatch trap that read as "library is clean"). Paths are resolved on both
+  sides first, so relative-vs-absolute mismatches no longer occur at all.
+- **Backup flags warn when inert.** `--backup`/`--backup-inplace` without `--apply`
+  print a note; `--apply --strip-pagination` without any backup flag prints a loud
+  recommendation (the one lossy mode deserves a backup).
+- **`library` exits 2 when any book was rejected, unreadable, or failed epubcheck**,
+  so scripts and cron can detect trouble; 0 is a clean sweep, 1 a usage error.
+- **`--limit` limits the scan, not just the work.** Candidates are consumed lazily, so
+  `--only ncx --limit 20` stops opening archives after the 20th candidate instead of
+  probing every book in the tree.
+
 ## v0.5.0 (2026-06-14)
 
 **New: `--strip-pagination` (opt-in, lossy).** Removes print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs, which reflow into the middle of sentences ("where the hay cart 16 was taking him"). This is the first mode that removes visible content, so it is a deliberate, fenced-off exception to Bindery's semantics-preserving rule: off by default, and accepted by a new `no_worse` bar (no net-new fatals or errors) instead of the improvement-demanding `gate`, because a baked page number is valid markup that epubcheck cannot see.

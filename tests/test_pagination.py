@@ -116,6 +116,34 @@ class TestStripAggressive(unittest.TestCase):
         self.assertEqual(letters_in, letters_out)  # not one letter of prose lost
 
 
+class TestIdPreservation(unittest.TestCase):
+    def test_p_id_survives_merge(self):
+        # An id on the removed <p> itself (a common page-anchor shape) used to vanish
+        # with the block, breaking page-list and internal links; it must be hoisted
+        # into the merged paragraph as an empty anchor.
+        body = f'<p>{LONG} and</p><p id="page7">7</p><p>sometimes {LONG}.</p>'
+        out, n = strip_pagination_doc(_doc(body), set())
+        self.assertEqual(n, 1)
+        self.assertNotIn(">7<", out)
+        self.assertIn('id="page7"', out)
+
+    def test_p_id_survives_delete_only(self):
+        # Non-confident removal (capital next) in a layer book takes the delete-only
+        # path; an emptied <p id=...></p> shell must remain, not nothing.
+        body = f'<p>{LONG}.</p><p id="page7">7</p><p>The next thing. {LONG}.</p>'
+        out, n = strip_pagination_doc(_doc(body), set(), delete_layer=True)
+        self.assertEqual(n, 1)
+        self.assertNotIn(">7<", out)
+        self.assertIn('id="page7"', out)
+
+    def test_single_quoted_inner_anchor_hoisted(self):
+        body = f"<p>{LONG}.</p><p><a id='pg7'/>7</p><p>The next thing. {LONG}.</p>"
+        out, n = strip_pagination_doc(_doc(body), set(), delete_layer=True)
+        self.assertEqual(n, 1)
+        self.assertNotIn(">7<", out)
+        self.assertIn("id='pg7'", out)
+
+
 class TestEndToEnd(unittest.TestCase):
     OPF = (
         '<?xml version="1.0"?>'

@@ -7,7 +7,9 @@ import csv
 import shutil
 import sys
 import tempfile
+import zipfile
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 
 from . import __version__
@@ -69,8 +71,15 @@ def process_book(
     verdict = gate(before, after)
     if report.fixes.get("stripped_pagination"):
         # The strip's gain (in-body page numbers removed) is invisible to epubcheck, so
-        # 'no measurable gain' is expected; accept as long as nothing regressed.
-        verdict = "accept" if no_worse(before, after) else "reject"
+        # 'no measurable gain' is expected; accept as long as nothing regressed. But a
+        # book that still has fatals will not open: no_worse must never promote it past
+        # the gate's 'partial' (still-fatal books are never auto-applied).
+        if not no_worse(before, after):
+            verdict = "reject"
+        elif after.fatals > 0:
+            verdict = "partial"
+        else:
+            verdict = "accept"
     if verdict == "reject":
         summary += " (REGRESSION)"
     elif verdict == "noop":
@@ -87,17 +96,22 @@ def _load_audit(path: Path) -> dict[str, tuple[int, int, int]]:
                 continue
             f, e, w, p = row
             try:
-                out[p] = (int(f), int(e), int(w))
+                # Resolved, so a CSV written with one path shape still matches a scan
+                # run with another (relative vs. absolute, symlinked mounts).
+                out[str(Path(p).expanduser().resolve())] = (int(f), int(e), int(w))
             except ValueError:  # the header row, if present
                 continue
     return out
 
 
-def _select(epubs, only: str, audit: dict | None):
+def _select(epubs, only: str, audit: dict | None, audit_hits: list | None = None):
     """Filter the candidate list by --only and an optional audit CSV."""
     for epub in epubs:
-        key = str(epub)
-        counts = audit.get(key) if audit else None
+        counts = None
+        if audit is not None:
+            counts = audit.get(str(epub.resolve()))
+            if counts is not None and audit_hits is not None:
+                audit_hits.append(epub)
         if only == "fatals":
             if audit is not None and (counts is None or counts[0] == 0):
                 continue
@@ -131,33 +145,65 @@ def run_library(args) -> int:
 
     audit = _load_audit(Path(args.audit).expanduser()) if args.audit else None
     backup_dir = Path(args.backup).expanduser() if args.backup else None
-    candidates = list(_select(iter_epubs(root), args.only, audit))
+    wants_backup = backup_dir is not None or args.backup_inplace
+    if wants_backup and not args.apply:
+        print(
+            "note: dry run -- --backup/--backup-inplace do nothing without --apply",
+            file=sys.stderr,
+        )
+    if args.apply and args.strip_pagination and not wants_backup:
+        print(
+            "WARNING: --strip-pagination is the one lossy mode; strongly consider "
+            "--backup DIR or --backup-inplace when applying it.",
+            file=sys.stderr,
+        )
+
+    audit_hits: list[Path] = []
+    selected = _select(iter_epubs(root), args.only, audit, audit_hits)
     if args.limit is not None:
-        candidates = candidates[: args.limit]
+        # islice keeps the scan lazy, so --only ncx --limit 20 stops opening archives
+        # after the 20th candidate instead of probing every book in the tree.
+        candidates = islice(selected, args.limit)
+        header = f"limit={args.limit}"
+        total = args.limit
+    else:
+        candidates = list(selected)
+        header = f"{len(candidates)} candidate book(s)"
+        total = len(candidates)
 
     mode = "APPLY" if args.apply else "DRY-RUN"
-    print(
-        f"Bindery {mode}: {len(candidates)} candidate book(s), "
-        f"only={args.only}, validate={validate}\n"
-    )
+    print(f"Bindery {mode}: {header}, only={args.only}, validate={validate}\n")
 
     accepted = applied = rejected = equal = nochange = unvalidated = partials = 0
-    errors = 0
+    errors = unreadable = processed = 0
     still_fatal = []
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         for epub in candidates:
-            o = process_book(
-                epub,
-                work,
-                validate,
-                fix_ids=args.fix_ids,
-                reserialize=args.reserialize,
-                strip_attrs=args.strip_bad_attrs,
-                strip_pagination=args.strip_pagination,
-            )
+            processed += 1
             rel = epub.relative_to(root)
+            if not args.quiet:
+                # Progress goes to stderr so stdout stays a clean report; nochange and
+                # equal books print nothing there, and with validation each book costs
+                # seconds of epubcheck time.
+                print(f"[{processed}/{total}] {rel}", file=sys.stderr)
+            try:
+                o = process_book(
+                    epub,
+                    work,
+                    validate,
+                    fix_ids=args.fix_ids,
+                    reserialize=args.reserialize,
+                    strip_attrs=args.strip_bad_attrs,
+                    strip_pagination=args.strip_pagination,
+                )
+            except (zipfile.BadZipFile, OSError, RuntimeError) as e:
+                # One corrupt (non-zip, truncated, encrypted) book must not abort a
+                # multi-hour sweep; report it and keep going.
+                unreadable += 1
+                print(f"  ERROR   {rel}\n            unreadable: {e}")
+                continue
             if o.status == "nochange":
                 nochange += 1
                 continue
@@ -201,8 +247,16 @@ def run_library(args) -> int:
                 tag = "APPLIED"
             print(f"  {tag}  {rel}\n            {ba}{o.summary}")
 
+    if audit is not None and not audit_hits:
+        print(
+            "\nWARNING: no scanned book matched any path in the audit CSV. The CSV "
+            "was probably generated against a different path (absolute vs. relative, "
+            "another mount point), so candidate selection saw no fatal counts.",
+            file=sys.stderr,
+        )
+
     print("\n========== SUMMARY ==========")
-    print(f"candidates:      {len(candidates)}")
+    print(f"candidates:      {processed}")
     print(
         f"accepted:        {accepted}"
         + (f"  (applied: {applied})" if args.apply else "")
@@ -212,6 +266,7 @@ def run_library(args) -> int:
     print(f"equal (skipped): {equal}")
     print(f"unvalidated:     {unvalidated}")
     print(f"epubcheck errors:{errors}")
+    print(f"unreadable:      {unreadable}")
     print(f"REJECTED:        {rejected}")
     if still_fatal:
         print(f"\nimproved but STILL FATAL ({len(still_fatal)}) -- manual follow-up:")
@@ -221,7 +276,9 @@ def run_library(args) -> int:
         print(
             "\n(dry run -- no files written. re-run with --apply to replace in place.)"
         )
-    return 0
+    # 2 lets scripts and cron distinguish "ran fine but some books are in trouble"
+    # from a clean sweep (0) and a usage error (1).
+    return 2 if (rejected + errors + unreadable) > 0 else 0
 
 
 def run_repair(args) -> int:
@@ -237,18 +294,28 @@ def run_repair(args) -> int:
     if dst.resolve() == src.resolve():
         print("error: refusing to overwrite the input in place", file=sys.stderr)
         return 1
+    if dst.exists() and not args.force:
+        print(
+            f"error: output exists: {dst} (pass --force to overwrite)",
+            file=sys.stderr,
+        )
+        return 1
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
-        o = process_book(
-            src,
-            work,
-            validate=not args.no_validate,
-            fix_ids=args.fix_ids,
-            reserialize=args.reserialize,
-            strip_attrs=args.strip_bad_attrs,
-            strip_pagination=args.strip_pagination,
-        )
+        try:
+            o = process_book(
+                src,
+                work,
+                validate=not args.no_validate,
+                fix_ids=args.fix_ids,
+                reserialize=args.reserialize,
+                strip_attrs=args.strip_bad_attrs,
+                strip_pagination=args.strip_pagination,
+            )
+        except (zipfile.BadZipFile, OSError, RuntimeError) as e:
+            print(f"error: cannot read {src}: {e}", file=sys.stderr)
+            return 1
         if o.status == "nochange":
             print("no applicable fixes; nothing written.")
             return 0
@@ -268,7 +335,15 @@ def run_repair(args) -> int:
         # a file that differs from the one epubcheck validated.
         shutil.copyfile(work / "repaired.epub", dst)
         ba = f"{o.before} -> {o.after}  " if o.before else ""
-        print(f"repaired: {ba}{o.summary}\nwrote {dst}")
+        if o.status == "partial":
+            # The file is a real improvement and worth writing, but calling it
+            # "repaired" would read as fixed; it still will not open.
+            print(
+                f"PARTIAL (still has fatals; needs manual work): {ba}{o.summary}\n"
+                f"wrote {dst}"
+            )
+        else:
+            print(f"repaired: {ba}{o.summary}\nwrote {dst}")
     return 0
 
 
@@ -309,6 +384,11 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("repair", help="repair a single EPUB to a new file")
     r.add_argument("path")
     r.add_argument("output", nargs="?")
+    r.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite the output file if it already exists",
+    )
     _add_repair_flags(r)
     r.set_defaults(func=run_repair)
 
@@ -336,6 +416,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lib.add_argument(
         "--limit", type=int, help="process at most N candidates (for sampling)"
+    )
+    lib.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the per-book progress line on stderr",
     )
     _add_repair_flags(lib)
     lib.set_defaults(func=run_library)

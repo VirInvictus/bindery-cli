@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bindery"
-version = "0.5.0"
+version = "0.6.0"
 description = "Repair EPUBs (well-formedness fixes plus an opt-in page-number strip), epubcheck-gated, with in-place Calibre library replacement"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -14,7 +14,10 @@ authors = [
 ]
 # Core is stdlib-only. html5lib is needed only for the opt-in --reserialize structural
 # repair; it is imported lazily, so every other mode works without it installed.
-dependencies = ["html5lib>=1.1"]
+dependencies = []
+
+[project.optional-dependencies]
+reserialize = ["html5lib>=1.1"]
 
 [project.scripts]
 bindery = "bindery.cli:main"

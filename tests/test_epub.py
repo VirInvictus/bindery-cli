@@ -116,6 +116,46 @@ class TestManifestIds(unittest.TestCase):
         self.assertIn('<meta name="cover" content="id_31img"/>', out)
 
 
+OPF_SQ = OPF.replace('"', "'")
+NCX_BAD_SQ = NCX_BAD.replace('"', "'")
+
+
+class TestSingleQuotedAttributes(unittest.TestCase):
+    # A single-quoting toolchain used to make the NCX-001 sync and the OPF location
+    # silently no-op: every attribute regex required double quotes.
+
+    def test_opf_unique_id(self):
+        self.assertEqual(opf_unique_id(OPF_SQ), "urn:uuid:THE-RIGHT-ID")
+
+    def test_sync_ncx_uid(self):
+        out, changed = sync_ncx_uid(NCX_BAD_SQ, "urn:uuid:THE-RIGHT-ID")
+        self.assertTrue(changed)
+        self.assertIn("content='urn:uuid:THE-RIGHT-ID'", out)
+
+    def test_mismatch_detected_and_repaired(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr(
+                    "META-INF/container.xml",
+                    "<container><rootfiles>"
+                    "<rootfile full-path='OEBPS/content.opf' "
+                    "media-type='application/oebps-package+xml'/>"
+                    "</rootfiles></container>",
+                )
+                z.writestr("OEBPS/content.opf", OPF_SQ)
+                z.writestr("OEBPS/toc.ncx", NCX_BAD_SQ)
+            self.assertTrue(ncx_uid_mismatch(src))
+            repair_epub(src, dst)
+            self.assertFalse(ncx_uid_mismatch(dst))
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn(
+                    "content='urn:uuid:THE-RIGHT-ID'",
+                    z.read("OEBPS/toc.ncx").decode(),
+                )
+
+
 class TestRepairEpub(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

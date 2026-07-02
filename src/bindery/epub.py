@@ -25,9 +25,12 @@ from .transforms import (
 
 CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")
 
-_UID_ATTR_RE = re.compile(r'unique-identifier="([^"]+)"')
+# Attribute regexes accept either quote style: a single-quoting toolchain would
+# otherwise make the NCX-001 sync and OPF location silently no-op. The ([\"']) group
+# plus the tempered (?:(?!\1).)* body match a value up to its own quote character.
+_UID_ATTR_RE = re.compile(r"unique-identifier=([\"'])((?:(?!\1).)+)\1")
 _ITEM_ID_RE = re.compile(r'(<item\b[^>]*?\bid=")([^"]*)(")', re.IGNORECASE)
-_ROOTFILE_RE = re.compile(r'full-path="([^"]+)"')
+_ROOTFILE_RE = re.compile(r"full-path=([\"'])((?:(?!\1).)+)\1")
 
 
 def _locate_opf(z: zipfile.ZipFile) -> str | None:
@@ -42,8 +45,8 @@ def _locate_opf(z: zipfile.ZipFile) -> str | None:
     except KeyError:
         container = ""
     m = _ROOTFILE_RE.search(container)
-    if m and m.group(1) in z.namelist():
-        return m.group(1)
+    if m and m.group(2) in z.namelist():
+        return m.group(2)
     return next((n for n in z.namelist() if n.lower().endswith(".opf")), None)
 
 
@@ -104,11 +107,16 @@ def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
     return out, len(rename)
 
 
+# Both accept single or double quotes; group 3 is the uid value and group(1)+group(4)
+# reconstruct everything around it, so the replacement logic is quote-agnostic too.
 _DTB_UID_RE = re.compile(
-    r'(<meta\b[^>]*\bname="dtb:uid"[^>]*\bcontent=")([^"]*)(")', re.IGNORECASE
+    r"(<meta\b[^>]*\bname=[\"']dtb:uid[\"'][^>]*\bcontent=([\"']))((?:(?!\2).)*)(\2)",
+    re.IGNORECASE,
 )
 _DTB_UID_RE_REV = re.compile(
-    r'(<meta\b[^>]*\bcontent=")([^"]*)("[^>]*\bname="dtb:uid"[^>]*>)', re.IGNORECASE
+    r"(<meta\b[^>]*\bcontent=([\"']))((?:(?!\2).)*)"
+    r"(\2[^>]*\bname=[\"']dtb:uid[\"'][^>]*>)",
+    re.IGNORECASE,
 )
 
 
@@ -137,9 +145,9 @@ def opf_unique_id(opf_text: str) -> str | None:
     attr = _UID_ATTR_RE.search(opf_text)
     if not attr:
         return None
-    ident = attr.group(1)
-    m = re.search(rf'id="{re.escape(ident)}"[^>]*>([^<]+)<', opf_text) or re.search(
-        rf'<dc:identifier[^>]*id="{re.escape(ident)}"[^>]*>([^<]+)', opf_text
+    idpat = rf"id=[\"']{re.escape(attr.group(2))}[\"']"
+    m = re.search(rf"{idpat}[^>]*>([^<]+)<", opf_text) or re.search(
+        rf"<dc:identifier[^>]*{idpat}[^>]*>([^<]+)", opf_text
     )
     return m.group(1).strip() if m else None
 
@@ -149,13 +157,13 @@ def sync_ncx_uid(ncx_text: str, uid: str) -> tuple[str, bool]:
     cur = _DTB_UID_RE.search(ncx_text) or _DTB_UID_RE_REV.search(ncx_text)
     if not cur:
         return ncx_text, False
-    if cur.group(2) == uid:
+    if cur.group(3) == uid:
         return ncx_text, False
 
     # Replace via a function so a uid containing backslashes is inserted literally
     # instead of being parsed as a regex replacement template.
     def repl(m: re.Match) -> str:
-        return m.group(1) + uid + m.group(3)
+        return m.group(1) + uid + m.group(4)
 
     new = _DTB_UID_RE.sub(repl, ncx_text)
     if new == ncx_text:
@@ -176,7 +184,7 @@ def ncx_uid_mismatch(src: Path) -> bool:
                 return False
             text = z.read(ncx).decode("utf-8", "replace")
             m = _DTB_UID_RE.search(text) or _DTB_UID_RE_REV.search(text)
-            return bool(m and m.group(2) != uid)
+            return bool(m and m.group(3) != uid)
     except zipfile.BadZipFile, OSError:
         return False
 

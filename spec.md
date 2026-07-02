@@ -98,9 +98,12 @@ Scope is `<p>` elements (where the defect is carried). For each book:
   (1500-2099) are never page numbers.
 - **Merging:** only a confident interrupt (lowercase continuation or word split) rejoins
   the two surrounding prose paragraphs (a word split closes up its hyphen). Every other
-  removal is delete-only, leaving the existing paragraph break. `id` anchors (page-list
-  nav targets) inside removed blocks are hoisted into the merged paragraph so navigation
-  still resolves.
+  removal is delete-only, leaving the existing paragraph break.
+- **Navigation targets survive.** An `id` anywhere in a removed block (a page-list or
+  internal-link target) is preserved: `<a id=...>` anchors are hoisted into the merged
+  paragraph, an id on the removed `<p>` itself becomes an empty anchor there, and a
+  delete-only removal keeps an emptied `<p id=...></p>` shell instead of deleting
+  outright. Single- and double-quoted ids are both recognized.
 
 ### Safety nets
 
@@ -119,6 +122,10 @@ the improvement-demanding `gate` does not apply. `no_worse(before, after)` accep
 the result is no worse: no net-new fatals, and no new errors unless fatals were already
 masking them. A net-new fatal or error is a `reject`. This mirrors oceanstrip's bar.
 
+`no_worse` relaxes only the improvement demand, never the `partial` rule: a result that
+still has fatals is classified `partial` even when it is no worse, so a still-broken
+book can never be auto-applied through the lossy path.
+
 ## Library replacement
 
 For a Calibre library (`Author/Title (id)/Title - Author.epub`):
@@ -131,6 +138,10 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
   `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync.
 - Writing requires `--apply` (default is a dry run). A backup is taken first when
   `--backup DIR` or `--backup-inplace` is given.
+- A book that cannot be read at all (not a zip, truncated, encrypted entries) is
+  reported and counted as `unreadable`; it never aborts the rest of the sweep.
+- The `library` exit code is 0 for a clean sweep, 1 for a usage error, and 2 when any
+  book was rejected, unreadable, or failed epubcheck, so scripts can detect trouble.
 
 ## Out of scope (non-goals)
 

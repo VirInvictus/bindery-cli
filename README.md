@@ -39,11 +39,12 @@ The lossy `--strip-pagination` mode is the exception to "must improve": removing
 
 ## Install
 
-Python 3.14+, plus epubcheck on `PATH` for the gate. The core is stdlib-only; the one
-dependency, `html5lib`, is needed only for `--reserialize` and is imported lazily.
+Python 3.14+, plus epubcheck on `PATH` for the gate. The core is stdlib-only;
+`html5lib` is an optional extra, needed only for `--reserialize`.
 
 ```sh
-uv tool install /path/to/Bindery
+uv tool install /path/to/Bindery                    # stdlib core
+uv tool install "bindery[reserialize] @ /path/to/Bindery"   # incl. --reserialize
 # or from a checkout:
 PYTHONPATH=src python3 -m bindery --help          # all modes except --reserialize
 PYTHONPATH=src uv run --with html5lib python3 -m bindery --help   # incl. --reserialize
@@ -72,9 +73,12 @@ bindery library ~/docs/Calibre\ Library --only fatals --apply --backup ~/bindery
 ```
 
 - `--only {fatals,ncx,all}` restricts the candidate set. `ncx` targets NCX-001 mismatches (detected without epubcheck); `fatals` needs `--audit`.
-- `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast.
+- `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast. Paths are resolved on both sides, and a CSV that matches nothing triggers a loud warning instead of silently selecting zero books.
 - `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
+- A per-book progress line goes to stderr (stdout stays a clean report); `--quiet` suppresses it. A corrupt or unreadable book is reported and skipped, never aborting the sweep.
+- Exit codes: 0 for a clean sweep, 1 for a usage error, 2 when any book was rejected, unreadable, or failed epubcheck (for scripts and cron).
+- `repair` refuses to overwrite an existing output file unless `--force` is given.
 
 ## Companion scripts
 

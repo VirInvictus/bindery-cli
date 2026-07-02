@@ -43,11 +43,14 @@ _WS_RE = re.compile(r"\s+")
 _INT_RE = re.compile(r"\d{1,4}\Z")
 _ROMAN_RE = re.compile(r"[ivxlcdm]{2,7}\Z", re.IGNORECASE)
 # An element carrying an id is a navigation target (page-list, internal link); it must
-# survive even when its visible number is removed, or the nav breaks.
+# survive even when its visible number is removed, or the nav breaks. That covers both
+# <a id=...> anchors inside a removed block and an id on the removed <p> itself.
 _ID_ANCHOR_RE = re.compile(
-    r"<a\b[^>]*\bid=\"[^\"]*\"[^>]*>.*?</a>|<a\b[^>]*\bid=\"[^\"]*\"[^>]*/>",
+    r"<a\b[^>]*\bid=(?:\"[^\"]*\"|'[^']*')[^>]*>.*?</a>"
+    r"|<a\b[^>]*\bid=(?:\"[^\"]*\"|'[^']*')[^>]*/>",
     re.IGNORECASE | re.DOTALL,
 )
+_OPEN_ID_RE = re.compile(r"\bid=(\"[^\"]*\"|'[^']*')", re.IGNORECASE)
 # strip a trailing hyphen that ends the visible text, even if closing tags follow it
 _TRAIL_HYPHEN_RE = re.compile(r"-(\s*(?:</[a-zA-Z][^>]*>\s*)*)\Z")
 
@@ -288,6 +291,11 @@ def strip_pagination_doc(
         for j in range(first, last + 1):
             if j in members:
                 continue
+            m_id = _OPEN_ID_RE.search(blocks[j].open_tag)
+            if m_id:
+                # A removed <p id=...> cannot keep its shell inside the merged <p>
+                # (p cannot nest p), so its id survives as an empty anchor.
+                anchors.append(f"<a id={m_id.group(1)}/>")
             anchors += _ID_ANCHOR_RE.findall(blocks[j].inner)
         parts = [blocks[members[0]].inner]
         for k in range(1, len(members)):
@@ -310,7 +318,12 @@ def strip_pagination_doc(
             continue
         b = blocks[j]
         anchors = _ID_ANCHOR_RE.findall(b.inner)
-        repl = (b.open_tag + "".join(anchors) + "</p>") if anchors else ""
+        if anchors or _OPEN_ID_RE.search(b.open_tag):
+            # An id anywhere in the block is a navigation target (page-list, internal
+            # link): keep an emptied shell so those references still resolve.
+            repl = b.open_tag + "".join(anchors) + "</p>"
+        else:
+            repl = ""
         edits.append((b.start, b.end, repl))
 
     edits.sort(key=lambda e: e[0], reverse=True)

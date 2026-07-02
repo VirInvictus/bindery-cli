@@ -15,8 +15,11 @@ from pathlib import Path
 
 
 def iter_epubs(root: Path):
-    """Yield every .epub under a Calibre library tree, sorted."""
-    yield from sorted(p for p in root.rglob("*.epub") if p.is_file())
+    """Yield every .epub under a Calibre library tree, sorted. Case-insensitive on the
+    suffix: Calibre emits lowercase, but a hand-added Book.EPUB should not be invisible."""
+    yield from sorted(
+        p for p in root.rglob("*.epub", case_sensitive=False) if p.is_file()
+    )
 
 
 def backup_path(epub: Path, backup_dir: Path | None) -> Path:
