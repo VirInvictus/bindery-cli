@@ -171,6 +171,41 @@ def fix_named_entities(s: str) -> tuple[str, int]:
     return _NAMED_ENTITY_RE.sub(repl, s), count
 
 
+# A DOCTYPE internal subset can declare custom entities (<!DOCTYPE x [<!ENTITY ...>]>),
+# making an "unknown" name legitimate; the escape skips such documents wholesale.
+_INTERNAL_SUBSET_RE = re.compile(r"<!DOCTYPE[^>\[]*\[", re.IGNORECASE)
+
+
+@_outside_protected
+def _escape_unknown_part(s: str) -> tuple[str, int]:
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        name = m.group(1)
+        if name in XML_PREDEFINED or _entity_refs(name) is not None:
+            return m.group(0)
+        count += 1
+        return "&amp;" + m.group(0)[1:]
+
+    return _NAMED_ENTITY_RE.sub(repl, s), count
+
+
+def escape_unknown_entities(s: str) -> tuple[str, int]:
+    """Escape entity references whose name is unknown (`&foo;` -> `&amp;foo;`).
+
+    An undeclared entity outside the HTML5 table stays a fatal "entity not declared";
+    escaping it renders exactly as browsers already render an unknown entity (the
+    literal text `&foo;`). Conditionally semantics-preserving: identical rendering
+    EXCEPT against a document whose DOCTYPE internal subset declares the entity, so
+    any document carrying an internal subset is skipped wholesale. Opt-in
+    (--escape-unknown-entities), never a core transform.
+    """
+    if _INTERNAL_SUBSET_RE.search(s):
+        return s, 0
+    return _escape_unknown_part(s)
+
+
 @_outside_protected
 def escape_bare_amp(s: str) -> tuple[str, int]:
     """Escape a `&` that does not begin a valid entity/character reference."""

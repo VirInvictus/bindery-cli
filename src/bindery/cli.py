@@ -42,6 +42,7 @@ def process_book(
     reserialize: bool = False,
     strip_attrs: bool = False,
     strip_pagination: bool = False,
+    escape_entities: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -56,6 +57,7 @@ def process_book(
         reserialize=reserialize,
         strip_attrs=strip_attrs,
         strip_pagination=strip_pagination,
+        escape_entities=escape_entities,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -262,6 +264,7 @@ def run_library(args) -> int:
                     reserialize=args.reserialize,
                     strip_attrs=args.strip_bad_attrs,
                     strip_pagination=args.strip_pagination,
+                    escape_entities=args.escape_unknown_entities,
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -423,6 +426,7 @@ def run_repair(args) -> int:
                 reserialize=args.reserialize,
                 strip_attrs=args.strip_bad_attrs,
                 strip_pagination=args.strip_pagination,
+                escape_entities=args.escape_unknown_entities,
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -474,6 +478,13 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         "--strip-bad-attrs",
         action="store_true",
         help="drop invalid attributes (digit-led names, unbound namespace prefixes)",
+    )
+    p.add_argument(
+        "--escape-unknown-entities",
+        action="store_true",
+        help="escape entity names outside the HTML5 table (&foo; -> &amp;foo;), "
+        "rendering as browsers already render them; documents with a DOCTYPE "
+        "internal subset (which can declare custom entities) are skipped",
     )
     p.add_argument(
         "--strip-pagination",

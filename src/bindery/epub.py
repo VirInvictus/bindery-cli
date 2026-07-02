@@ -20,6 +20,7 @@ from .transforms import (
     HTML_TRANSFORMS,
     XML_TRANSFORMS,
     apply_transforms,
+    escape_unknown_entities,
     strip_invalid_attributes,
 )
 
@@ -200,6 +201,7 @@ def repair_epub(
     reserialize: bool = False,
     strip_attrs: bool = False,
     strip_pagination: bool = False,
+    escape_entities: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -209,6 +211,8 @@ def repair_epub(
     namespace prefixes like Office VML `v:shapes`).
     With `reserialize`, rebuild any content document that is still not well-formed via
     html5lib (closes unclosed non-void elements); good documents are left untouched.
+    With `escape_entities`, escape entity names outside the HTML5 table
+    (`&foo;` -> `&amp;foo;`); documents with a DOCTYPE internal subset are skipped.
     """
     report = RepairReport()
 
@@ -273,6 +277,10 @@ def repair_epub(
             elif low.endswith(CONTENT_SUFFIXES):
                 text = data.decode("utf-8", "replace")
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
+                if escape_entities:
+                    text, n = escape_unknown_entities(text)
+                    if n:
+                        counts["escape_unknown_entities"] = n
                 if strip_attrs:
                     text, n = strip_invalid_attributes(text)
                     if n:

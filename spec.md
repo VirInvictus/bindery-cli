@@ -40,6 +40,18 @@ fix_named_entities, plus **dtb:uid sync** to the OPF unique identifier (NCX-001)
 The OPF is located via `META-INF/container.xml` (falling back to the first `.opf`
 in the archive) and is left untouched, to keep Calibre's embedded metadata pristine.
 
+### Opt-in: escape unknown entities (`--escape-unknown-entities`)
+
+An entity name that is neither XML-predefined nor in the HTML5 table stays a fatal
+"entity not declared" (fix_named_entities deliberately leaves it). With this flag,
+such references are escaped (`&foo;` -> `&amp;foo;`), which renders exactly as
+browsers already render an unknown entity: the literal text `&foo;`. This is
+**conditionally** semantics-preserving: rendering is identical except against a
+document whose DOCTYPE internal subset *declares* the entity, so any document
+carrying an internal subset (`<!DOCTYPE ... [`) is skipped wholesale. Off by
+default, never a core transform; the normal gate applies, and CDATA sections and
+comments are never rewritten.
+
 ### Transform invariants
 
 - **Semantics preserved.** A self-closed void element, a numeric character reference,

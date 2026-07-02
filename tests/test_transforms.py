@@ -10,11 +10,43 @@ from bindery.transforms import (
     apply_transforms,
     drop_duplicate_xmlns,
     escape_bare_amp,
+    escape_unknown_entities,
     fix_named_entities,
     self_close_void,
     strip_invalid_attributes,
     strip_prolog_junk,
 )
+
+
+class TestEscapeUnknownEntities(unittest.TestCase):
+    def test_unknown_escaped_known_untouched(self):
+        out, n = escape_unknown_entities("<p>&foo; &nbsp; &amp; &#160; &bar;</p>")
+        self.assertEqual(n, 2)
+        self.assertIn("&amp;foo;", out)
+        self.assertIn("&amp;bar;", out)
+        self.assertIn("&nbsp;", out)  # known: left for fix_named_entities
+        self.assertIn("&#160;", out)  # numeric refs are never entity names
+        # idempotent: the &amp; it produced is predefined and stays put
+        self.assertEqual(escape_unknown_entities(out), (out, 0))
+
+    def test_internal_subset_skips_whole_document(self):
+        # An internal DTD subset can declare the entity, making it legitimate; the
+        # escape would then change visible text, so such documents are left alone.
+        doc = '<!DOCTYPE html [<!ENTITY foo "bar">]><html><p>&foo;</p></html>'
+        self.assertEqual(escape_unknown_entities(doc), (doc, 0))
+
+    def test_plain_doctype_does_not_skip(self):
+        doc = "<!DOCTYPE html><html><p>&foo;</p></html>"
+        out, n = escape_unknown_entities(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("&amp;foo;", out)
+
+    def test_cdata_and_comments_untouched(self):
+        doc = "<p>&foo;</p><![CDATA[&foo;]]><!-- &foo; -->"
+        out, n = escape_unknown_entities(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("<![CDATA[&foo;]]>", out)
+        self.assertIn("<!-- &foo; -->", out)
 
 
 class TestVoidElements(unittest.TestCase):

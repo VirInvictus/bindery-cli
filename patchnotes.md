@@ -1,5 +1,23 @@
 # Patch notes
 
+## v0.8.0 (2026-07-02)
+
+**New: `--escape-unknown-entities` (opt-in).** The last fix candidate from the
+v0.5.0 audit. An entity name that is neither XML-predefined nor in the HTML5 table
+stays a fatal "entity not declared" (the core `fix_named_entities` deliberately
+leaves it); with this flag such references are escaped (`&foo;` -> `&amp;foo;`),
+which renders exactly as browsers already render an unknown entity: the literal
+text.
+
+- Conditionally semantics-preserving, hence opt-in: rendering is identical except
+  against a document whose DOCTYPE internal subset *declares* the entity, so any
+  document carrying an internal subset (`<!DOCTYPE ... [`) is skipped wholesale.
+- CDATA sections and comments are never rewritten (the standing transform
+  invariant), the normal epubcheck gate applies, and the fix is idempotent (the
+  `&amp;` it emits is predefined and stays put on a re-run).
+- Available on both `repair` and `library`; counted as `escape_unknown_entities`
+  in reports.
+
 ## v0.7.0 (2026-07-02)
 
 Phase 2 closes out: the audit workflow is now self-contained, and the mimetype fix

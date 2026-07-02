@@ -16,11 +16,12 @@ Bindery makes accidentally broken markup well-formed again. It does not rewrite 
 - **NCX-001**: `toc.ncx` `dtb:uid` is synced to the OPF unique identifier.
 - **mimetype** is rewritten first and stored, fixing the common ordering defect; a missing entry is added and wrong or whitespace-padded content is normalized to the OCF constant.
 
-Three opt-in fixes go further:
+Four opt-in fixes go further:
 
 - **`--fix-ids`**: rewrite manifest item ids that are not valid XML names (start with a digit, contain a colon) and update every reference to them (spine, fallback, media-overlay, the EPUB 2 cover meta). Touches the OPF, so it is off by default; the dc: metadata is never altered.
 - **`--reserialize`**: rebuild content documents that are still malformed by re-parsing them with html5lib and re-emitting XHTML, closing unclosed `<p>`/`<div>`/`<span>`/`<blockquote>` that the regex transforms cannot. Runs only on documents that are not already well-formed, so good files are untouched.
 - **`--strip-bad-attrs`**: drop attributes that are invalid XML (a name starting with a digit, or a namespaced name whose prefix is never declared, like Office VML `v:shapes`). Surgical and a no-op on well-formed files.
+- **`--escape-unknown-entities`**: escape entity names that are not in the HTML5 table (`&foo;` becomes `&amp;foo;`), which renders exactly as browsers already render an unknown entity: the literal text. Documents whose DOCTYPE carries an internal subset are skipped wholesale, since a subset can declare custom entities.
 
 One opt-in fix is **lossy** and stands apart from the semantics-preserving rest:
 

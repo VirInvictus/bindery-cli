@@ -54,14 +54,14 @@ converter injected, never content the author wrote.*
       gain is invisible to epubcheck). Validated on /tmp copies: Fingersmith 372 removed,
       Animal Farm 54 removed (roman chapters intact), zero prose characters changed.
 
-## Phase 5: audit fixes and hardening (shipped, v0.6.0)
+## Phase 5: audit fixes and hardening (shipped, v0.6.0-v0.8.0)
 
 *A full bugfix/UX/usefulness audit of v0.5.0. The three items in 5.1 were confirmed
 bugs, reproduced by executing the real code paths (not just by reading). Sections
 5.1 through 5.4 shipped in v0.6.0, each fix with a stdlib-unittest regression test;
-the mimetype fix (5.5) and the spec documentation (5.6) followed in v0.7.0. Still
-open: the low-priority epubcheck locale hardening (5.2) and the opt-in
-unknown-entity escape (5.5, awaiting a flag-name/spec decision).*
+the mimetype fix (5.5) and the spec documentation (5.6) followed in v0.7.0, and the
+unknown-entity escape (5.5) in v0.8.0. The only survivor is the low-priority
+epubcheck locale hardening (5.2), deliberately deferred until it ever bites.*
 
 ### 5.1 Confirmed bugs (safety and correctness)
 
@@ -236,7 +236,8 @@ unknown-entity escape (5.5, awaiting a flag-name/spec decision).*
       with no mimetype and with `application/epub+zip\n`; assert the entry exists,
       is first, ZIP_STORED, exact bytes.
 
-- [ ] **Opt-in: escape unknown named entities (`&foo;` -> `&amp;foo;`).** An
+- [x] **Opt-in: escape unknown named entities (`&foo;` -> `&amp;foo;`).**
+      *(done, v0.8.0: `--escape-unknown-entities`, internal-subset guard as specified)* An
       undeclared entity that is not in the HTML5 table stays a fatal today:
       `fix_named_entities` leaves unknown names, and `_BARE_AMP_RE` deliberately
       skips anything entity-shaped. Escaping unknowns renders exactly as a browser

@@ -150,6 +150,29 @@ class TestMimetypeRepair(unittest.TestCase):
         self.assertEqual(data, b"application/epub+zip")
 
 
+class TestEscapeEntitiesFlag(unittest.TestCase):
+    CONTENT_UNKNOWN = (
+        '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+        "<body><p>&foo;</p></body></html>"
+    )
+
+    def test_opt_in_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("c1.xhtml", self.CONTENT_UNKNOWN)
+            # off by default: the unknown entity stays (fatal, but not ours to touch)
+            report = repair_epub(src, dst)
+            self.assertNotIn("escape_unknown_entities", report.fixes)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn("<p>&foo;</p>", z.read("c1.xhtml").decode())
+            report = repair_epub(src, dst, escape_entities=True)
+            self.assertEqual(report.fixes.get("escape_unknown_entities"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn("<p>&amp;foo;</p>", z.read("c1.xhtml").decode())
+
+
 OPF_SQ = OPF.replace('"', "'")
 NCX_BAD_SQ = NCX_BAD.replace('"', "'")
 
