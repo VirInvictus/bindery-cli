@@ -100,3 +100,11 @@ See [spec.md](spec.md) for the full contract and [roadmap.md](roadmap.md) for wh
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Support
+
+If Bindery's useful to you and you'd like to chip in:
+
+```
+bc1qkge6zr45tzqfwfmvma2ylumt6mg7wlwmhr05yv
+```
