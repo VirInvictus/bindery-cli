@@ -1,5 +1,28 @@
 # Patch notes
 
+## v0.9.0 (2026-07-09)
+
+Two new fixes, born from a Dan Brown import batch whose books opened fine but
+carried 89 and 225 epubcheck errors.
+
+- **`--fix-ids` now covers the NCX.** Old conversions stamp navPoint ids from
+  UUIDs (digit-led) or colon-bearing strings; epubcheck rejects every one as
+  RSC-005. Invalid NCX ids are renamed with the same `id_` scheme as manifest
+  ids. NCX ids are internal to the NCX (nothing in the OPF or content documents
+  references them), so the rename needs no cross-file bookkeeping. Counted as
+  `fix_ncx_ids` in reports.
+- **New: `--add-img-alt` (opt-in).** Adds `alt=""` to `<img>` elements missing
+  the required attribute. Rendering is unchanged (an empty alt draws nothing),
+  but this is the one transform that adds markup the author never wrote, and
+  `alt=""` asserts "decorative" to a screen reader where a missing alt did not;
+  hence opt-in, never a core transform. Quote-aware, idempotent, CDATA and
+  comments never rewritten; counted as `img_alt_added`.
+
+Real-world validation: the two motivating books went 89 errors to 0 and 225 to
+190 (the remainder are dead NCX fragment identifiers, a fix candidate we
+deliberately passed on), both accepted by the normal gate.
+
+
 ## v0.8.0 (2026-07-02)
 
 **New: `--escape-unknown-entities` (opt-in).** The last fix candidate from the

@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 
 from bindery.transforms import (
     HTML_TRANSFORMS,
+    add_img_alt,
     apply_transforms,
     drop_duplicate_xmlns,
     escape_bare_amp,
@@ -16,6 +17,51 @@ from bindery.transforms import (
     strip_invalid_attributes,
     strip_prolog_junk,
 )
+
+
+class TestAddImgAlt(unittest.TestCase):
+    def test_missing_alt_added(self):
+        out, n = add_img_alt('<img src="index-1_1.jpg" class="calibre1"/>')
+        self.assertEqual(n, 1)
+        self.assertEqual(out, '<img src="index-1_1.jpg" class="calibre1" alt=""/>')
+
+    def test_existing_alt_untouched_either_quote_style(self):
+        for frag in (
+            '<img src="a.jpg" alt="a photo"/>',
+            "<img src='a.jpg' alt=''/>",
+            '<img alt="" src="a.jpg"/>',
+        ):
+            self.assertEqual(add_img_alt(frag), (frag, 0), frag)
+
+    def test_idempotent(self):
+        out, _ = add_img_alt('<img src="a.jpg">')
+        self.assertEqual(add_img_alt(out), (out, 0))
+
+    def test_open_tag_form_kept_open(self):
+        # self_close_void owns the slash; this transform must not add one.
+        out, n = add_img_alt('<img src="a.jpg">')
+        self.assertEqual((out, n), ('<img src="a.jpg" alt="">', 1))
+
+    def test_data_alt_is_not_alt(self):
+        out, n = add_img_alt('<img src="a.jpg" data-alt="x"/>')
+        self.assertEqual(n, 1)
+        self.assertIn('alt=""', out)
+        self.assertIn('data-alt="x"', out)
+
+    def test_gt_inside_attribute_value(self):
+        out, n = add_img_alt('<img src="a.jpg" title="a > b"/>')
+        self.assertEqual(n, 1)
+        self.assertEqual(out, '<img src="a.jpg" title="a > b" alt=""/>')
+
+    def test_cdata_and_comments_untouched(self):
+        doc = '<img src="a.jpg"/><!-- <img src="b.jpg"/> -->'
+        out, n = add_img_alt(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('<!-- <img src="b.jpg"/> -->', out)
+
+    def test_result_is_well_formed(self):
+        out, _ = add_img_alt('<body><img src="a.jpg"/><p>x</p></body>')
+        ET.fromstring(out)
 
 
 class TestEscapeUnknownEntities(unittest.TestCase):

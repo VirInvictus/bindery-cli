@@ -250,6 +250,21 @@ epubcheck locale hardening (5.2), deliberately deferred until it ever bites.*
       escaped under the flag, untouched without it, untouched when an internal
       subset declares it.
 
+- [x] **Extend `--fix-ids` to the NCX (RSC-005 invalid navPoint ids).**
+      *(done, v0.9.0)* Old conversions stamp navPoint ids from UUIDs (digit-led) or
+      colon-bearing strings; epubcheck rejects every one (80 errors on a single real
+      book). `epub.py:fix_ncx_ids` renames them with the same `id_` scheme as
+      `fix_manifest_ids`; NCX ids are internal to the NCX (nothing in the OPF or
+      content docs references them), so no cross-file bookkeeping. Behind the
+      existing `--fix-ids` flag; counted as `fix_ncx_ids`.
+
+- [x] **Opt-in: add missing `img alt` (`--add-img-alt`).**
+      *(done, v0.9.0)* `<img>` without the required `alt` is an RSC-005 error per
+      occurrence. `transforms.add_img_alt` adds `alt=""` (quote-aware, idempotent,
+      CDATA/comments protected). Renders identically, but it ADDS markup the author
+      never wrote and asserts "decorative" to screen readers, hence opt-in, never a
+      core transform. Counted as `img_alt_added`.
+
 ### 5.6 Documentation debt
 
 - [x] **Spec gap: void end-tag swallowing.** *(documented in spec.md, v0.7.0)* Since v0.4.2, `self_close_void` also

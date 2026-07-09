@@ -206,6 +206,40 @@ def escape_unknown_entities(s: str) -> tuple[str, int]:
     return _escape_unknown_part(s)
 
 
+# An <img> start tag, quote-aware like _VOID_RE; group 1 is the attribute block and
+# group 2 an existing self-closing slash, so the tag is rebuilt without reordering.
+_IMG_TAG_RE = re.compile(
+    r"""<img(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
+    re.IGNORECASE | re.DOTALL,
+)
+# Whitespace before `alt` keeps data-alt/xml:alt-style names from matching; a quoted
+# value containing ` alt=` can false-positive, which only makes the fix skip that tag.
+_ALT_PRESENT_RE = re.compile(r"""(?:^|\s)alt\s*=""", re.IGNORECASE)
+
+
+@_outside_protected
+def add_img_alt(s: str) -> tuple[str, int]:
+    """Add `alt=""` to an <img> that has no alt attribute (the RSC-005 "missing
+    required attribute" error).
+
+    Rendering is unchanged (empty alt draws nothing), but this is the one transform
+    that ADDS markup the author never wrote, and `alt=""` asserts "decorative" to a
+    screen reader where a missing alt did not. Hence opt-in (--add-img-alt), never a
+    core transform. Idempotent: a tag that already carries alt is left untouched.
+    """
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        attrs, slash = m.group(1), m.group(2)
+        if _ALT_PRESENT_RE.search(attrs):
+            return m.group(0)
+        count += 1
+        return f'<img{attrs} alt=""{slash}>'
+
+    return _IMG_TAG_RE.sub(repl, s), count
+
+
 @_outside_protected
 def escape_bare_amp(s: str) -> tuple[str, int]:
     """Escape a `&` that does not begin a valid entity/character reference."""

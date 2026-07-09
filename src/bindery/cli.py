@@ -43,6 +43,7 @@ def process_book(
     strip_attrs: bool = False,
     strip_pagination: bool = False,
     escape_entities: bool = False,
+    img_alt: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -58,6 +59,7 @@ def process_book(
         strip_attrs=strip_attrs,
         strip_pagination=strip_pagination,
         escape_entities=escape_entities,
+        img_alt=img_alt,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -265,6 +267,7 @@ def run_library(args) -> int:
                     strip_attrs=args.strip_bad_attrs,
                     strip_pagination=args.strip_pagination,
                     escape_entities=args.escape_unknown_entities,
+                    img_alt=args.add_img_alt,
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -427,6 +430,7 @@ def run_repair(args) -> int:
                 strip_attrs=args.strip_bad_attrs,
                 strip_pagination=args.strip_pagination,
                 escape_entities=args.escape_unknown_entities,
+                img_alt=args.add_img_alt,
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -467,7 +471,13 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--fix-ids",
         action="store_true",
-        help="also rewrite invalid manifest ids in the OPF (RSC-005)",
+        help="also rewrite invalid ids in the OPF manifest and the NCX (RSC-005)",
+    )
+    p.add_argument(
+        "--add-img-alt",
+        action="store_true",
+        help='add alt="" to <img> elements missing the required attribute '
+        "(renders identically; asserts 'decorative' to screen readers)",
     )
     p.add_argument(
         "--reserialize",

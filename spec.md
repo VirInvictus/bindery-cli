@@ -36,6 +36,11 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
 
 Applied to the NCX sidecar (`.ncx`): strip_prolog_junk, escape_bare_amp,
 fix_named_entities, plus **dtb:uid sync** to the OPF unique identifier (NCX-001).
+With `--fix-ids`, ids in the NCX that are not valid XML names (digit-led, as when a
+converter stamps navPoint ids from UUIDs; colon-bearing) are renamed with the same
+`id_` scheme as OPF manifest ids. NCX ids are internal to the NCX (nothing in the
+OPF or content documents references them), so the rename needs no cross-file
+bookkeeping.
 
 The OPF is located via `META-INF/container.xml` (falling back to the first `.opf`
 in the archive) and is left untouched, to keep Calibre's embedded metadata pristine.
@@ -51,6 +56,16 @@ document whose DOCTYPE internal subset *declares* the entity, so any document
 carrying an internal subset (`<!DOCTYPE ... [`) is skipped wholesale. Off by
 default, never a core transform; the normal gate applies, and CDATA sections and
 comments are never rewritten.
+
+### Opt-in: add missing img alt (`--add-img-alt`)
+
+An `<img>` without the required `alt` attribute is an RSC-005 error on every
+occurrence. With this flag, `alt=""` is added to such elements. Rendering is
+unchanged (an empty alt draws nothing), but this is the one transform that ADDS
+markup the author never wrote, and `alt=""` asserts "decorative" to a screen reader
+where a missing alt did not; hence off by default, never a core transform. Existing
+alt attributes (either quote style) are untouched and the fix is idempotent; the
+normal gate applies.
 
 ### Transform invariants
 

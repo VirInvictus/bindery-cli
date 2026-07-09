@@ -19,6 +19,7 @@ from .reserialize import reserialize_if_broken
 from .transforms import (
     HTML_TRANSFORMS,
     XML_TRANSFORMS,
+    add_img_alt,
     apply_transforms,
     escape_unknown_entities,
     strip_invalid_attributes,
@@ -109,6 +110,38 @@ def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
         flags=re.IGNORECASE,
     )
     return out, len(rename)
+
+
+# Any id attribute, either quote style (the OPF _ITEM_ID_RE is item-specific and
+# double-quote-only; NCX toolchains emit both styles).
+_XML_ID_RE = re.compile(r"""(\bid=)(["'])((?:(?!\2).)*)(\2)""", re.IGNORECASE)
+
+
+def fix_ncx_ids(ncx_text: str) -> tuple[str, int]:
+    """Rename NCX ids that are not valid XML names (RSC-005), same scheme as
+    fix_manifest_ids. Returns (text, count of ids renamed).
+
+    Old conversions stamp navPoint ids from UUIDs (digit-led) or colon-bearing
+    strings; epubcheck rejects every one. Unlike manifest ids, NCX ids are internal
+    to the NCX (nothing in the OPF or content documents references a navPoint id),
+    so the rename needs no cross-file bookkeeping.
+    """
+    existing = {m.group(3) for m in _XML_ID_RE.finditer(ncx_text)}
+    rename: dict[str, str] = {}
+    for old in existing:
+        if not _is_invalid_ncname(old):
+            continue
+        new = "id_" + old.replace(":", "_")
+        while new in existing or new in rename.values():
+            new = "_" + new
+        rename[old] = new
+    if not rename:
+        return ncx_text, 0
+
+    def repl(m: re.Match) -> str:
+        return m.group(1) + m.group(2) + rename.get(m.group(3), m.group(3)) + m.group(4)
+
+    return _XML_ID_RE.sub(repl, ncx_text), len(rename)
 
 
 # Both accept single or double quotes; group 3 is the uid value and group(1)+group(4)
@@ -202,11 +235,14 @@ def repair_epub(
     strip_attrs: bool = False,
     strip_pagination: bool = False,
     escape_entities: bool = False,
+    img_alt: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
     With `fix_ids`, also rewrite invalid manifest ids in the OPF (off by default, since
-    it touches the OPF; the dc: metadata is never altered, only item ids and their refs).
+    it touches the OPF; the dc: metadata is never altered, only item ids and their refs)
+    and invalid ids in the NCX.
+    With `img_alt`, add `alt=""` to <img> elements missing the required attribute.
     With `strip_attrs`, drop attributes that are invalid XML (digit-led names, unbound
     namespace prefixes like Office VML `v:shapes`).
     With `reserialize`, rebuild any content document that is still not well-formed via
@@ -258,6 +294,10 @@ def repair_epub(
             if low.endswith(".ncx"):
                 text = data.decode("utf-8", "replace")
                 text, counts = apply_transforms(text, XML_TRANSFORMS)
+                if fix_ids:
+                    text, n = fix_ncx_ids(text)
+                    if n:
+                        counts["fix_ncx_ids"] = n
                 synced = False
                 if uid:
                     text, synced = sync_ncx_uid(text, uid)
@@ -285,6 +325,10 @@ def repair_epub(
                     text, n = strip_invalid_attributes(text)
                     if n:
                         counts["stripped_invalid_attrs"] = n
+                if img_alt:
+                    text, n = add_img_alt(text)
+                    if n:
+                        counts["img_alt_added"] = n
                 if reserialize:
                     text, n = reserialize_if_broken(text)
                     if n:

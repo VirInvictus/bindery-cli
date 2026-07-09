@@ -9,6 +9,7 @@ from pathlib import Path
 
 from bindery.epub import (
     fix_manifest_ids,
+    fix_ncx_ids,
     ncx_uid_mismatch,
     opf_unique_id,
     repair_epub,
@@ -114,6 +115,50 @@ class TestManifestIds(unittest.TestCase):
         self.assertIn('id="id_31img"', out)
         self.assertIn('fallback="id_31img"', out)
         self.assertIn('<meta name="cover" content="id_31img"/>', out)
+
+
+class TestNcxIds(unittest.TestCase):
+    def test_uuid_and_colon_ids_renamed(self):
+        # The wild form: navPoint ids stamped from UUIDs, which are digit-led.
+        ncx = (
+            '<navMap><navPoint id="620a6fe8-04fc-4496" playOrder="1"/>'
+            "<navPoint id='a:b' playOrder='2'/>"
+            '<navPoint id="ok_id" playOrder="3"/></navMap>'
+        )
+        out, n = fix_ncx_ids(ncx)
+        self.assertEqual(n, 2)
+        self.assertIn('id="id_620a6fe8-04fc-4496"', out)
+        self.assertIn("id='id_a_b'", out)
+        self.assertIn('id="ok_id"', out)
+
+    def test_valid_ids_untouched(self):
+        ncx = '<navPoint id="navPoint-1" playOrder="1"/>'
+        self.assertEqual(fix_ncx_ids(ncx), (ncx, 0))
+
+    def test_rename_collision_avoided(self):
+        # "1x" renames to id_1x, which already exists; the new name must not collide.
+        out, n = fix_ncx_ids('<navPoint id="1x"/><navPoint id="id_1x"/>')
+        self.assertEqual(n, 1)
+        self.assertIn('id="_id_1x"', out)
+        self.assertIn('id="id_1x"', out)
+
+    def test_opt_in_via_repair_epub(self):
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">'
+            '<navMap><navPoint id="620a6fe8" playOrder="1"/></navMap></ncx>'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/toc.ncx", ncx)
+            report = repair_epub(src, dst)  # off by default
+            self.assertNotIn("fix_ncx_ids", report.fixes)
+            report = repair_epub(src, dst, fix_ids=True)
+            self.assertEqual(report.fixes.get("fix_ncx_ids"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn('id="id_620a6fe8"', z.read("OEBPS/toc.ncx").decode())
 
 
 class TestMimetypeRepair(unittest.TestCase):
