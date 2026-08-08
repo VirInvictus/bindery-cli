@@ -1,5 +1,19 @@
 # Patch notes
 
+## v0.10.0 (2026-08-08)
+
+Locale hardening for the epubcheck wrapper (roadmap 5.2, the last open Phase 5
+item). The wrapper parsed counts from epubcheck's human-readable summary line,
+which the JVM localizes: on a non-English locale every book parsed as None and
+was reported as `error`. Counts now come from epubcheck's locale-independent
+`--json -` output first (the `checker` totals, verified against epubcheck
+5.3.0), with the English summary-line regex kept as the fallback for
+epubchecks too old for `--json`, and the JVM pinned to English via
+`JAVA_TOOL_OPTIONS` (appended, so existing JVM flags survive) so that fallback
+stays meaningful. New `tests/test_validate.py` (9 tests) mocks
+`subprocess.run` itself to pin the JSON path, both fallbacks, the env pin, and
+the failure modes; suite grows 105 to 114.
+
 ## v0.9.0 (2026-07-09)
 
 Two new fixes, born from a Dan Brown import batch whose books opened fine but

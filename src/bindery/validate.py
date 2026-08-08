@@ -8,6 +8,8 @@ the repair without it (the CLI requires --no-validate to do so).
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -33,14 +35,62 @@ def epubcheck_available() -> bool:
     return shutil.which("epubcheck") is not None
 
 
+def _english_locale_env() -> dict[str, str]:
+    """The subprocess env with the JVM pinned to English (roadmap 5.2).
+
+    epubcheck localizes its human-readable summary, which broke the regex
+    fallback on non-English locales. Appended rather than assigned so a
+    user's existing JAVA_TOOL_OPTIONS (heap flags etc.) survive.
+    """
+    env = dict(os.environ)
+    opts = env.get("JAVA_TOOL_OPTIONS", "")
+    env["JAVA_TOOL_OPTIONS"] = f"{opts} -Duser.language=en -Duser.country=US".strip()
+    return env
+
+
+def _counts_from_json(stdout: str) -> CheckResult | None:
+    """Parse counts from epubcheck's locale-independent `--json -` output.
+
+    epubcheck 5.x puts the totals under "checker" (nFatal/nError/nWarning,
+    verified against 5.3.0). Anything unexpected returns None so the caller
+    can fall back to the summary-line regex.
+    """
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    checker = data.get("checker") if isinstance(data, dict) else None
+    if not isinstance(checker, dict):
+        return None
+    try:
+        return CheckResult(
+            int(checker["nFatal"]), int(checker["nError"]), int(checker["nWarning"])
+        )
+    except KeyError, TypeError, ValueError:
+        return None
+
+
 def run_epubcheck(path: Path, timeout: int = 300) -> CheckResult | None:
-    """Run epubcheck and return parsed counts, or None if it could not be parsed."""
+    """Run epubcheck and return parsed counts, or None if it could not be parsed.
+
+    Counts come from `--json -` (locale-independent) first; the English
+    summary-line regex stays as the fallback for epubchecks too old for
+    `--json`, kept meaningful by the JVM locale pin in the env.
+    """
     try:
         out = subprocess.run(
-            ["epubcheck", str(path)], capture_output=True, text=True, timeout=timeout
+            ["epubcheck", str(path), "--json", "-"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=_english_locale_env(),
+            check=False,
         )
     except FileNotFoundError, subprocess.TimeoutExpired:
         return None
+    result = _counts_from_json(out.stdout)
+    if result is not None:
+        return result
     m = _SUMMARY_RE.search(out.stdout + out.stderr)
     if not m:
         return None

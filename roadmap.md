@@ -60,8 +60,8 @@ converter injected, never content the author wrote.*
 bugs, reproduced by executing the real code paths (not just by reading). Sections
 5.1 through 5.4 shipped in v0.6.0, each fix with a stdlib-unittest regression test;
 the mimetype fix (5.5) and the spec documentation (5.6) followed in v0.7.0, and the
-unknown-entity escape (5.5) in v0.8.0. The only survivor is the low-priority
-epubcheck locale hardening (5.2), deliberately deferred until it ever bites.*
+unknown-entity escape (5.5) in v0.8.0, and the last survivor, the epubcheck
+locale hardening (5.2), in v0.10.0. Phase 5 is closed.*
 
 ### 5.1 Confirmed bugs (safety and correctness)
 
@@ -131,16 +131,16 @@ epubcheck locale hardening (5.2), deliberately deferred until it ever bites.*
       kit), and regenerate `uv.lock`. No code change; `reserialize_if_broken` already
       raises a clear RuntimeError when the import is missing.
 
-- [ ] **Harden epubcheck output parsing against non-English locales.** (Low priority;
-      note first, act if it ever bites.) `validate._SUMMARY_RE` matches the English
-      summary line `Messages: N fatals / N errors / N warnings`; epubcheck (Java)
-      localizes its messages, so on a non-English locale every book would parse as
-      `None` and be reported as `error`. Options: pass
-      `env={..., "JAVA_TOOL_OPTIONS": "-Duser.language=en"}` to the subprocess, or
-      switch to epubcheck's locale-independent JSON output (`--json -`), parsing
-      counts from the JSON instead. JSON is the sturdier fix but changes the wrapper;
-      keep the regex as fallback. Test: feed a canned localized summary through the
-      parser path via a mocked `subprocess.run`.
+- [x] **Harden epubcheck output parsing against non-English locales** *(shipped
+      v0.10.0, 2026-08-08)*. Both options landed together: counts parse from
+      epubcheck's locale-independent `--json -` output first
+      (`checker.nFatal/nError/nWarning`, shape verified against the installed
+      5.3.0), the English summary-line regex stays as the fallback for
+      pre-`--json` epubchecks, and the subprocess env pins the JVM to English
+      via an appended `JAVA_TOOL_OPTIONS` so that fallback stays meaningful.
+      Tested exactly as prescribed: `tests/test_validate.py` (9 tests) feeds
+      canned JSON, a canned localized (German) summary, and malformed JSON
+      through a mocked `subprocess.run`.
 
 ### 5.3 Minor bugs and hardening
 
