@@ -4,6 +4,10 @@
   <p>Repair broken EPUBs with safe, deterministic fixes, validated by epubcheck, with optional in-place replacement in a Calibre library.</p>
 </div>
 
+<p align="center">
+  <img src="docs/screenshots/library-sweep.png" alt="Bindery's dry-run library sweep: per-book epubcheck results and a summary table ending in 'no files written'">
+</p>
+
 ## What it fixes
 
 Bindery makes accidentally broken markup well-formed again. It does not rewrite or reflow content; it only applies a small set of deterministic, semantics-preserving fixes that real-world EPUBs (especially Calibre conversions) trip over:
