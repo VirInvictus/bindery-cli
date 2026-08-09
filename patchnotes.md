@@ -6,8 +6,8 @@ A maintenance sweep, plus the roadmap decision recorded below.
 
 **Three bugs.** Each fix was measured against the real library rather than argued
 from a fixture: the old and new code were run side by side over all 4,926 books
-(263,370 content documents). One of the three was actively firing; the other two are
-traps that were waiting for the right input.
+(268,190 documents, content plus NCX). One of the three was actively firing; the
+other two are traps that were waiting for the right input.
 
 - **`--strip-bad-attrs` could destroy a tag's self-closing slash.** The
   unquoted-attribute-value pattern `[^\s>]+` swallowed the `/` in `<img 31=x/>`,
@@ -26,9 +26,12 @@ traps that were waiting for the right input.
   that spend two multi-second epubcheck runs to conclude `equal`. Whitespace before
   a declaration (where it really is fatal), a BOM, and any non-whitespace junk are
   still stripped. This is the one that was live: across the library the transform
-  fired 98 times before and 86 after, so 12 phantom fixes in 6 books are gone, and
+  fired 119 times before and 106 after, so 13 phantom fixes in 7 books are gone, and
   every genuine case (a BOM ahead of an XML declaration, the real form in this
-  library) still fires.
+  library) still fires. Running the whole pipeline over those 7 books before and
+  after confirms the change is surgical: every other fix count is untouched
+  (`fix_ncx_ids` 10 stays 10, `fix_named_entities` 30 stays 30, `stripped_pagination`
+  1 stays 1), only the phantom rewrites disappear.
 - **Invalid-id renaming was not deterministic.** `--fix-ids` iterated the id *set*,
   so when two invalid ids wanted the same replacement (`1:2` and `1_2` both yield
   `id_1_2`) which one received the extra `_` prefix depended on the hash seed: the
