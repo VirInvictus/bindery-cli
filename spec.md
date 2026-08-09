@@ -21,6 +21,11 @@ Everything else in this spec is the always-safe core.
 Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
 
 1. **strip_prolog_junk**: remove a BOM or stray characters before the first `<`.
+   Leading *whitespace* counts as junk only when an XML declaration follows it, since
+   a declaration must be the very first thing in the document; before a DOCTYPE or the
+   root element it is legal prolog whitespace and is left in place. (Stripping it
+   anyway counted a fix on an undamaged document, which forced the archive rewrite's
+   lossy `decode("utf-8", "replace")` round-trip for no gain.)
 2. **drop_duplicate_xmlns**: keep only the first `xmlns="..."` on the root `<html>`.
 3. **escape_bare_amp**: replace a `&` that does not start a valid entity or character
    reference with `&amp;`.

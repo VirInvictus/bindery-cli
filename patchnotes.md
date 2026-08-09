@@ -1,8 +1,54 @@
 # Patch notes
 
-## 0.10.1
+## v0.10.1 (2026-08-09)
 
-Roadmap decision, no code change.
+A maintenance sweep, plus the roadmap decision recorded below.
+
+**Three bugs.** Each fix was measured against the real library rather than argued
+from a fixture: the old and new code were run side by side over all 4,926 books
+(263,370 content documents). One of the three was actively firing; the other two are
+traps that were waiting for the right input.
+
+- **`--strip-bad-attrs` could destroy a tag's self-closing slash.** The
+  unquoted-attribute-value pattern `[^\s>]+` swallowed the `/` in `<img 31=x/>`,
+  so dropping the offending attribute left `<img>`: the one fix whose whole promise
+  is "only the offending attribute is dropped" turned a well-formed self-closed tag
+  into an unclosed one, introducing the very fatal it exists to remove. The gate
+  would then reject the book, costing it every other repair it had earned. The
+  pattern now stops before a `/` that ends the tag, while a `/` inside a value (a
+  URL) is still consumed. No book in the library carries the pattern today, so this
+  one was latent.
+- **`strip_prolog_junk` counted a phantom fix for legal whitespace.** Whitespace in
+  the prolog is legal XML unless an XML declaration follows it, but any leading
+  whitespace was stripped and counted. That marked the document changed, which
+  forces `repair_epub`'s `decode("utf-8", "replace")` round-trip on a file that had
+  nothing wrong with it, and turned books that should report `nochange` into books
+  that spend two multi-second epubcheck runs to conclude `equal`. Whitespace before
+  a declaration (where it really is fatal), a BOM, and any non-whitespace junk are
+  still stripped. This is the one that was live: across the library the transform
+  fired 98 times before and 86 after, so 12 phantom fixes in 6 books are gone, and
+  every genuine case (a BOM ahead of an XML declaration, the real form in this
+  library) still fires.
+- **Invalid-id renaming was not deterministic.** `--fix-ids` iterated the id *set*,
+  so when two invalid ids wanted the same replacement (`1:2` and `1_2` both yield
+  `id_1_2`) which one received the extra `_` prefix depended on the hash seed: the
+  same book repaired to different bytes from run to run, against a project that
+  sells itself on deterministic repair. Both the OPF and NCX paths now plan renames
+  through one sorted helper, `_plan_renames`.
+
+**The lint result no longer depends on which ruff is installed.** There was no
+`[tool.ruff]` section, so the rule set came from ruff's defaults: CI's pinned
+0.15.20 passed clean while 0.16.2 reported eight findings on the same tree. The
+selection is now pinned in `pyproject.toml` (ruff's default set plus import
+sorting, pyupgrade, and bugbear), with a note on the two families deliberately left
+out because they fight intentional code. CI moves to `actions/checkout@v5`, pins
+ruff 0.16.2, and lints `.` rather than three named directories so a new top-level
+script cannot escape.
+
+Smaller: `repair_epub` opens the source archive once instead of twice; the dead
+`skip_empty` parameter is gone from `pagination._nearest`; `library --limit 20` on
+a tree with 3 candidates counts `[1/3]` instead of `[1/20]`; and `pyproject.toml`
+catches up to the `VERSION` bump in `__init__.py`. Suite 114 to 122 tests.
 
 **The Calibre hook question is settled, and it is `FileTypePlugin` with
 `on_import = True`.** Researched against the Calibre source rather than guessed:
