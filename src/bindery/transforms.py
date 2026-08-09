@@ -36,7 +36,14 @@ _NAMED_ENTITY_RE = re.compile(r"&([a-zA-Z][a-zA-Z0-9]*);")
 _BARE_AMP_RE = re.compile(r"&(?![a-zA-Z][a-zA-Z0-9]*;|#[0-9]+;|#[xX][0-9a-fA-F]+;)")
 # A start tag (quote-aware) and an attribute within it, for invalid-attribute stripping.
 _START_TAG_RE = re.compile(r"""<[a-zA-Z][\w:.-]*(?:"[^"]*"|'[^']*'|[^>])*>""")
-_ATTR_RE = re.compile(r"""(\s+)([^\s=/>]+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)""")
+# The unquoted-value branch stops at whitespace or the end of the tag, and the `/?>`
+# lookahead is what keeps it off the tag's own self-closing slash: a plain `[^\s>]+`
+# swallowed it, so dropping the attribute in `<img 31=x/>` left `<img>` and turned a
+# well-formed tag into an unclosed one. A `/` mid-value (a URL) is still consumed,
+# because only a `/` immediately before `>` can be the tag's.
+_ATTR_RE = re.compile(
+    r"""(\s+)([^\s=/>]+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]*?(?=\s|/?>))"""
+)
 _XMLNS_DECL_RE = re.compile(r"xmlns:([A-Za-z_][\w.-]*)\s*=")
 _HTML_TAG_RE = re.compile(r"<html\b[^>]*>", re.IGNORECASE)
 _XMLNS_ATTR_RE = re.compile(r'\s+xmlns="[^"]*"')
@@ -247,12 +254,24 @@ def escape_bare_amp(s: str) -> tuple[str, int]:
 
 
 def strip_prolog_junk(s: str) -> tuple[str, int]:
-    """Remove a BOM or stray bytes before the first `<` ("content not allowed in prolog")."""
+    """Remove a BOM or stray bytes before the first `<` ("content not allowed in prolog").
+
+    Leading whitespace is junk only when an XML declaration follows it (a declaration
+    must be the very first thing in the document). Before a DOCTYPE or the root element
+    it is legal prolog whitespace and is left alone: counting it as a fix marked the
+    document changed, which forced repair_epub's decode("utf-8", "replace") round-trip
+    on a file that had nothing wrong with it.
+    """
     stripped = s.lstrip("﻿ \t\r\n")
     i = stripped.find("<")
     if i > 0:
         stripped = stripped[i:]
-    return (stripped, 1) if stripped != s else (s, 0)
+    if stripped == s:
+        return s, 0
+    removed = s[: len(s) - len(stripped)]
+    if not removed.strip(" \t\r\n") and not stripped.startswith("<?xml"):
+        return s, 0
+    return stripped, 1
 
 
 def drop_duplicate_xmlns(s: str) -> tuple[str, int]:

@@ -65,6 +65,27 @@ def _is_invalid_ncname(s: str) -> bool:
     return not (s[0].isalpha() or s[0] == "_")
 
 
+def _plan_renames(existing: set[str]) -> dict[str, str]:
+    """Map every invalid id in `existing` to a valid replacement no other id claims.
+
+    Iteration is sorted rather than in set order because two invalid ids can want the
+    same replacement (`1:2` and `1_2` both yield `id_1_2`); set order made which one
+    got the extra `_` prefix depend on the hash seed, so the same book repaired to
+    different bytes from run to run.
+    """
+    rename: dict[str, str] = {}
+    taken = set(existing)
+    for old in sorted(existing):
+        if not _is_invalid_ncname(old):
+            continue
+        new = "id_" + old.replace(":", "_")
+        while new in taken:
+            new = "_" + new
+        taken.add(new)
+        rename[old] = new
+    return rename
+
+
 def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
     """Rename manifest item ids that are not valid XML names (e.g. start with a digit)
     and update every reference to them: spine idref, spine toc, item fallback and
@@ -73,15 +94,7 @@ def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
     Calibre-converted books often carry manifest ids copied from random filenames that
     start with a digit; epubcheck rejects them. The href/filenames are untouched.
     """
-    existing = {m.group(2) for m in _ITEM_ID_RE.finditer(opf_text)}
-    rename: dict[str, str] = {}
-    for old in existing:
-        if not _is_invalid_ncname(old):
-            continue
-        new = "id_" + old.replace(":", "_")
-        while new in existing or new in rename.values():
-            new = "_" + new
-        rename[old] = new
+    rename = _plan_renames({m.group(2) for m in _ITEM_ID_RE.finditer(opf_text)})
     if not rename:
         return opf_text, 0
 
@@ -126,15 +139,7 @@ def fix_ncx_ids(ncx_text: str) -> tuple[str, int]:
     to the NCX (nothing in the OPF or content documents references a navPoint id),
     so the rename needs no cross-file bookkeeping.
     """
-    existing = {m.group(3) for m in _XML_ID_RE.finditer(ncx_text)}
-    rename: dict[str, str] = {}
-    for old in existing:
-        if not _is_invalid_ncname(old):
-            continue
-        new = "id_" + old.replace(":", "_")
-        while new in existing or new in rename.values():
-            new = "_" + new
-        rename[old] = new
+    rename = _plan_renames({m.group(3) for m in _XML_ID_RE.finditer(ncx_text)})
     if not rename:
         return ncx_text, 0
 
@@ -252,23 +257,24 @@ def repair_epub(
     """
     report = RepairReport()
 
-    with zipfile.ZipFile(src) as z:
-        opf = _locate_opf(z)
-        uid = opf_unique_id(z.read(opf).decode("utf-8", "replace")) if opf else None
+    # `src` is opened before `dst`, so an unreadable archive still raises before the
+    # output file is created.
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
+        opf = _locate_opf(zin)
+        uid = opf_unique_id(zin.read(opf).decode("utf-8", "replace")) if opf else None
         # Running-header detection and the page-layer decision need the whole book, so
         # collect content text once up front. Only when the lossy strip is requested.
         runheads: set[str] = set()
         delete_layer = False
         if strip_pagination:
             htmls = [
-                z.read(i).decode("utf-8", "replace")
-                for i in z.infolist()
+                zin.read(i).decode("utf-8", "replace")
+                for i in zin.infolist()
                 if i.filename.lower().endswith(CONTENT_SUFFIXES)
             ]
             runheads = collect_runheads(htmls)
             delete_layer = detect_page_layer(htmls, runheads)
 
-    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
         # The mimetype content is an OCF constant, so adding a missing entry and
         # normalizing wrong or whitespace-padded content is deterministic and
         # semantics-preserving; the gate checks it like any other fix.

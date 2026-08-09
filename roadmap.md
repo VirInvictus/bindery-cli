@@ -278,6 +278,46 @@ locale hardening (5.2), in v0.10.0. Phase 5 is closed.*
 
 ## Phase 3: integration (maybe)
 
-- [ ] Calibre post-import hook or plugin so books are repaired on add
-- [ ] Optional metadata.db nudge so Calibre notices the new file size without a manual
-      Quality Check sync
+- [ ] Calibre plugin so books are repaired on add, as a `FileTypePlugin` with
+      `on_import = True`.
+- [x] ~~Optional metadata.db nudge so Calibre notices the new file size~~
+      **Dropped 2026-08-09: unnecessary under `on_import`.** See the decision below.
+
+**DECISION 2026-08-09: settled for both tools at once, using `FileTypePlugin`
+with `on_import = True`.** Researched against the Calibre source
+(`src/calibre/customize/__init__.py`), not guessed at.
+
+Calibre offers several hooks and only one of them is the right shape:
+
+| hook | when | signature |
+|---|---|---|
+| `on_import` + `run(path)` | while the file is being added, BEFORE it lands | returns the path to a modified file |
+| `on_postimport` + `postimport(book_id, fmt, db)` | after the file is in the database | gets a db handle |
+| `on_postadd` + `postadd(book_id, fmt_map, db)` | after a whole book record is first created | gets a db handle |
+
+**`on_import` is the one.** `run()` is handed the file being imported and returns
+the path to a modified copy, built with the plugin's own `temporary_file()`;
+Calibre then imports *that* instead. So the repaired or stripped EPUB is what
+enters the library, the user's original on disk is never touched, and no write to
+`metadata.db` happens at all.
+
+Three consequences worth stating, because they change existing plans:
+
+1. **Bindery's separate "metadata.db nudge" item is unnecessary and is dropped.**
+   It existed so Calibre would notice a changed file size after an in-place
+   replacement. Under `on_import` the file is modified *before* Calibre reads it,
+   so the size it records is already correct. The nudge was solving a problem
+   created by replacing files behind Calibre's back.
+2. **The plugin must carry its own code.** It runs inside Calibre's bundled
+   Python, which will not have either tool pip-installed. Both being stdlib-first
+   is what makes this practical: the module vendors into the plugin zip. Bindery's
+   optional `html5lib` path and its epubcheck gate cannot come along, so the
+   plugin must degrade honestly rather than half-run.
+3. **epubcheck cannot gate the import.** It is an external Java process taking
+   seconds per book; running it on every add would make importing a shelf
+   unusable. The plugin therefore applies only the deterministic, safe transforms
+   and leaves the gated work to the CLI, which is where a human is watching.
+
+This is one plugin *shape* serving both tools, not one shared plugin: they are
+separate repos with separate licences and no dependency between them.
+

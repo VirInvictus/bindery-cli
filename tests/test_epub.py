@@ -100,6 +100,16 @@ class TestManifestIds(unittest.TestCase):
         self.assertIn('id="id_a_b"', out)
         self.assertIn('idref="id_a_b"', out)
 
+    def test_collision_rename_is_deterministic(self):
+        # `1:2` and `1_2` are both invalid and both want `id_1_2`. Iterating the id
+        # *set* made which one got the `_` prefix depend on the hash seed, so the same
+        # book repaired to different bytes from run to run.
+        out, n = fix_manifest_ids('<item id="1:2" href="a"/><item id="1_2" href="b"/>')
+        self.assertEqual(n, 2)
+        self.assertEqual(
+            out, '<item id="id_1_2" href="a"/><item id="_id_1_2" href="b"/>'
+        )
+
     def test_fallback_and_cover_meta_references_updated(self):
         # fallback= and the EPUB 2 cover meta point at manifest ids too; leaving them
         # stale would orphan the fallback chain and break Calibre's cover detection.
@@ -134,6 +144,11 @@ class TestNcxIds(unittest.TestCase):
     def test_valid_ids_untouched(self):
         ncx = '<navPoint id="navPoint-1" playOrder="1"/>'
         self.assertEqual(fix_ncx_ids(ncx), (ncx, 0))
+
+    def test_collision_rename_is_deterministic(self):
+        out, n = fix_ncx_ids('<navPoint id="1:2"/><navPoint id="1_2"/>')
+        self.assertEqual(n, 2)
+        self.assertEqual(out, '<navPoint id="id_1_2"/><navPoint id="_id_1_2"/>')
 
     def test_rename_collision_avoided(self):
         # "1x" renames to id_1x, which already exists; the new name must not collide.

@@ -210,6 +210,27 @@ class TestPrologAndXmlns(unittest.TestCase):
         out, n = strip_prolog_junk(s)
         self.assertEqual((out, n), (s, 0))
 
+    def test_legal_leading_whitespace_is_not_a_fix(self):
+        # Whitespace in the prolog is legal XML when no declaration follows it.
+        # Counting it as a fix marked the document changed, which forced repair_epub's
+        # decode("utf-8", "replace") round-trip on a file that had nothing wrong.
+        s = '\n<!DOCTYPE html>\n<html xmlns="a"><body/></html>'
+        self.assertEqual(strip_prolog_junk(s), (s, 0))
+
+    def test_whitespace_before_xml_declaration_is_stripped(self):
+        # A declaration must be the very first thing in the document, so here the
+        # leading whitespace really is fatal.
+        out, n = strip_prolog_junk('\n  <?xml version="1.0"?><r/>')
+        self.assertEqual((out, n), ('<?xml version="1.0"?><r/>', 1))
+
+    def test_bom_stripped_without_a_declaration(self):
+        out, n = strip_prolog_junk("﻿<!DOCTYPE html><html/>")
+        self.assertEqual((out, n), ("<!DOCTYPE html><html/>", 1))
+
+    def test_junk_stripped_without_a_declaration(self):
+        out, n = strip_prolog_junk("stray<html/>")
+        self.assertEqual((out, n), ("<html/>", 1))
+
     def test_duplicate_xmlns_collapsed(self):
         s = '<html xmlns="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/1999/xhtml"><body/></html>'
         out, n = drop_duplicate_xmlns(s)
@@ -251,6 +272,19 @@ class TestStripInvalidAttributes(unittest.TestCase):
         s = '<p class="a" id="b">text</p><br/>'
         out, n = strip_invalid_attributes(s)
         self.assertEqual((out, n), (s, 0))
+
+    def test_self_closing_slash_survives_unquoted_value(self):
+        # The unquoted-value branch used to swallow the tag's own `/`, so dropping the
+        # attribute left `<img>`: a well-formed self-closed tag turned into an unclosed
+        # one, i.e. this fix introduced the very fatal it exists to remove.
+        self.assertEqual(strip_invalid_attributes("<img 31=x/>"), ("<img/>", 1))
+        self.assertEqual(strip_invalid_attributes("<p v:foo=bar/>"), ("<p/>", 1))
+
+    def test_unquoted_value_may_end_in_a_slash(self):
+        # A trailing `/` belongs to the tag only when `>` follows it; here it is part
+        # of the URL and must survive alongside the dropped attribute.
+        out, n = strip_invalid_attributes("<a href=http://example.com/ 31=x>t</a>")
+        self.assertEqual((out, n), ("<a href=http://example.com/>t</a>", 1))
 
     def test_epub3_prefix_kept(self):
         s = '<html xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="math: http://www.w3.org/1998/Math/MathML z3998: http://www.daisy.org/"><body z3998:role="section"><math:math display="block"/></body></html>'

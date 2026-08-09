@@ -24,3 +24,15 @@ bindery = "bindery.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bindery"]
+
+[tool.ruff.lint]
+# Pinned explicitly so `ruff check` means the same thing locally and in CI. Without
+# this the result rode on whichever ruff was installed: 0.15 passed clean while 0.16
+# reported eight findings under its wider defaults. This is ruff's default set plus
+# import sorting (I), pyupgrade (UP), and bugbear (B).
+#
+# Deliberately NOT selected: RUF, whose RUF001 flags the U+2010/U+2011 hyphens in
+# pagination._char_norm, where those exact characters are the point; and SIM, whose
+# SIM103 would collapse validate.no_worse's commented guard clauses into one
+# negated expression.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]

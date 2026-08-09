@@ -28,7 +28,8 @@ from .validate import (
 @dataclass
 class Outcome:
     epub: Path
-    status: str  # accept | partial | reject | nochange | equal | unvalidated | error
+    # accept | partial | reject | nochange | equal | unvalidated | error | unreadable
+    status: str
     before: CheckResult | None
     after: CheckResult | None
     summary: str
@@ -228,15 +229,17 @@ def run_library(args) -> int:
     else:
         selected = _select(iter_epubs(root), args.only, audit, audit_hits)
     if args.limit is not None:
-        # islice keeps the scan lazy, so --only ncx --limit 20 stops opening archives
-        # after the 20th candidate instead of probing every book in the tree.
-        candidates = islice(selected, args.limit)
+        # islice keeps the scan lazy: draining it pulls at most `limit` candidates, so
+        # --only ncx --limit 20 still stops opening archives after the 20th instead of
+        # probing every book in the tree. Draining it here (rather than iterating it in
+        # the loop) is what lets the progress line show the real denominator: a tree
+        # with 3 candidates under --limit 20 used to count "[1/20]".
+        candidates = list(islice(selected, args.limit))
         header = f"limit={args.limit}"
-        total = args.limit
     else:
         candidates = list(selected)
         header = f"{len(candidates)} candidate book(s)"
-        total = len(candidates)
+    total = len(candidates)
 
     mode = "APPLY" if args.apply else "DRY-RUN"
     print(f"Bindery {mode}: {header}, only={args.only}, validate={validate}\n")

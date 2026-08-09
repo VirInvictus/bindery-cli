@@ -1,5 +1,31 @@
 # Patch notes
 
+## 0.10.1
+
+Roadmap decision, no code change.
+
+**The Calibre hook question is settled, and it is `FileTypePlugin` with
+`on_import = True`.** Researched against the Calibre source rather than guessed:
+`run(path_to_ebook)` is handed the file being imported and returns the path to a
+modified copy, and Calibre imports that instead. So a repaired EPUB is what enters
+the library, the user's original on disk is never touched, and nothing writes to
+`metadata.db`.
+
+**That kills a roadmap item.** The "optional metadata.db nudge so Calibre notices
+the new file size" existed only because in-place replacement changes a file behind
+Calibre's back. Under `on_import` the repair happens before Calibre reads the
+file, so the size it records is already right. The nudge was solving a problem
+that the correct hook does not create.
+
+Two constraints recorded with the decision, because they shape what the plugin can
+be: it runs inside Calibre's bundled Python, so it must vendor its own code and
+cannot assume Bindery is installed (the stdlib-first rule is what makes this
+practical, and the optional `html5lib` path cannot come along); and epubcheck
+cannot gate an import, being an external Java process of seconds per book, so the
+plugin does the deterministic transforms and leaves gated work to the CLI where a
+human is watching.
+
+
 ## v0.10.0 (2026-08-08)
 
 Locale hardening for the epubcheck wrapper (roadmap 5.2, the last open Phase 5

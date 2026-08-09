@@ -155,10 +155,12 @@ class _Block:
         return self.kind == "prose"
 
 
-def _nearest(blocks: list[_Block], i: int, step: int, *, skip_empty: bool):
+def _nearest(blocks: list[_Block], i: int, step: int):
+    """The nearest non-empty block in direction `step`, or None. An empty <p> is
+    layout padding, so it never counts as the neighbour of a page number."""
     j = i + step
     while 0 <= j < len(blocks):
-        if not (skip_empty and blocks[j].kind == "empty"):
+        if blocks[j].kind != "empty":
             return j
         j += step
     return None
@@ -172,8 +174,8 @@ def _is_baked(blocks: list[_Block], i: int) -> tuple[bool, bool]:
     prose_next = np is not None and len(blocks[np].text) > PROSE_MIN
     if not (prose_prev or prose_next):
         return False, False
-    prev_ne = _nearest(blocks, i, -1, skip_empty=True)
-    next_ne = _nearest(blocks, i, +1, skip_empty=True)
+    prev_ne = _nearest(blocks, i, -1)
+    next_ne = _nearest(blocks, i, +1)
     word_split = bool(pp is not None and _visible(blocks[pp].inner).endswith("-"))
     lower_cont = bool(
         next_ne is not None
@@ -248,10 +250,7 @@ def strip_pagination_doc(
             continue  # roman chapter numbers, sparse-book numbers, year-range values
         drop.add(i)
         # a running header/footer hugging a removed number is the same page furniture
-        for side in (
-            _nearest(blocks, i, -1, skip_empty=True),
-            _nearest(blocks, i, +1, skip_empty=True),
-        ):
+        for side in (_nearest(blocks, i, -1), _nearest(blocks, i, +1)):
             if side is not None and blocks[side].kind == "runhead":
                 drop.add(side)
         if confident and pp is not None and np is not None:
