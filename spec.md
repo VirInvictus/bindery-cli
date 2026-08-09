@@ -6,7 +6,9 @@ The contract. Read this before changing semantics.
 
 Bindery repairs well-formedness and a few specific validity defects in EPUBs. It is
 deliberately narrow: every transform is deterministic and semantics-preserving, and
-the result is only kept when epubcheck confirms it improved. Bindery does not reflow,
+the result is only kept when epubcheck confirms it improved. Deterministic is meant at
+the byte level: repairing the same book twice, in separate processes, produces
+identical archives. Bindery does not reflow,
 restyle, re-compress, or restructure content, and it does not attempt to fix arbitrary
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
@@ -90,7 +92,11 @@ Entries are copied one at a time; `mimetype` is written first and `ZIP_STORED`. 
 content is the OCF constant `application/epub+zip` (exact bytes, no trailing newline):
 a missing entry is added (`mimetype_added`) and wrong or whitespace-padded content is
 normalized (`mimetype_normalized`), both counted in the report and gate-checked like
-any other fix. Content documents and the NCX get the transforms above; every other
+any other fix. The entry carries the source entry's timestamp, or 1980-01-01 when it
+is being added, never the wall clock: repairing one book twice must produce identical
+bytes, and this was the only entry not written from a source `ZipInfo`. It is built as
+a fresh `ZipInfo` rather than the source one because OCF requires the mimetype entry to
+carry no extra field. Content documents and the NCX get the transforms above; every other
 entry is copied verbatim with its original compression. An eligible entry that no
 transform changed is also copied byte-for-byte, never decoded and re-encoded, so a
 clean non-UTF-8 file cannot be silently mangled. A `RepairReport` records

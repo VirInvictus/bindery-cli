@@ -1,5 +1,35 @@
 # Patch notes
 
+## v0.10.2 (2026-08-09)
+
+**Repairing the same book twice now produces identical bytes.** It did not before,
+and had not for as long as the archive rewrite has existed. The mimetype entry was
+written as `zout.writestr("mimetype", ...)` with a bare string arcname, and a string
+arcname makes `zipfile` mint a fresh entry stamped with the current clock. Every other
+entry in the archive is written from its source `ZipInfo` and keeps its own timestamp,
+so this was the single entry that moved: two repairs seconds apart differed in exactly
+those two bytes, with every entry's content identical.
+
+Nothing malfunctioned because of it. No reader and no epubcheck run cares about that
+field. What it cost was the ability to checksum or diff two repairs to confirm they
+agree, which is exactly the check the v0.10.1 sweep leaned on, and it quietly made
+"deterministic repair" false at the byte level. spec.md now says determinism is meant
+at the byte level, so the claim is testable rather than aspirational.
+
+The entry now carries the source entry's timestamp, or 1980-01-01 (the earliest a zip
+can represent) when the entry is being added and there is nothing to inherit. It is
+still built as a fresh `ZipInfo` rather than reusing the source one, because OCF
+requires the mimetype entry to carry no extra field and reusing a broken book's entry
+wholesale would propagate that violation; `external_attr` is set to what `writestr`
+used to apply, so the timestamp is the only change to the output.
+
+Measured, not assumed: three separate processes spaced over five seconds now produce
+one identical hash where they produced three. Over 99 real books, content, per-entry
+metadata, and fix reports are unchanged from v0.10.1, while timestamp preservation
+goes from 0/99 to 99/99. Three tests cover it, one of which documents that the naive
+"repair twice and compare" check passed by luck before the fix whenever both runs
+landed in the same clock second. Suite 122 to 125 tests.
+
 ## v0.10.1 (2026-08-09)
 
 A maintenance sweep, plus the roadmap decision recorded below.

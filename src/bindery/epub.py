@@ -29,6 +29,10 @@ CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")
 
 # The OCF-mandated content of the mimetype entry: exact bytes, no trailing newline.
 MIMETYPE = b"application/epub+zip"
+# The timestamp for a mimetype entry we are adding, where there is nothing to inherit.
+# A constant, not the wall clock, so repairing the same book twice is byte-identical.
+# 1980-01-01 is the earliest a zip can represent.
+MIMETYPE_EPOCH = (1980, 1, 1, 0, 0, 0)
 
 # Attribute regexes accept either quote style: a single-quoting toolchain would
 # otherwise make the NCX-001 sync and OPF location silently no-op. The ([\"']) group
@@ -278,12 +282,26 @@ def repair_epub(
         # The mimetype content is an OCF constant, so adding a missing entry and
         # normalizing wrong or whitespace-padded content is deterministic and
         # semantics-preserving; the gate checks it like any other fix.
-        payload = zin.read("mimetype") if "mimetype" in zin.namelist() else None
-        if payload is None:
+        src_mime = zin.getinfo("mimetype") if "mimetype" in zin.namelist() else None
+        if src_mime is None:
             report.add({"mimetype_added": 1})
-        elif payload != MIMETYPE:
+        elif zin.read(src_mime) != MIMETYPE:
             report.add({"mimetype_normalized": 1})
-        zout.writestr("mimetype", MIMETYPE, compress_type=zipfile.ZIP_STORED)
+        # A bare string arcname would make zipfile stamp this entry with the current
+        # clock, and it was the only such entry in the archive (every other one is
+        # written from its source ZipInfo), so two repairs of one book differed in
+        # exactly those bytes. Carry the source timestamp over instead.
+        #
+        # A fresh ZipInfo rather than the source one: OCF requires the mimetype entry
+        # to carry no extra field, so reusing the source entry wholesale would
+        # propagate a violation from an already-broken book. external_attr matches
+        # what writestr sets for a string arcname, leaving the timestamp as the only
+        # change to the output.
+        mime_info = zipfile.ZipInfo(
+            "mimetype", date_time=src_mime.date_time if src_mime else MIMETYPE_EPOCH
+        )
+        mime_info.external_attr = 0o600 << 16
+        zout.writestr(mime_info, MIMETYPE, compress_type=zipfile.ZIP_STORED)
 
         # An entry is re-encoded only when a fix actually fired; an untouched entry is
         # copied byte-for-byte. Re-encoding the decode("utf-8", "replace") round-trip

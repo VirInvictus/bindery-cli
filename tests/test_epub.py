@@ -209,6 +209,43 @@ class TestMimetypeRepair(unittest.TestCase):
         self.assertEqual(first.compress_type, zipfile.ZIP_STORED)
         self.assertEqual(data, b"application/epub+zip")
 
+    def test_mimetype_keeps_the_source_timestamp(self):
+        # Written with a bare string arcname, zipfile stamped this entry with the
+        # current clock, so two repairs of one book differed in exactly those bytes.
+        # Carrying the source entry's timestamp over is what makes output
+        # reproducible; every other entry already keeps its own.
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            stamp = (2001, 2, 3, 4, 5, 6)
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr(
+                    zipfile.ZipInfo("mimetype", date_time=stamp), "application/epub+zip"
+                )
+                z.writestr("OEBPS/c1.xhtml", CONTENT)
+            repair_epub(src, dst)
+            with zipfile.ZipFile(dst) as z:
+                self.assertEqual(z.getinfo("mimetype").date_time, stamp)
+
+    def test_added_mimetype_gets_a_fixed_timestamp(self):
+        # Nothing to inherit when the entry is being added, so it takes the zip
+        # epoch rather than the wall clock, which would break reproducibility.
+        _, first, _ = self._repair(None)
+        self.assertEqual(first.date_time, (1980, 1, 1, 0, 0, 0))
+
+    def test_repair_is_byte_reproducible(self):
+        # The end the two tests above serve: repairing the same book twice must
+        # produce identical archives. This passed by luck before the fix, whenever
+        # both runs happened to land inside the same clock second.
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            build(src)
+            outs = []
+            for i in range(2):
+                d = Path(td) / f"out{i}.epub"
+                repair_epub(src, d, fix_ids=True)
+                outs.append(d.read_bytes())
+            self.assertEqual(outs[0], outs[1])
+
 
 class TestEscapeEntitiesFlag(unittest.TestCase):
     CONTENT_UNKNOWN = (
