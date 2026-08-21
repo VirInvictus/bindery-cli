@@ -1,9 +1,10 @@
-import ui
 import os
 import re
 import zipfile
 from pathlib import Path
 from urllib.parse import unquote
+
+import ui
 
 
 def find_missing_images(library_path):
@@ -62,14 +63,18 @@ def find_missing_images(library_path):
                 if missing_in_this_book:
                     broken_count += 1
                     rel_path = epub_path.relative_to(library)
-                    ui.tqdm.write(ui.error(f"[{broken_count}] Broken images in: {rel_path}"))
+                    ui.tqdm.write(
+                        ui.error(f"[{broken_count}] Broken images in: {rel_path}")
+                    )
                     for missing in sorted(missing_in_this_book):
                         ui.tqdm.write(f"    - Missing: {missing}")
                     ui.tqdm.write("")
         except Exception:
             pass  # Skip corrupted zip files
 
-    ui.print_summary({"books_scanned": len(epub_files), "books_with_broken_images": broken_count})
+    ui.print_summary(
+        {"books_scanned": len(epub_files), "books_with_broken_images": broken_count}
+    )
 
 
 if __name__ == "__main__":
