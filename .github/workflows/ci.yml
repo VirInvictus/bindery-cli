@@ -16,7 +16,7 @@ jobs:
       # html5lib is the project's declared optional `reserialize` extra (core stays
       # stdlib-only); installing it here lets CI exercise the --reserialize tests
       # instead of skipping them. ruff is a dev-only linter.
-      - run: pip install html5lib ruff==0.16.2
+      - run: pip install . html5lib ruff==0.16.2
       # The rule set lives in pyproject.toml, so these mean the same thing locally.
       # Checking `.` rather than named directories keeps a new top-level script from
       # silently escaping lint.
