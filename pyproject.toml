@@ -14,7 +14,8 @@ authors = [
 ]
 # Core is stdlib-only. html5lib is needed only for the opt-in --reserialize structural
 # repair; it is imported lazily, so every other mode works without it installed.
-dependencies = []
+dependencies = [
+  "tqdm",]
 
 [project.optional-dependencies]
 reserialize = ["html5lib>=1.1"]

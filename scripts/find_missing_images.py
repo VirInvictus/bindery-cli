@@ -1,3 +1,4 @@
+import ui
 import os
 import re
 import zipfile
@@ -9,11 +10,12 @@ def find_missing_images(library_path):
     library = Path(library_path)
     epub_files = list(library.rglob("*.epub"))
 
-    print(f"Scanning {len(epub_files)} EPUBs for broken image references...\n")
+    ui.print_header("find_missing_images.py - Broken Image Scanner")
+    print(f"Target: {library_path}\n")
 
     broken_count = 0
 
-    for epub_path in epub_files:
+    for epub_path in ui.tqdm(epub_files, desc=ui.info("Scanning EPUBs")):
         try:
             with zipfile.ZipFile(epub_path, "r") as z:
                 namelist = set(z.namelist())
@@ -60,14 +62,14 @@ def find_missing_images(library_path):
                 if missing_in_this_book:
                     broken_count += 1
                     rel_path = epub_path.relative_to(library)
-                    print(f"[{broken_count}] Broken images in: {rel_path}")
+                    ui.tqdm.write(ui.error(f"[{broken_count}] Broken images in: {rel_path}"))
                     for missing in sorted(missing_in_this_book):
-                        print(f"    - Missing: {missing}")
-                    print()
+                        ui.tqdm.write(f"    - Missing: {missing}")
+                    ui.tqdm.write("")
         except Exception:
             pass  # Skip corrupted zip files
 
-    print(f"Finished scan. Found {broken_count} books with broken image references.")
+    ui.print_summary({"books_scanned": len(epub_files), "books_with_broken_images": broken_count})
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ The lossy `--strip-pagination` mode is the exception to "must improve": removing
 
 ## Install
 
-Python 3.14+, plus epubcheck on `PATH` for the gate. The core is stdlib-only;
+Python 3.14+, plus epubcheck on `PATH` for the gate. The core is minimal-dependency (uses tqdm);
 `html5lib` is an optional extra, needed only for `--reserialize`.
 
 ```sh

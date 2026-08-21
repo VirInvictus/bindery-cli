@@ -1,3 +1,6 @@
+## v0.9.0 (2026-08-21)
+- **UI Upgrade:** CLI scripts now feature rich output (ANSI formatting, `tqdm` progress bars, and a clear summary block). The project is no longer strictly stdlib-only and now depends on `tqdm`.
+
 # Patch notes
 
 ## v0.10.2 (2026-08-09)
