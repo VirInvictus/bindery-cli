@@ -552,13 +552,18 @@ def build_parser() -> argparse.ArgumentParser:
         "shared fix flags (can be passed to either repair or library)"
     )
     _add_repair_flags(group)
+    lib_group = dummy.add_argument_group("library-specific integration")
+    lib_group.add_argument(
+        "--install-to-calibre",
+        action="store_true",
+        help="with --apply, use calibredb to natively replace the format in the Calibre database instead of filesystem replace",
+    )
     shared_help = dummy.format_help().strip()
 
     ap = argparse.ArgumentParser(
         prog="bindery",
         description="Repair EPUBs, epubcheck-gated.",
-        epilog=shared_help
-        + "\nRun `bindery <command> --help` to see command-specific flags (like --install-to-calibre).",
+        epilog=shared_help,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--version", action="version", version=f"bindery {__version__}")
