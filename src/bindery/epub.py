@@ -25,6 +25,7 @@ from .transforms import (
     strip_broken_tags,
     strip_invalid_attributes,
 )
+from .watermark import strip_watermark_html
 
 CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")
 
@@ -34,6 +35,9 @@ MIMETYPE = b"application/epub+zip"
 # A constant, not the wall clock, so repairing the same book twice is byte-identical.
 # 1980-01-01 is the earliest a zip can represent.
 MIMETYPE_EPOCH = (1980, 1, 1, 0, 0, 0)
+
+# Stray marker entries injected by producers (case-insensitive base name)
+MARKER_NAMES = {"oceanofpdf.com"}
 
 # Attribute regexes accept either quote style: a single-quoting toolchain would
 # otherwise make the NCX-001 sync and OPF location silently no-op. The ([\"']) group
@@ -245,6 +249,7 @@ def repair_epub(
     strip_attrs: bool = False,
     strip_pagination: bool = False,
     strip_brokentags: bool = False,
+    strip_watermarks: bool = False,
     escape_entities: bool = False,
     img_alt: bool = False,
 ) -> RepairReport:
@@ -261,6 +266,7 @@ def repair_epub(
     With `escape_entities`, escape entity names outside the HTML5 table
     (`&foo;` -> `&amp;foo;`); documents with a DOCTYPE internal subset are skipped.
     With `strip_brokentags`, strip leaked HTML closing tags (e.g. </P>) that render as text.
+    With `strip_watermarks`, remove known producer watermarks (e.g. OceanofPDF). (e.g. </P>) that render as text.
     """
     report = RepairReport()
 
@@ -313,6 +319,10 @@ def repair_epub(
             name = item.filename
             if name == "mimetype":
                 continue
+            if strip_watermarks and name.rsplit("/", 1)[-1].lower() in MARKER_NAMES:
+                report.files_changed += 1
+                report.add({"dropped_marker": 1})
+                continue
             # read(item), not read(name): with duplicate entry names (seen in broken
             # EPUBs), read(name) returns the first entry's bytes for every duplicate.
             data = zin.read(item)
@@ -360,6 +370,10 @@ def repair_epub(
                     text, n = reserialize_if_broken(text)
                     if n:
                         counts["reserialized"] = n
+                if strip_watermarks:
+                    text, n = strip_watermark_html(text)
+                    if n:
+                        counts["stripped_watermarks"] = n
                 if strip_brokentags:
                     text, n = strip_broken_tags(text)
                     if n:

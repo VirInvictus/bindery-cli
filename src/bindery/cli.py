@@ -44,6 +44,7 @@ def process_book(
     strip_attrs: bool = False,
     strip_pagination: bool = False,
     strip_brokentags: bool = False,
+    strip_watermarks: bool = False,
     escape_entities: bool = False,
     img_alt: bool = False,
     before: CheckResult | None = None,
@@ -61,6 +62,7 @@ def process_book(
         strip_attrs=strip_attrs,
         strip_pagination=strip_pagination,
         strip_brokentags=strip_brokentags,
+        strip_watermarks=strip_watermarks,
         escape_entities=escape_entities,
         img_alt=img_alt,
     )
@@ -444,6 +446,7 @@ def run_repair(args) -> int:
                 strip_attrs=args.strip_bad_attrs or getattr(args, "all", False),
                 strip_pagination=args.strip_pagination or getattr(args, "all", False),
                 strip_brokentags=args.strip_broken_tags or getattr(args, "all", False),
+                strip_watermarks=args.strip_watermarks or getattr(args, "all", False),
                 escape_entities=args.escape_unknown_entities
                 or getattr(args, "all", False),
                 img_alt=args.add_img_alt or getattr(args, "all", False),
@@ -523,6 +526,11 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         "--strip-broken-tags",
         action="store_true",
         help="LOSSY: remove leaked HTML closing tags missing their open bracket (e.g. </p> rendered as text) (epubcheck-gated)",
+    )
+    p.add_argument(
+        "--strip-watermarks",
+        action="store_true",
+        help="LOSSY: remove producer/distributor watermarks (e.g. OceanofPDF) (epubcheck-gated)",
     )
     p.add_argument(
         "--all",
