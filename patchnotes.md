@@ -1,5 +1,11 @@
 # Bindery Patch Notes
 
+## v0.12.3 (2026-08-22)
+
+### Improvements
+- **UI Upgrade:** Integrated `tqdm` progress bars directly into the core `bindery library` command, providing a real-time visual progress bar and ETA during the long-running sweep and candidate-processing phases.
+- Standardized documentation to reflect that `tqdm` is a core required dependency, formally moving away from the "strictly stdlib-only" constraint.
+
 ## v0.12.2 (2026-08-22)
 
 ### Improvements
