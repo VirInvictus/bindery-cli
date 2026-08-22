@@ -90,6 +90,9 @@ normal gate applies.
 Strips leaked HTML closing tags missing their open brackets (e.g. `</p>` rendering as raw text). 
 Since this removes visible text from the reading experience, it is lossy by design and off by default. It is evaluated via the `no_worse` acceptance gate.
 
+### Opt-in, lossy: watermark strip (`--strip-watermarks`)
+Strips known producer and redistributor watermarks out of EPUBs (e.g. OceanofPDF.com, ABC Amber LIT Converter). The removal is a balanced-element surgery rather than regex slicing: it locates the stamp and deletes the outermost wrapper whose *entire visible text* is the watermark, ensuring prose that merely mentions the URL is preserved. Also drops known zero-byte marker files. Like other lossy operations, this is verified via `no_worse`.
+
 ## Archive rewrite
 
 Entries are copied one at a time; `mimetype` is written first and `ZIP_STORED`. Its
