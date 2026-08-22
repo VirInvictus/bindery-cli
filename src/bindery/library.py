@@ -63,3 +63,20 @@ def atomic_replace(target: Path, new_file: Path) -> None:
         os.fsync(dfd)
     finally:
         os.close(dfd)
+
+import subprocess
+import re
+
+def calibredb_replace(target: Path, new_file: Path) -> None:
+    """Use calibredb to seamlessly replace the fixed EPUB in the library.
+    This preserves all metadata, custom columns, and reading progress natively.
+    """
+    match = re.search(r'\((\d+)\)/[^/]+\.epub$', str(target.absolute()))
+    if not match:
+        import sys
+        print(f"WARNING: Could not extract Calibre ID from {target.name}. Saving in place instead.", file=sys.stderr)
+        atomic_replace(target, new_file)
+        return
+    calibre_id = match.group(1)
+    
+    subprocess.run(["calibredb", "add_format", calibre_id, str(new_file), "--replace"], check=True)

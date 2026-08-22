@@ -23,6 +23,7 @@ from .transforms import (
     apply_transforms,
     escape_unknown_entities,
     strip_invalid_attributes,
+    strip_broken_tags,
 )
 
 CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")
@@ -243,6 +244,7 @@ def repair_epub(
     reserialize: bool = False,
     strip_attrs: bool = False,
     strip_pagination: bool = False,
+    strip_brokentags: bool = False,
     escape_entities: bool = False,
     img_alt: bool = False,
 ) -> RepairReport:
@@ -258,6 +260,7 @@ def repair_epub(
     html5lib (closes unclosed non-void elements); good documents are left untouched.
     With `escape_entities`, escape entity names outside the HTML5 table
     (`&foo;` -> `&amp;foo;`); documents with a DOCTYPE internal subset are skipped.
+    With `strip_brokentags`, strip leaked HTML closing tags (e.g. </P>) that render as text.
     """
     report = RepairReport()
 
@@ -357,6 +360,10 @@ def repair_epub(
                     text, n = reserialize_if_broken(text)
                     if n:
                         counts["reserialized"] = n
+                if strip_brokentags:
+                    text, n = strip_broken_tags(text)
+                    if n:
+                        counts["stripped_broken_tags"] = n
                 if strip_pagination:
                     text, n = strip_pagination_doc(text, runheads, delete_layer)
                     if n:

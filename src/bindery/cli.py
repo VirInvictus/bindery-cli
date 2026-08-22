@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import __version__
 from .epub import ncx_uid_mismatch, repair_epub
-from .library import atomic_replace, iter_epubs, make_backup
+from .library import atomic_replace, calibredb_replace, iter_epubs, make_backup
 from .validate import (
     CheckResult,
     epubcheck_available,
@@ -43,6 +43,7 @@ def process_book(
     reserialize: bool = False,
     strip_attrs: bool = False,
     strip_pagination: bool = False,
+    strip_brokentags: bool = False,
     escape_entities: bool = False,
     img_alt: bool = False,
     before: CheckResult | None = None,
@@ -59,6 +60,7 @@ def process_book(
         reserialize=reserialize,
         strip_attrs=strip_attrs,
         strip_pagination=strip_pagination,
+        strip_brokentags=strip_brokentags,
         escape_entities=escape_entities,
         img_alt=img_alt,
     )
@@ -81,7 +83,7 @@ def process_book(
         # repair, so it must never be applied. Only --no-validate skips the gate.
         return Outcome(epub, "error", before, after, summary + " (epubcheck failed)")
     verdict = gate(before, after)
-    if report.fixes.get("stripped_pagination"):
+    if report.fixes.get("stripped_pagination") or report.fixes.get("stripped_broken_tags"):
         # The strip's gain (in-body page numbers removed) is invisible to epubcheck, so
         # 'no measurable gain' is expected; accept as long as nothing regressed. But a
         # book that still has fatals will not open: no_worse must never promote it past
@@ -265,12 +267,13 @@ def run_library(args) -> int:
                     epub,
                     work,
                     validate,
-                    fix_ids=args.fix_ids,
-                    reserialize=args.reserialize,
-                    strip_attrs=args.strip_bad_attrs,
-                    strip_pagination=args.strip_pagination,
-                    escape_entities=args.escape_unknown_entities,
-                    img_alt=args.add_img_alt,
+                    fix_ids=args.fix_ids or getattr(args, "all", False),
+                    reserialize=args.reserialize or getattr(args, "all", False),
+                    strip_attrs=args.strip_bad_attrs or getattr(args, "all", False),
+                    strip_pagination=args.strip_pagination or getattr(args, "all", False),
+                    strip_brokentags=args.strip_broken_tags or getattr(args, "all", False),
+                    escape_entities=args.escape_unknown_entities or getattr(args, "all", False),
+                    img_alt=args.add_img_alt or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -319,7 +322,10 @@ def run_library(args) -> int:
             if args.apply:
                 if backup_dir is not None or args.backup_inplace:
                     make_backup(epub, backup_dir)
-                atomic_replace(epub, work / "repaired.epub")
+                if args.install_to_calibre:
+                    calibredb_replace(epub, work / "repaired.epub")
+                else:
+                    atomic_replace(epub, work / "repaired.epub")
                 applied += 1
                 applied_paths.add(epub)
                 tag = "APPLIED"
@@ -428,12 +434,13 @@ def run_repair(args) -> int:
                 src,
                 work,
                 validate=not args.no_validate,
-                fix_ids=args.fix_ids,
-                reserialize=args.reserialize,
-                strip_attrs=args.strip_bad_attrs,
-                strip_pagination=args.strip_pagination,
-                escape_entities=args.escape_unknown_entities,
-                img_alt=args.add_img_alt,
+                fix_ids=args.fix_ids or getattr(args, "all", False),
+                reserialize=args.reserialize or getattr(args, "all", False),
+                strip_attrs=args.strip_bad_attrs or getattr(args, "all", False),
+                strip_pagination=args.strip_pagination or getattr(args, "all", False),
+                strip_brokentags=args.strip_broken_tags or getattr(args, "all", False),
+                escape_entities=args.escape_unknown_entities or getattr(args, "all", False),
+                img_alt=args.add_img_alt or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -506,6 +513,16 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         "text by a bad conversion, rejoining sentences they split (epubcheck-gated, "
         "accepted when no worse)",
     )
+    p.add_argument(
+        "--strip-broken-tags",
+        action="store_true",
+        help="LOSSY: remove leaked HTML closing tags missing their open bracket (e.g. </p> rendered as text) (epubcheck-gated)",
+    )
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="enable all individual fix flags",
+    )
     p.add_argument("--no-validate", action="store_true", help="skip the epubcheck gate")
 
 
@@ -559,6 +576,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="write the paths of books that were not auto-repaired "
         "(nochange/equal/partial/reject/error/unreadable), one per line",
+    )
+    lib.add_argument(
+        "--install-to-calibre",
+        action="store_true",
+        help="with --apply, use calibredb to natively replace the format in the Calibre database instead of filesystem replace",
     )
     lib.add_argument("--backup", help="directory to mirror backups into before --apply")
     lib.add_argument(
