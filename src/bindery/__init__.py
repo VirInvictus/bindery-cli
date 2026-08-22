@@ -4,7 +4,7 @@ strip), epubcheck-gated.
 Single source of truth for the version. pyproject.toml must match VERSION below.
 """
 
-VERSION = "0.12.3"
+VERSION = "0.13.0"
 __version__ = VERSION
 
 from .epub import RepairReport, repair_epub  # noqa: E402

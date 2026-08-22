@@ -1,5 +1,11 @@
 # Bindery Patch Notes
 
+## v0.13.0 (2026-08-22)
+
+### Structural Changes
+- **Epubcheck Daemon:** Radically accelerated the `bindery library` validation gate by implementing a transparent, persistent Java daemon. Bindery now automatically compiles `FastDaemon.java` in the background and pipes EPUB paths to it, eliminating the JVM startup penalty.
+- Validation time dropped from ~5 seconds per book down to under ~0.05 seconds per book, cutting library sweeps from 6 hours to 10 minutes.
+
 ## v0.12.3 (2026-08-22)
 
 ### Improvements
