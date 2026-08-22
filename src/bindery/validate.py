@@ -70,7 +70,118 @@ def _counts_from_json(stdout: str) -> CheckResult | None:
         return None
 
 
+_DAEMON_JAVA = """
+import java.io.File;
+import java.io.PrintWriter;
+import java.util.Scanner;
+import com.adobe.epubcheck.api.EpubCheck;
+import com.adobe.epubcheck.reporting.CheckingReport;
+
+public class FastDaemon {
+    public static void main(String[] args) throws Exception {
+        Scanner scanner = new Scanner(System.in);
+        while (scanner.hasNextLine()) {
+            String path = scanner.nextLine();
+            if (path.trim().isEmpty()) continue;
+            File epub = new File(path);
+            if (!epub.exists()) {
+                System.out.println("-1,-1,-1");
+                continue;
+            }
+            try {
+                PrintWriter out = new PrintWriter(new java.io.OutputStream() {
+                    public void write(int b) {}
+                });
+                CheckingReport report = new CheckingReport(out, epub.getName());
+                EpubCheck check = new EpubCheck(epub, report);
+                check.doValidate();
+                System.out.println(report.getFatalErrorCount() + "," + report.getErrorCount() + "," + report.getWarningCount());
+            } catch (Exception e) {
+                System.out.println("-1,-1,-1");
+            }
+        }
+    }
+}
+"""
+
+
+class _EpubcheckDaemon:
+    def __init__(self):
+        self._proc = None
+        self._lock = __import__("threading").Lock()
+
+    def _start(self):
+        epubcheck_bin = shutil.which("epubcheck")
+        if not epubcheck_bin:
+            return False
+
+        try:
+            with open(epubcheck_bin) as f:
+                script = f.read()
+            m = re.search(
+                r"java\s+(?:-[^ ]+\s+)*-jar\s+[\"'\\]*([^\s\"'\\]+\.jar)", script
+            )
+            if not m:
+                return False
+            jar_path = os.path.expandvars(m.group(1))
+            if not os.path.exists(jar_path):
+                return False
+
+            self.workdir = __import__("tempfile").mkdtemp(prefix="bindery-daemon-")
+            java_file = os.path.join(self.workdir, "FastDaemon.java")
+            with open(java_file, "w") as f:
+                f.write(_DAEMON_JAVA)
+
+            subprocess.run(
+                ["javac", "-cp", jar_path, java_file], check=True, capture_output=True
+            )
+
+            self._proc = subprocess.Popen(
+                ["java", "-cp", f".:{jar_path}", "FastDaemon"],
+                cwd=self.workdir,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+            __import__("atexit").register(self.stop)
+            return True
+        except Exception:
+            return False
+
+    def check(self, path: Path) -> CheckResult | None:
+        with self._lock:
+            if self._proc is None:
+                if not self._start():
+                    return None
+            try:
+                self._proc.stdin.write(str(path.resolve()) + "\n")
+                self._proc.stdin.flush()
+                res = self._proc.stdout.readline().strip()
+                if not res or res == "-1,-1,-1":
+                    return None
+                f, e, w = map(int, res.split(","))
+                return CheckResult(f, e, w)
+            except Exception:
+                return None
+
+    def stop(self):
+        if self._proc:
+            self._proc.terminate()
+            self._proc = None
+        if hasattr(self, "workdir") and os.path.exists(self.workdir):
+            shutil.rmtree(self.workdir, ignore_errors=True)
+
+
+_daemon = _EpubcheckDaemon()
+
+
 def run_epubcheck(path: Path, timeout: int = 300) -> CheckResult | None:
+    res = _daemon.check(path)
+    if res is not None:
+        return res
+
     """Run epubcheck and return parsed counts, or None if it could not be parsed.
 
     Counts come from `--json -` (locale-independent) first; the English
