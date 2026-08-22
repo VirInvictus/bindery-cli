@@ -86,6 +86,10 @@ normal gate applies.
 - **Already-correct markup is untouched.** Self-closed void elements, predefined and
   numeric entities, and single `xmlns` declarations are left exactly as they are.
 
+### Opt-in, lossy: broken tags strip (`--strip-broken-tags`)
+Strips leaked HTML closing tags missing their open brackets (e.g. `</p>` rendering as raw text). 
+Since this removes visible text from the reading experience, it is lossy by design and off by default. It is evaluated via the `no_worse` acceptance gate.
+
 ## Archive rewrite
 
 Entries are copied one at a time; `mimetype` is written first and `ZIP_STORED`. Its
@@ -186,6 +190,9 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
   reported and counted as `unreadable`; it never aborts the rest of the sweep.
 - The `library` exit code is 0 for a clean sweep, 1 for a usage error, and 2 when any
   book was rejected, unreadable, or failed epubcheck, so scripts can detect trouble.
+
+### calibredb replacement (`--install-to-calibre`)
+Optionally, Bindery can replace the format natively inside Calibre using `calibredb add_format --replace`. This natively manages the database change (updating sizes, retaining metadata, keeping custom columns intact). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted from the candidate's filesystem path.
 
 ## Out of scope (non-goals)
 

@@ -17,8 +17,8 @@ the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
   not a Python one. Before adding any further Python package, stop and ask.
 - **Semantics-preserving transforms only, with ONE carved-out exception.** Every core
   fix must render identically to the author's intent (self-close void, numeric entities,
-  escaped `&`): never add, remove, or reorder visible content. The lone deliberate
-  exception is the opt-in `--strip-pagination` mode (`pagination.py`), which removes
+  escaped `&`): never add, remove, or reorder visible content. The deliberate exceptions
+  are the opt-in `--strip-pagination` and `--strip-broken-tags` modes (`pagination.py`), which removes
   visible content the author never wrote (a PDF/OCR converter's baked-in page numbers
   and running headers) and rejoins sentences they split. It is lossy by design, off
   unless requested, and fenced behind three independent safety nets (character
@@ -27,12 +27,12 @@ the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
   not belong here, report it for manual repair instead.
 - **The gate is the safety contract.** Never apply a repair epubcheck has not accepted.
   Respect the two-mode logic in `validate.gate` (fatal-fixing tolerates error unmasking;
-  error-cleanup does not). The lossy `--strip-pagination` mode is accepted by
+  error-cleanup does not). The lossy `--strip-pagination` and `--strip-broken-tags` modes are accepted by
   `validate.no_worse` instead (its gain is invisible to epubcheck, so it only forbids a
   regression, never demands a measured improvement). Changing either means re-running the
   library dry run.
 - **Library writes are sacred.** Replacement must stay atomic (temp in same dir, then
-  `os.replace`), touch only the `.epub`, preserve mode, and be dry-run by default.
+  `os.replace`), touch only the `.epub`, preserve mode, and be dry-run by default. Calibre integrations should seamlessly swap formats using `calibredb add_format --replace`.
   Never write to the library without `--apply`. Test every change on `/tmp` copies first.
 
 ## Layout
