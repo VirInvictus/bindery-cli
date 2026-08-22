@@ -83,6 +83,4 @@ def calibredb_replace(target: Path, new_file: Path) -> None:
         return
     calibre_id = match.group(1)
 
-    subprocess.run(
-        ["calibredb", "add_format", calibre_id, str(new_file)], check=True
-    )
+    subprocess.run(["calibredb", "add_format", calibre_id, str(new_file)], check=True)
