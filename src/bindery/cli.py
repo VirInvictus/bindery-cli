@@ -548,15 +548,18 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     # Generate an attractive, perfectly aligned help block for the shared flags
     dummy = argparse.ArgumentParser(add_help=False, usage=argparse.SUPPRESS)
-    group = dummy.add_argument_group("shared fix flags (can be passed to either repair or library)")
+    group = dummy.add_argument_group(
+        "shared fix flags (can be passed to either repair or library)"
+    )
     _add_repair_flags(group)
     shared_help = dummy.format_help().strip()
 
     ap = argparse.ArgumentParser(
         prog="bindery",
         description="Repair EPUBs, epubcheck-gated.",
-        epilog=shared_help + "\nRun `bindery <command> --help` to see command-specific flags (like --install-to-calibre).",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        epilog=shared_help
+        + "\nRun `bindery <command> --help` to see command-specific flags (like --install-to-calibre).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--version", action="version", version=f"bindery {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
