@@ -82,6 +82,12 @@ Apply accepted repairs in place, atomically, with backups:
 bindery library ~/docs/Calibre\ Library --only fatals --apply --backup ~/bindery-backups
 ```
 
+Apply all safe and lossy repairs directly into the Calibre database natively:
+
+```sh
+bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-calibre
+```
+
 - `--only {fatals,ncx,all}` restricts the candidate set. `ncx` targets NCX-001 mismatches (detected without epubcheck); `fatals` needs `--audit`.
 - `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast. Paths are resolved on both sides, and a CSV that matches nothing triggers a loud warning instead of silently selecting zero books.
 - `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. Combine with `--only fatals` for a self-contained "find and fix the broken books" run.

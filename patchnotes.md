@@ -1,5 +1,11 @@
 # Bindery Patch Notes
 
+## v0.12.2 (2026-08-22)
+
+### Improvements
+- **CLI Help Upgrade:** Explicitly surfaced the `--install-to-calibre` option on the root `bindery --help` menu by creating a dedicated `library-specific integration` argparse group.
+- **Documentation:** Added a prominent code example for `--install-to-calibre` to the Usage section of the `README.md`.
+
 ## v0.12.1 (2026-08-22)
 
 ### Improvements
