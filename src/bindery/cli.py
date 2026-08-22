@@ -235,10 +235,10 @@ def run_library(args) -> int:
     checks: dict[Path, CheckResult] = {}
     all_epubs = list(iter_epubs(root))
     if args.sweep:
-        iterator = all_epubs if args.quiet else tqdm(all_epubs, desc="Sweeping", unit="book")
-        selected = _sweep_select(
-            iterator, args.only, root, checks, quiet=args.quiet
+        iterator = (
+            all_epubs if args.quiet else tqdm(all_epubs, desc="Sweeping", unit="book")
         )
+        selected = _sweep_select(iterator, args.only, root, checks, quiet=args.quiet)
     else:
         selected = _select(all_epubs, args.only, audit, audit_hits)
     if args.limit is not None:
@@ -252,7 +252,6 @@ def run_library(args) -> int:
     else:
         candidates = list(selected)
         header = f"{len(candidates)} candidate book(s)"
-    total = len(candidates)
 
     mode = "APPLY" if args.apply else "DRY-RUN"
     print(f"Bindery {mode}: {header}, only={args.only}, validate={validate}\n")
@@ -265,7 +264,11 @@ def run_library(args) -> int:
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
-        repair_iterator = candidates if args.quiet else tqdm(candidates, desc="Repairing", unit="book")
+        repair_iterator = (
+            candidates
+            if args.quiet
+            else tqdm(candidates, desc="Repairing", unit="book")
+        )
         for epub in repair_iterator:
             processed += 1
             rel = epub.relative_to(root)
