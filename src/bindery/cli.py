@@ -546,17 +546,16 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    desc = (
-        "Repair EPUBs, epubcheck-gated.\n\n"
-        "Bindery safely fixes structural EPUB defects and offers opt-in lossy strips:\n"
-        "  --strip-pagination    Remove baked-in page numbers and running headers\n"
-        "  --strip-broken-tags   Remove leaked HTML closing tags (e.g. </p>)\n"
-        "  --strip-watermarks    Remove producer/distributor watermarks (e.g. OceanofPDF)\n\n"
-        "Use `bindery <command> --help` to see all available flags, including --all and --install-to-calibre."
-    )
+    # Generate an attractive, perfectly aligned help block for the shared flags
+    dummy = argparse.ArgumentParser(add_help=False, usage=argparse.SUPPRESS)
+    group = dummy.add_argument_group("shared fix flags (can be passed to either repair or library)")
+    _add_repair_flags(group)
+    shared_help = dummy.format_help().strip()
+
     ap = argparse.ArgumentParser(
         prog="bindery",
-        description=desc,
+        description="Repair EPUBs, epubcheck-gated.",
+        epilog=shared_help + "\nRun `bindery <command> --help` to see command-specific flags (like --install-to-calibre).",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--version", action="version", version=f"bindery {__version__}")

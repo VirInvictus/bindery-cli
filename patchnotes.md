@@ -1,5 +1,10 @@
 # Bindery Patch Notes
 
+## v0.12.1 (2026-08-22)
+
+### Improvements
+- **CLI Help Formatting:** Restructured the root `bindery --help` menu to natively render the shared fix flags as a properly aligned `argparse` table, matching the clean visual style of the subcommands and other portfolio tools.
+
 ## v0.12.0 (2026-08-22)
 
 ### Features
