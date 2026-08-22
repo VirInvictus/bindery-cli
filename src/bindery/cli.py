@@ -546,8 +546,18 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    desc = (
+        "Repair EPUBs, epubcheck-gated.\n\n"
+        "Bindery safely fixes structural EPUB defects and offers opt-in lossy strips:\n"
+        "  --strip-pagination    Remove baked-in page numbers and running headers\n"
+        "  --strip-broken-tags   Remove leaked HTML closing tags (e.g. </p>)\n"
+        "  --strip-watermarks    Remove producer/distributor watermarks (e.g. OceanofPDF)\n\n"
+        "Use `bindery <command> --help` to see all available flags, including --all and --install-to-calibre."
+    )
     ap = argparse.ArgumentParser(
-        prog="bindery", description="Repair EPUBs, epubcheck-gated."
+        prog="bindery",
+        description=desc,
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--version", action="version", version=f"bindery {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
