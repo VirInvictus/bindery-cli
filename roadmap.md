@@ -10,14 +10,14 @@
 - [x] `repair` (single file) and `library` (batch) CLI modes
 - [x] Atomic in-place library replacement with optional backups; dry run by default
 - [x] `--only {fatals,ncx,all}` and `--audit CSV` candidate filtering
-- [x] stdlib `unittest` suite (transforms, archive rewrite, atomic replace)
+- [x] `unittest` suite (transforms, archive rewrite, atomic replace)
 - [x] Validated on the real library: 24 of ~40 fatal books fully de-fataled with zero
       epubcheck regressions; the rest reported for manual follow-up
 
 ## Phase 2: the long tail (shipped across v0.2.0-v0.7.0)
 
 - [x] Unclosed **non-void** elements (`<p>`, `<span>`, `<body>`, `<blockquote>`): needs
-      a forgiving HTML parser that re-serializes as XHTML. Evaluate a stdlib
+      a forgiving HTML parser that re-serializes as XHTML. Evaluate a standard
       `html.parser` rebuild vs. asking to add `lxml`. *(shipped as `--reserialize`
       via html5lib, v0.3.0; duplicate of the entry below)*
 - [x] Strip unbound namespace cruft (`v:shapes` and friends from Office HTML)
@@ -58,7 +58,7 @@ converter injected, never content the author wrote.*
 
 *A full bugfix/UX/usefulness audit of v0.5.0. The three items in 5.1 were confirmed
 bugs, reproduced by executing the real code paths (not just by reading). Sections
-5.1 through 5.4 shipped in v0.6.0, each fix with a stdlib-unittest regression test;
+5.1 through 5.4 shipped in v0.6.0, each fix with a standard-unittest regression test;
 the mimetype fix (5.5) and the spec documentation (5.6) followed in v0.7.0, and the
 unknown-entity escape (5.5) in v0.8.0, and the last survivor, the epubcheck
 locale hardening (5.2), in v0.10.0. Phase 5 is closed.*
@@ -124,7 +124,7 @@ locale hardening (5.2), in v0.10.0. Phase 5 is closed.*
 - [x] **Make `html5lib` an optional extra, as the docs promise.** *(done, v0.6.0)* `pyproject.toml`
       declares `dependencies = ["html5lib>=1.1"]`, so `uv tool install` always drags
       it in, while README, CLAUDE.md, and the pyproject comment itself all say the
-      core is stdlib-only and html5lib is needed only for `--reserialize` (it is
+      core is minimal and html5lib is needed only for `--reserialize` (it is
       imported lazily in `reserialize.py`). Fix: move it to
       `[project.optional-dependencies] reserialize = ["html5lib>=1.1"]`, update the
       README install section (`uv tool install "bindery[reserialize]"` for the full
@@ -183,7 +183,7 @@ locale hardening (5.2), in v0.10.0. Phase 5 is closed.*
       Fix: print a lightweight progress line per book or every N books, e.g.
       `[123/4051] Author/Title.epub`, to stderr so stdout stays a clean report (stdout
       is already line-buffered via `main`). Consider `--quiet` to suppress it. No
-      third-party progress bars (stdlib-only core); a simple counter is enough.
+      third-party progress bars (minimal core); a simple counter is enough.
 
 - [x] **Warn when the audit CSV overlaps zero candidates.** *(done, v0.6.0)* `_load_audit` keys must
       equal `str(epub)` exactly; running `library` with a relative path (or an audit
@@ -309,7 +309,7 @@ Three consequences worth stating, because they change existing plans:
    so the size it records is already correct. The nudge was solving a problem
    created by replacing files behind Calibre's back.
 2. **The plugin must carry its own code.** It runs inside Calibre's bundled
-   Python, which will not have either tool pip-installed. Both being stdlib-first
+   Python, which will not have either tool pip-installed. Both being minimal-dependency
    is what makes this practical: the module vendors into the plugin zip. Bindery's
    optional `html5lib` path and its epubcheck gate cannot come along, so the
    plugin must degrade honestly rather than half-run.

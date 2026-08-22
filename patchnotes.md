@@ -29,7 +29,7 @@
 ## v0.10.3 (2026-08-21)
 
 ### Improvements
-- **UI Upgrade:** CLI scripts now feature rich terminal output with ANSI formatting, `tqdm` progress bars, and clear summary blocks. The project now relies on `tqdm` for output formatting and is no longer strictly stdlib-only.
+- **UI Upgrade:** CLI scripts now feature rich terminal output with ANSI formatting, `tqdm` progress bars, and clear summary blocks. The project now relies on `tqdm` for output formatting.
 
 ## v0.10.2 (2026-08-09)
 
@@ -129,7 +129,7 @@ that the correct hook does not create.
 
 Two constraints recorded with the decision, because they shape what the plugin can
 be: it runs inside Calibre's bundled Python, so it must vendor its own code and
-cannot assume Bindery is installed (the stdlib-first rule is what makes this
+cannot assume Bindery is installed (the minimal-dependency rule is what makes this
 practical, and the optional `html5lib` path cannot come along); and epubcheck
 cannot gate an import, being an external Java process of seconds per book, so the
 plugin does the deterministic transforms and leaves gated work to the CLI where a
@@ -219,7 +219,7 @@ joins the core repair set.
 ## v0.6.0 (2026-07-02)
 
 The Phase 5 audit sweep: three confirmed safety bugs fixed, packaging honesty, and a
-round of CLI hardening and UX. Every fix ships with a stdlib-unittest regression test.
+round of CLI hardening and UX. Every fix ships with a unittest regression test.
 
 **Safety and correctness:**
 
@@ -245,7 +245,7 @@ round of CLI hardening and UX. Every fix ships with a stdlib-unittest regression
 
 - **`html5lib` is now the optional extra the docs always promised.** It moved from
   `dependencies` to `[project.optional-dependencies]`, so a plain install is genuinely
-  stdlib-only; `bindery[reserialize]` pulls it in for `--reserialize`.
+  minimal; `bindery[reserialize]` pulls it in for `--reserialize`.
 
 **CLI hardening:**
 
@@ -369,7 +369,7 @@ the safety contract.
   so good files are left byte-for-byte unchanged, and only when opted in.
 - **New dependency: html5lib** (for `--reserialize` only). Imported lazily; every other
   mode runs with no third-party dependency. This is the one approved exception to the
-  stdlib-first design.
+  minimal-dependency design.
 - Verified on the 12 markup-fatal library books: `--reserialize --fix-ids` clears 10 of
   12 to zero fatals (content preserved; the 2 holdouts are Office-VML and broken-SVG
   foreign content). All gate-accepted.
@@ -403,7 +403,7 @@ First release. A focused EPUB repair tool, sibling to oceanstrip, born from audi
 - `repair` (single file) and `library` (batch) CLI modes. Library mode is a dry run by
   default; `--apply` replaces accepted books in place, atomically, with optional backups.
   Only the `.epub` is touched, so Calibre's Quality Check sync can reconcile the database.
-- stdlib `unittest` suite; no third-party dependencies.
+- `unittest` suite; minimal dependencies.
 
 Validated on the real library: 24 of ~40 fatal books fully de-fataled (they now open),
 6 partially improved and flagged for manual finish, the rest left untouched, and zero

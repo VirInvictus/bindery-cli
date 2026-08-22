@@ -53,7 +53,7 @@ Python 3.14+, plus epubcheck on `PATH` for the gate. The core is minimal-depende
 `html5lib` is an optional extra, needed only for `--reserialize`.
 
 ```sh
-uv tool install /path/to/Bindery                    # stdlib core
+uv tool install /path/to/Bindery                    # core tools
 uv tool install "bindery[reserialize] @ /path/to/Bindery"   # incl. --reserialize
 # or from a checkout:
 PYTHONPATH=src python3 -m bindery --help          # all modes except --reserialize
@@ -109,7 +109,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 ## Development
 
 ```sh
-./run_tests.sh        # stdlib unittest suite
+./run_tests.sh        # unittest suite
 ```
 
 See [spec.md](spec.md) for the full contract and [roadmap.md](roadmap.md) for what is planned.

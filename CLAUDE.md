@@ -10,11 +10,10 @@ the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
 
 ## Hard constraints
 
-- **Stdlib-first.** The core (transforms, archive rewrite, gate, library replace) has
-  minimal third-party dependencies (`tqdm` for output rendering) and stdlib `unittest` tests. The one approved exception is
-  **html5lib**, used only by the opt-in `-reserialize` structural repair and imported
+- **Minimal Dependencies.** The core (transforms, archive rewrite, gate, library replace) relies on `tqdm` for output rendering and progress bars, and uses the standard `unittest` framework. The one approved exception for heavy parsing is
+  `html5lib` (used only for the `--reserialize` fix), which is imported
   lazily (so every other mode runs without it). epubcheck is an external CLI dependency,
-  not a Python one. Before adding any further Python package, stop and ask.
+  and `calibredb` is required for the `--install-to-calibre` feature. Before adding any further Python package, stop and ask.
 - **Semantics-preserving transforms only, with ONE carved-out exception.** Every core
   fix must render identically to the author's intent (self-close void, numeric entities,
   escaped `&`): never add, remove, or reorder visible content. The deliberate exceptions

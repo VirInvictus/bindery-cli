@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
 
+from tqdm import tqdm
+
 from . import __version__
 from .epub import ncx_uid_mismatch, repair_epub
 from .library import atomic_replace, calibredb_replace, iter_epubs, make_backup
@@ -154,7 +156,7 @@ def _sweep_select(epubs, only: str, root: Path, checks: dict, *, quiet: bool):
     classify it as an error."""
     for epub in epubs:
         if not quiet:
-            print(f"[sweep] {epub.relative_to(root)}", file=sys.stderr)
+            tqdm.write(f"[sweep] {epub.relative_to(root)}", file=sys.stderr)
         counts = run_epubcheck(epub)
         if counts is not None:
             checks[epub] = counts
@@ -231,12 +233,14 @@ def run_library(args) -> int:
 
     audit_hits: list[Path] = []
     checks: dict[Path, CheckResult] = {}
+    all_epubs = list(iter_epubs(root))
     if args.sweep:
+        iterator = all_epubs if args.quiet else tqdm(all_epubs, desc="Sweeping", unit="book")
         selected = _sweep_select(
-            iter_epubs(root), args.only, root, checks, quiet=args.quiet
+            iterator, args.only, root, checks, quiet=args.quiet
         )
     else:
-        selected = _select(iter_epubs(root), args.only, audit, audit_hits)
+        selected = _select(all_epubs, args.only, audit, audit_hits)
     if args.limit is not None:
         # islice keeps the scan lazy: draining it pulls at most `limit` candidates, so
         # --only ncx --limit 20 still stops opening archives after the 20th instead of
@@ -261,14 +265,10 @@ def run_library(args) -> int:
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
-        for epub in candidates:
+        repair_iterator = candidates if args.quiet else tqdm(candidates, desc="Repairing", unit="book")
+        for epub in repair_iterator:
             processed += 1
             rel = epub.relative_to(root)
-            if not args.quiet:
-                # Progress goes to stderr so stdout stays a clean report; nochange and
-                # equal books print nothing there, and with validation each book costs
-                # seconds of epubcheck time.
-                print(f"[{processed}/{total}] {rel}", file=sys.stderr)
             try:
                 o = process_book(
                     epub,
@@ -293,7 +293,7 @@ def run_library(args) -> int:
                 # multi-hour sweep; report it and keep going.
                 unreadable += 1
                 records.append(Outcome(epub, "unreadable", None, None, str(e)))
-                print(f"  ERROR   {rel}\n            unreadable: {e}")
+                tqdm.write(f"  ERROR   {rel}\n            unreadable: {e}")
                 continue
             records.append(o)
             if o.status == "nochange":
@@ -301,7 +301,7 @@ def run_library(args) -> int:
                 continue
             if o.status == "reject":
                 rejected += 1
-                print(
+                tqdm.write(
                     f"  REJECT  {rel}\n            {o.before} -> {o.after}  {o.summary}"
                 )
                 continue
@@ -310,14 +310,14 @@ def run_library(args) -> int:
                 continue
             if o.status == "error":
                 errors += 1
-                print(f"  ERROR   {rel}\n            {o.summary}; not applied")
+                tqdm.write(f"  ERROR   {rel}\n            {o.summary}; not applied")
                 continue
             if o.status == "partial":
                 # Fewer fatals but not zero: a real improvement, but the book still will
                 # not open, so it needs manual work. Never auto-applied.
                 partials += 1
                 still_fatal.append((rel, o.after))
-                print(
+                tqdm.write(
                     f"  PARTIAL {rel}\n            {o.before} -> {o.after}  {o.summary}"
                 )
                 continue
@@ -341,7 +341,7 @@ def run_library(args) -> int:
                 applied += 1
                 applied_paths.add(epub)
                 tag = "APPLIED"
-            print(f"  {tag}  {rel}\n            {ba}{o.summary}")
+            tqdm.write(f"  {tag}  {rel}\n            {ba}{o.summary}")
 
     if audit is not None and not audit_hits:
         print(
