@@ -321,3 +321,13 @@ Three consequences worth stating, because they change existing plans:
 This is one plugin *shape* serving both tools, not one shared plugin: they are
 separate repos with separate licences and no dependency between them.
 
+
+## Supplementary Phase (Based on Library Audit)
+Following a comprehensive sweep of a 5,000-book library (detailed in `BINDERY_REPORT.md`), several recurring `epubcheck` schemas were identified that Bindery currently does not resolve. An AI agent picking up this roadmap should build standard, opt-in/safe repairs for the following:
+
+- [ ] **XML NCName Violation (`id` contains colons):** Fix IDs that contain invalid characters (specifically colons like `id="foo:bar"`). These must be string-replaced in the declaration and across all referencing `href` or `idref` attributes throughout the EPUB.
+- [ ] **Empty Body (`<body></body>`):** Inject a structural placeholder (e.g., an empty `<div>` or `<p>`) or gracefully remove empty XHTML documents if they are unreferenced.
+- [ ] **Missing `<title>` in `<head>`:** Inject a placeholder `<title>` tag in XHTML documents where it is entirely omitted.
+- [ ] **Block-in-Inline Nesting (`<span><div></div></span>`):** Develop a strategy to unwrap or restructure inline elements that improperly contain block-level children.
+- [ ] **NCX Duplicate `playOrder`:** Re-sequence `playOrder` integers in the `toc.ncx` file to ensure they are strictly sequential without gaps or duplicates.
+- [ ] **Invalid Attributes (`value` in lists):** Strip invalid `value` attributes from tags where they don't belong according to EPUB schemas (such as arbitrary `<li>` markers).
