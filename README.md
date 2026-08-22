@@ -27,6 +27,14 @@ Five opt-in fixes go further:
 - **`--reserialize`**: rebuild content documents that are still malformed by re-parsing them with html5lib and re-emitting XHTML, closing unclosed `<p>`/`<div>`/`<span>`/`<blockquote>` that the regex transforms cannot. Runs only on documents that are not already well-formed, so good files are untouched.
 - **`--strip-bad-attrs`**: drop attributes that are invalid XML (a name starting with a digit, or a namespaced name whose prefix is never declared, like Office VML `v:shapes`). Surgical and a no-op on well-formed files.
 - **`--escape-unknown-entities`**: escape entity names that are not in the HTML5 table (`&foo;` becomes `&amp;foo;`), which renders exactly as browsers already render an unknown entity: the literal text. Documents whose DOCTYPE carries an internal subset are skipped wholesale, since a subset can declare custom entities.
+- **`--fix-ncx-playorder`**: safely rewrites duplicated `playOrder` attributes sequentially in the NCX table of contents.
+- **`--fix-id-colons`**: translates illegal colons in `id="X:Y"` and their matching `#X:Y` fragment references to valid underscores.
+- **`--fix-empty-body`**: appends a non-breaking space `&nbsp;` to strictly empty body tags to satisfy parser requirements.
+- **`--fix-missing-title`**: injects a `<title>Unknown</title>` fallback in the `<head>` if missing, handling both empty `<title/>` self-closing tags and entirely absent tags.
+- **`--unwrap-block-in-inline`**: safely unwraps `<span>` tags that illegally contain a block-level element (e.g. `<div>` or `<p>`), leaving the block element intact.
+- **`--strip-invalid-value`**: systematically strips invalid `value="..."` attributes from elements like `<div>`, `<span>`, `<p>`, etc.
+- **`--unwrap-illegal-tags`**: strips completely invalid or deprecated HTML tags that break EPUB3 validation (like `<st>`, `<font>`, `<sentence>`, `<o>`, `<w>`, and `<pagebreak>`) while retaining their inner text. Automatically excludes tags if they are referenced by an EPUB CSS stylesheet to guarantee 100% format preservation.
+
 
 Three opt-in fixes are **lossy** and stand apart from the semantics-preserving rest:
 

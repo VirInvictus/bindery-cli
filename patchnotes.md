@@ -1,5 +1,18 @@
 # Bindery Patch Notes
 
+## v0.14.0 (2026-08-22)
+
+### Features
+- **Supplementary Phase Structural Repairs:** Integrated six highly targeted regex-based transforms to resolve the most common markup-level EPUB errors across the library, all safely guarded by the EPUBCheck gate:
+  - **Duplicate NCX `playOrder`:** Safely rewrites duplicated playOrder attributes sequentially.
+  - **XML `id` Colon Violations:** Translates illegal colons in `id="X:Y"` and their matching `#X:Y` fragment references to valid underscores.
+  - **Empty `<body>`:** Appends a non-breaking space `&nbsp;` to strictly empty body tags to satisfy parser requirements.
+  - **Missing `<title>`:** Injects a `<title>Unknown</title>` fallback in the `<head>` if missing, handling both empty `<title/>` self-closing tags and entirely absent tags.
+  - **Block-in-Inline Nesting:** Safely unwraps `<span>` tags that illegally contain a block-level element (e.g. `<div>` or `<p>`), leaving the block element intact.
+  - **Invalid `value` Attributes:** Systematically strips invalid `value="..."` attributes from elements like `<div>`, `<span>`, `<p>`, etc.
+- **Illegal Tags Unwrapper:** Added a sweeping transform that targets completely invalid or deprecated HTML tags that break EPUB3 validation (like `<st>`, `<font>`, `<sentence>`, `<o>`, `<w>`, and `<pagebreak>`). Unwraps the tags without deleting their inner text. Automatically excludes tags when referenced by an EPUB CSS stylesheet to guarantee 100% format preservation.
+
+
 ## v0.13.0 (2026-08-22)
 
 ### Structural Changes

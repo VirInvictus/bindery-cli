@@ -40,7 +40,7 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
    change what renders. Removed end tags are counted in the fix total.
 
 Applied to the NCX sidecar (`.ncx`): strip_prolog_junk, escape_bare_amp,
-fix_named_entities, plus **dtb:uid sync** to the OPF unique identifier (NCX-001).
+fix_named_entities, plus **dtb:uid sync**, **fix_ncx_playorder** (sequentially rewrites duplicate playOrder attributes)  to the OPF unique identifier (NCX-001).
 With `--fix-ids`, ids in the NCX that are not valid XML names (digit-led, as when a
 converter stamps navPoint ids from UUIDs; colon-bearing) are renamed with the same
 `id_` scheme as OPF manifest ids. NCX ids are internal to the NCX (nothing in the
