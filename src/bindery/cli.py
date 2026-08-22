@@ -85,8 +85,11 @@ def process_book(
         # repair, so it must never be applied. Only --no-validate skips the gate.
         return Outcome(epub, "error", before, after, summary + " (epubcheck failed)")
     verdict = gate(before, after)
-    if report.fixes.get("stripped_pagination") or report.fixes.get(
-        "stripped_broken_tags"
+    if (
+        report.fixes.get("stripped_pagination")
+        or report.fixes.get("stripped_broken_tags")
+        or report.fixes.get("stripped_watermarks")
+        or report.fixes.get("dropped_marker")
     ):
         # The strip's gain (in-body page numbers removed) is invisible to epubcheck, so
         # 'no measurable gain' is expected; accept as long as nothing regressed. But a
@@ -277,6 +280,8 @@ def run_library(args) -> int:
                     strip_pagination=args.strip_pagination
                     or getattr(args, "all", False),
                     strip_brokentags=args.strip_broken_tags
+                    or getattr(args, "all", False),
+                    strip_watermarks=args.strip_watermarks
                     or getattr(args, "all", False),
                     escape_entities=args.escape_unknown_entities
                     or getattr(args, "all", False),

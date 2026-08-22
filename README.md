@@ -28,9 +28,13 @@ Five opt-in fixes go further:
 - **`--strip-bad-attrs`**: drop attributes that are invalid XML (a name starting with a digit, or a namespaced name whose prefix is never declared, like Office VML `v:shapes`). Surgical and a no-op on well-formed files.
 - **`--escape-unknown-entities`**: escape entity names that are not in the HTML5 table (`&foo;` becomes `&amp;foo;`), which renders exactly as browsers already render an unknown entity: the literal text. Documents whose DOCTYPE carries an internal subset are skipped wholesale, since a subset can declare custom entities.
 
-One opt-in fix is **lossy** and stands apart from the semantics-preserving rest:
+Three opt-in fixes are **lossy** and stand apart from the semantics-preserving rest:
 
-- **`--strip-pagination`**: remove print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs (so they reflow into the middle of a sentence: "where the hay cart **16** was taking him"). It removes only that injected furniture, never the author's prose: where a number split a sentence it rejoins the two paragraphs (closing up a word split like `compli-` / `mentary`), and it preserves roman chapter numbers, page-list nav anchors, and years. A book is only treated as paginated when it has both a dense run of arabic numbers and several confident mid-sentence interrupts, so a merely chapter-numbered book is left alone. Three safety nets guard every edit (character conservation, tag balance, and an epubcheck no-regression check); any failure leaves the document untouched. Because its benefit is invisible to epubcheck, it is accepted when the result is *no worse* rather than measurably better.
+- **`--strip-pagination`**: remove print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs (so they reflow into the middle of a sentence: "where the hay cart **16** was taking him"). It removes only that injected furniture, never the author's prose: where a number split a sentence it rejoins the two paragraphs (closing up a word split like `compli-` / `mentary`), and it preserves roman chapter numbers, page-list nav anchors, and years. A book is only treated as paginated when it has both a dense run of arabic numbers and several confident mid-sentence interrupts, so a merely chapter-numbered book is left alone. Three safety nets guard every edit (character conservation, tag balance, and an epubcheck no-regression check); any failure leaves the document untouched.
+- **`--strip-broken-tags`**: remove leaked HTML closing tags missing their open brackets (e.g. `</p>`) that render as raw text.
+- **`--strip-watermarks`**: remove known producer and distributor watermarks (e.g. OceanofPDF, ABC Amber LIT Converter) and stray marker files. It locates the stamp and deletes the outermost wrapper whose entire visible text is the watermark, ensuring prose that merely mentions the URL is preserved.
+
+All lossy edits are invisible to epubcheck, so they are accepted when the result is *no worse* rather than measurably better.
 
 ## The safety contract
 
@@ -41,11 +45,11 @@ Every repair is gated by [epubcheck](https://github.com/w3c/epubcheck). The acce
 
 Introducing a net-new fatal is always rejected. If epubcheck itself fails to run (crash, timeout, unparsable output), the book is reported as an error and never applied; only an explicit `--no-validate` skips the gate. Originals are never modified except by an explicit, atomic in-place replace (see below), and even then only after the gate accepts the result.
 
-The lossy `--strip-pagination` mode is the exception to "must improve": removing a baked-in page number leaves epubcheck counts unchanged (the number was valid markup), so that mode is accepted when the result is **no worse** (no net-new fatals or errors), the same bar oceanstrip uses, on top of its own character-conservation and tag-balance checks.
+The lossy modes (`--strip-pagination`, `--strip-broken-tags`, and `--strip-watermarks`) are the exception to the "must improve" rule. Since they remove visible markup rather than correcting XML schema violations, epubcheck counts often remain unchanged. They are accepted when the result is **no worse** (no net-new fatals or errors), relying on strict programmatic safety nets instead.
 
 ## Install
 
-Python 3.14+, plus epubcheck on `PATH` for the gate. The core is minimal-dependency (uses tqdm);
+Python 3.14+, plus epubcheck on `PATH` for the gate. The core is minimal-dependency (`tqdm` is used for output formatting);
 `html5lib` is an optional extra, needed only for `--reserialize`.
 
 ```sh
@@ -83,6 +87,8 @@ bindery library ~/docs/Calibre\ Library --only fatals --apply --backup ~/bindery
 - `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. Combine with `--only fatals` for a self-contained "find and fix the broken books" run.
 - `--json FILE` writes a machine-readable report of the whole run (per-book status, before/after counts, applied flag, summary totals). `--manual-list FILE` writes the paths of every book that was not auto-repaired, one per line, ready for manual follow-up.
 - `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file.
+- `--install-to-calibre` acts as a safer alternative to atomic replacement for Calibre libraries. It uses `calibredb add_format --replace` to natively swap the EPUB format without losing metadata or read progress. It falls back to atomic file replacement if the Calibre database ID cannot be parsed.
+- `--all` automatically turns on all opt-in non-fatal fixes and lossy strips (pagination, watermarks, bad attributes, unknown entities, image alt tags, etc.) in a single run.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
 - A per-book progress line goes to stderr (stdout stays a clean report); `--quiet` suppresses it. A corrupt or unreadable book is reported and skipped, never aborting the sweep.
 - Exit codes: 0 for a clean sweep, 1 for a usage error, 2 when any book was rejected, unreadable, or failed epubcheck (for scripts and cron).

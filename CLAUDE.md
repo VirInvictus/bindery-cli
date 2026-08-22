@@ -11,14 +11,14 @@ the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
 ## Hard constraints
 
 - **Stdlib-first.** The core (transforms, archive rewrite, gate, library replace) has
-  no third-party runtime deps and stdlib `unittest` tests. The one approved exception is
-  **html5lib**, used only by the opt-in `--reserialize` structural repair and imported
+  minimal third-party dependencies (`tqdm` for output rendering) and stdlib `unittest` tests. The one approved exception is
+  **html5lib**, used only by the opt-in `-reserialize` structural repair and imported
   lazily (so every other mode runs without it). epubcheck is an external CLI dependency,
   not a Python one. Before adding any further Python package, stop and ask.
 - **Semantics-preserving transforms only, with ONE carved-out exception.** Every core
   fix must render identically to the author's intent (self-close void, numeric entities,
   escaped `&`): never add, remove, or reorder visible content. The deliberate exceptions
-  are the opt-in `--strip-pagination`, `--strip-broken-tags`, and `--strip-watermarks` modes (`pagination.py`), which removes
+  are the opt-in `-strip-pagination`, `-strip-broken-tags`, and `-strip-watermarks` modes (`pagination.py`, `transforms.py`, and `watermark.py`), which remove
   visible content the author never wrote (a PDF/OCR converter's baked-in page numbers
   and running headers) and rejoins sentences they split. It is lossy by design, off
   unless requested, and fenced behind three independent safety nets (character
@@ -27,25 +27,25 @@ the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
   not belong here, report it for manual repair instead.
 - **The gate is the safety contract.** Never apply a repair epubcheck has not accepted.
   Respect the two-mode logic in `validate.gate` (fatal-fixing tolerates error unmasking;
-  error-cleanup does not). The lossy `--strip-pagination`, `--strip-broken-tags`, and `--strip-watermarks` modes are accepted by
+  error-cleanup does not). The lossy `-strip-pagination`, `-strip-broken-tags`, and `-strip-watermarks` modes are accepted by
   `validate.no_worse` instead (its gain is invisible to epubcheck, so it only forbids a
   regression, never demands a measured improvement). Changing either means re-running the
   library dry run.
 - **Library writes are sacred.** Replacement must stay atomic (temp in same dir, then
-  `os.replace`), touch only the `.epub`, preserve mode, and be dry-run by default. Calibre integrations should seamlessly swap formats using `calibredb add_format --replace`.
-  Never write to the library without `--apply`. Test every change on `/tmp` copies first.
+  `os.replace`), touch only the `.epub`, preserve mode, and be dry-run by default. Calibre integrations should seamlessly swap formats using `calibredb add_format -replace`.
+  Never write to the library without `-apply`. Test every change on `/tmp` copies first.
 
 ## Layout
 
-- `src/bindery/transforms.py`: pure `str -> (str, int)` text transforms.
-- `src/bindery/pagination.py`: the opt-in lossy page-number strip (runhead detection,
-  page-layer decision, block-centric removal/merge, safety nets). Off by default.
+- `src/bindery/transforms.py`: pure `str -> (str, int)` text transforms (including `strip_broken_tags`).
+- `src/bindery/pagination.py`: the opt-in lossy page-number strip (runhead detection, page-layer decision, block-centric removal/merge, safety nets).
+- `src/bindery/watermark.py`: the opt-in lossy watermark strip (anchored and anchorless signature removal).
+- `src/bindery/reserialize.py`: structural repair via `html5lib`.
 - `src/bindery/epub.py`: archive rewrite, NCX uid sync, RepairReport, mismatch detection.
-- `src/bindery/validate.py`: epubcheck wrapper, the `gate` (improvement) and `no_worse`
-  (no-regression, for the lossy strip) acceptance bars.
-- `src/bindery/library.py`: Calibre walk, atomic replace, backups.
-- `src/bindery/cli.py`: `repair` and `library` subcommands.
-- `tests/`: transforms, end-to-end repair, atomic replace.
+- `src/bindery/validate.py`: epubcheck wrapper, the `gate` (improvement) and `no_worse` (no-regression, for the lossy strips) acceptance bars.
+- `src/bindery/library.py`: Calibre walk, atomic replace, backups, and native Calibre replacement.
+- `src/bindery/cli.py`: `repair` and `library` subcommands, including `--all` and `--install-to-calibre`.
+- `tests/`: transforms, end-to-end repair, atomic replace, pagination, watermarks.
 
 ## Conventions
 

@@ -13,10 +13,8 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The one deliberate exception to "semantics-preserving" is the **opt-in
-`--strip-pagination` mode** (see "Page-number strip"). It removes content a converter
-injected, not content the author wrote, so it is off by default and gated differently.
-Everything else in this spec is the always-safe core.
+The deliberate exceptions to "semantics-preserving" are the **opt-in lossy modes** (`--strip-pagination`, `--strip-broken-tags`, and `--strip-watermarks`). They remove content a converter injected, not content the author wrote, so they are off by default and gated differently.
+Everything else in this spec is the always-safe core. The `--all` flag enables every opt-in transform (both safe and lossy) for a comprehensive repair pass.
 
 ## Transforms
 
@@ -202,4 +200,4 @@ Optionally, Bindery can replace the format natively inside Calibre using `calibr
 - Fixing RSC-005 schema/content-model violations in bulk.
 - Repairing genuinely mangled structure (unclosed non-void elements, corrupted tag
   names, embedded VML/SVG). These are detected as `partial`/`nochange` and reported.
-- Editing metadata, the OPF, or the Calibre database.
+- Editing human-facing dc: metadata or creating content.

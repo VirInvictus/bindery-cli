@@ -1,7 +1,24 @@
-## v0.9.0 (2026-08-21)
-- **UI Upgrade:** CLI scripts now feature rich output (ANSI formatting, `tqdm` progress bars, and a clear summary block). The project is no longer strictly stdlib-only and now depends on `tqdm`.
+# Bindery Patch Notes
 
-# Patch notes
+## v0.12.0 (2026-08-22)
+
+### Features
+- **Oceanstrip Merged:** Fully incorporated the `oceanstrip` standalone tool directly into Bindery's primary pipeline.
+- Added `--strip-watermarks` flag to systematically detect and remove producer/distributor watermarks (e.g. OceanofPDF stamps and zero-byte marker files, ABC Amber LIT Converter injections) from EPUBs.
+- This lossy transform is correctly governed by the `validate.no_worse` EPUBCheck oracle, ensuring clean structural extraction without regressing file validity.
+- The `--strip-watermarks` argument is automatically engaged when running Bindery with `--all`.
+
+## v0.11.0 (2026-08-21)
+
+### Features
+- **`--strip-broken-tags`**: A new lossy transform to find and safely remove leaked HTML closing tags missing their open brackets (e.g., `</p>`) that render as raw text in older uncorrected EPUBs. Guarded by the `validate.no_worse` gate.
+- **`--install-to-calibre`**: A safer alternative to atomic replacement for Calibre users. Uses `calibredb add_format --replace` to swap the corrected EPUB natively into the database, preserving all metadata, custom IDs, and read progress. Falls back to atomic replacement if the Calibre ID cannot be parsed from the filepath.
+- **`--all`**: Added a meta-flag to automatically enable all opt-in non-fatal fixes and lossy strips (pagination, watermarks, tags, attributes, entities, image alt tags, etc.) simultaneously for a comprehensive repair.
+
+## v0.10.3 (2026-08-21)
+
+### Improvements
+- **UI Upgrade:** CLI scripts now feature rich terminal output with ANSI formatting, `tqdm` progress bars, and clear summary blocks. The project now relies on `tqdm` for output formatting and is no longer strictly stdlib-only.
 
 ## v0.10.2 (2026-08-09)
 
