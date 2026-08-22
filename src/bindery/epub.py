@@ -22,8 +22,8 @@ from .transforms import (
     add_img_alt,
     apply_transforms,
     escape_unknown_entities,
-    strip_invalid_attributes,
     strip_broken_tags,
+    strip_invalid_attributes,
 )
 
 CONTENT_SUFFIXES = (".xhtml", ".html", ".htm", ".xml")

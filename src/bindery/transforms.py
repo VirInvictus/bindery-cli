@@ -326,11 +326,16 @@ def apply_transforms(
             counts[fn.__name__] = counts.get(fn.__name__, 0) + n
     return s, counts
 
+
 # Matches leaked closing tags without angle brackets (e.g. /div&gt;) OR common formatting tags with escaped angle brackets.
-_BROKEN_TAGS_RE = re.compile(r'(?<!<)(?<!&lt;)/[a-zA-Z]+&gt;|&lt;/(?:p|div|span|h[1-6]|i|em|b|strong)&gt;', re.IGNORECASE)
+_BROKEN_TAGS_RE = re.compile(
+    r"(?<!<)(?<!&lt;)/[a-zA-Z]+&gt;|&lt;/(?:p|div|span|h[1-6]|i|em|b|strong)&gt;",
+    re.IGNORECASE,
+)
+
 
 def strip_broken_tags(text: str) -> tuple[str, int]:
     """Strip leaked HTML closing tags that render as raw text in readers.
     This lossily removes the leaked text fragment and should be gated behind `validate.no_worse`.
     """
-    return _BROKEN_TAGS_RE.subn('', text)
+    return _BROKEN_TAGS_RE.subn("", text)

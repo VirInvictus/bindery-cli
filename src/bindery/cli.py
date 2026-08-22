@@ -83,7 +83,9 @@ def process_book(
         # repair, so it must never be applied. Only --no-validate skips the gate.
         return Outcome(epub, "error", before, after, summary + " (epubcheck failed)")
     verdict = gate(before, after)
-    if report.fixes.get("stripped_pagination") or report.fixes.get("stripped_broken_tags"):
+    if report.fixes.get("stripped_pagination") or report.fixes.get(
+        "stripped_broken_tags"
+    ):
         # The strip's gain (in-body page numbers removed) is invisible to epubcheck, so
         # 'no measurable gain' is expected; accept as long as nothing regressed. But a
         # book that still has fatals will not open: no_worse must never promote it past
@@ -270,9 +272,12 @@ def run_library(args) -> int:
                     fix_ids=args.fix_ids or getattr(args, "all", False),
                     reserialize=args.reserialize or getattr(args, "all", False),
                     strip_attrs=args.strip_bad_attrs or getattr(args, "all", False),
-                    strip_pagination=args.strip_pagination or getattr(args, "all", False),
-                    strip_brokentags=args.strip_broken_tags or getattr(args, "all", False),
-                    escape_entities=args.escape_unknown_entities or getattr(args, "all", False),
+                    strip_pagination=args.strip_pagination
+                    or getattr(args, "all", False),
+                    strip_brokentags=args.strip_broken_tags
+                    or getattr(args, "all", False),
+                    escape_entities=args.escape_unknown_entities
+                    or getattr(args, "all", False),
                     img_alt=args.add_img_alt or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
@@ -439,7 +444,8 @@ def run_repair(args) -> int:
                 strip_attrs=args.strip_bad_attrs or getattr(args, "all", False),
                 strip_pagination=args.strip_pagination or getattr(args, "all", False),
                 strip_brokentags=args.strip_broken_tags or getattr(args, "all", False),
-                escape_entities=args.escape_unknown_entities or getattr(args, "all", False),
+                escape_entities=args.escape_unknown_entities
+                or getattr(args, "all", False),
                 img_alt=args.add_img_alt or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
