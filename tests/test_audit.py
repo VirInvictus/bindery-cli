@@ -1,5 +1,4 @@
 import contextlib
-import importlib.util
 import io
 import os
 import pathlib
@@ -8,8 +7,8 @@ import sqlite3
 import tempfile
 import unittest
 
-
 from src.bindery import audit as audit
+
 pagenum = audit
 emptytext = audit
 ocr = audit

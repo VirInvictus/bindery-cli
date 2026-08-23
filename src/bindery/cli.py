@@ -16,9 +16,15 @@ from pathlib import Path
 from tqdm import tqdm
 
 from . import __version__
+from .audit import (
+    ALL,
+    DEFAULT_MIN_CHARS,
+    DEFAULT_THIN_CHARS,
+    run_directory,
+    run_library,
+)
 from .epub import ncx_uid_mismatch, repair_epub
 from .library import atomic_replace, calibredb_replace, iter_epubs, make_backup
-from .audit import run_directory, run_library, DEFAULT_MIN_CHARS, DEFAULT_THIN_CHARS, ALL
 from .validate import (
     CheckResult,
     epubcheck_available,
