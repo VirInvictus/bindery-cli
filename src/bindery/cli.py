@@ -21,7 +21,9 @@ from .audit import (
     DEFAULT_MIN_CHARS,
     DEFAULT_THIN_CHARS,
     run_directory,
-    run_library,
+)
+from .audit import (
+    run_library as run_audit_library,
 )
 from .epub import ncx_uid_mismatch, repair_epub
 from .library import atomic_replace, calibredb_replace, iter_epubs, make_backup
@@ -555,12 +557,14 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-validate", action="store_true", help="skip the epubcheck gate")
 
 
-
 def run_audit_cmd(args: argparse.Namespace) -> int:
     selected = list(ALL) if args.mode == "all" else [args.mode]
     if args.path:
-        return run_directory(Path(args.path).expanduser(), selected, args.min_chars, args.thin_chars)
+        return run_directory(
+            Path(args.path).expanduser(), selected, args.min_chars, args.thin_chars
+        )
     return run_audit_library(selected, args.min_chars, args.thin_chars)
+
 
 def build_parser() -> argparse.ArgumentParser:
     # Generate an attractive, perfectly aligned help block for the shared flags
@@ -597,12 +601,32 @@ def build_parser() -> argparse.ArgumentParser:
     _add_repair_flags(r)
     r.set_defaults(func=run_repair)
 
-
-    audit = sub.add_parser("audit", help="audit EPUB body text to detect non-schema content flaws (OCR damage, hardcoded page numbers, empty books, non-English text)")
-    audit.add_argument("mode", choices=("content", "pagenumbers", "emptytext", "ocr", "all"), help="which audit to run")
-    audit.add_argument("path", nargs="?", help="vet loose .epub files under this directory instead of the library")
-    audit.add_argument("--min-chars", type=int, default=DEFAULT_MIN_CHARS, help="emptytext EMPTY threshold")
-    audit.add_argument("--thin-chars", type=int, default=DEFAULT_THIN_CHARS, help="emptytext THIN advisory threshold")
+    audit = sub.add_parser(
+        "audit",
+        help="audit EPUB body text to detect non-schema content flaws (OCR damage, hardcoded page numbers, empty books, non-English text)",
+    )
+    audit.add_argument(
+        "mode",
+        choices=("content", "pagenumbers", "emptytext", "ocr", "all"),
+        help="which audit to run",
+    )
+    audit.add_argument(
+        "path",
+        nargs="?",
+        help="vet loose .epub files under this directory instead of the library",
+    )
+    audit.add_argument(
+        "--min-chars",
+        type=int,
+        default=DEFAULT_MIN_CHARS,
+        help="emptytext EMPTY threshold",
+    )
+    audit.add_argument(
+        "--thin-chars",
+        type=int,
+        default=DEFAULT_THIN_CHARS,
+        help="emptytext THIN advisory threshold",
+    )
     audit.set_defaults(func=run_audit_cmd)
 
     lib = sub.add_parser("library", help="scan/repair a Calibre library tree")

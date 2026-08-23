@@ -1079,17 +1079,21 @@ _CAMEL_RE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b")
 _HUMP_RE = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
 
-
 def analyze_brokentags(book: Book) -> dict:
     import re
+
     hits = []
-    pattern = re.compile(r'(?<!<)(?<!&lt;)/[a-zA-Z]+&gt;|&lt;/(?:p|div|span|h[1-6]|i|em|b|strong)&gt;', re.IGNORECASE)
+    pattern = re.compile(
+        r"(?<!<)(?<!&lt;)/[a-zA-Z]+&gt;|&lt;/(?:p|div|span|h[1-6]|i|em|b|strong)&gt;",
+        re.IGNORECASE,
+    )
     for content in book.iter_html_text():
         for match in pattern.finditer(content.text):
             hits.append(f"{content.name}: {match.group(0)}")
     if not hits:
         return {}
     return {"hits": hits, "summary": f"{len(hits)} broken tags found"}
+
 
 def analyze_ocr(book: Book) -> dict:
     """Score OCR/conversion damage over the (pre-read) spine, skipping nav.
@@ -1224,7 +1228,7 @@ def _content_sections(nonlatin_hits, latin_foreign, signature_hits) -> int:
             for book_id, title, tag, _exp, detail in sorted(expected):
                 print(f"  #{book_id} [{tag}] {title}  {GREEN}(expected-foreign){RESET}")
                 print(f"    {detail}")
-        
+
         return len(unexpected)
 
     unexpected = 0

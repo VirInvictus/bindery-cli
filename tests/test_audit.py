@@ -13,6 +13,7 @@ pagenum = audit
 emptytext = audit
 ocr = audit
 
+
 class TestScriptOf(unittest.TestCase):
     def test_known_scripts(self):
         self.assertEqual(audit.script_of(0x0410), "Cyrillic")
@@ -21,6 +22,7 @@ class TestScriptOf(unittest.TestCase):
 
     def test_latin_is_none(self):
         self.assertIsNone(audit.script_of(ord("a")))
+
 
 class TestFindings(unittest.TestCase):
     def _result(self, **over):
@@ -81,6 +83,7 @@ class TestFindings(unittest.TestCase):
         cats = [c for c, _ in audit.findings(self._result(signature=True))]
         self.assertIn("INJECTION SIGNATURE", cats)
 
+
 class TestResolveLibraryRoot(unittest.TestCase):
     """audit_content finds the library next to the script or in the cwd."""
 
@@ -106,6 +109,7 @@ class TestResolveLibraryRoot(unittest.TestCase):
         with self._cwd(tmp):
             self.assertIsNone(audit.resolve_library_root())
 
+
 class TestPageNumberValue(unittest.TestCase):
     def test_arabic_and_roman(self):
         self.assertEqual(pagenum.number_value("42"), 42)
@@ -117,6 +121,7 @@ class TestPageNumberValue(unittest.TestCase):
         self.assertIsNone(pagenum.number_value("12345"))  # >4 digits
         self.assertIsNone(pagenum.number_value("i"))  # lone roman i is too noisy
         self.assertIsNone(pagenum.number_value("42a"))
+
 
 class TestIsDefective(unittest.TestCase):
     def _r(self, **over):
@@ -133,6 +138,7 @@ class TestIsDefective(unittest.TestCase):
     def test_localized_cluster_dropped_by_span(self):
         # a footnote-poem / scraped-comment cluster: many hits, tiny span
         self.assertFalse(pagenum.is_defective(self._r(n_hits=20, span=0.02)))
+
 
 class TestPageNumberScan(unittest.TestCase):
     """End-to-end scan() over synthetic EPUBs: a baked-in conversion flags, a
@@ -182,6 +188,7 @@ class TestPageNumberScan(unittest.TestCase):
             r = pagenum.scan_pagenumbers(self._epub(tmp, body))
         self.assertFalse(pagenum.is_defective(r))
 
+
 class TestVisibleChars(unittest.TestCase):
     def test_strips_tags_scripts_and_styles(self):
         html = (
@@ -192,6 +199,7 @@ class TestVisibleChars(unittest.TestCase):
 
     def test_decodes_entities(self):
         self.assertEqual(emptytext._visible_chars("<p>a &amp; b</p>"), len("a & b"))
+
 
 class TestEmptyTextScan(unittest.TestCase):
     """End-to-end scan() over synthetic EPUBs: a content-less stub is EMPTY,
@@ -241,6 +249,7 @@ class TestEmptyTextScan(unittest.TestCase):
             r = emptytext.scan_emptytext(self._epub(tmp, body))
         self.assertEqual(emptytext.classify(r, 2000, 20000), "THIN")
 
+
 class TestPctDecode(unittest.TestCase):
     def test_reserved_char(self):
         self.assertEqual(
@@ -253,6 +262,7 @@ class TestPctDecode(unittest.TestCase):
 
     def test_invalid_escape_left_literal(self):
         self.assertEqual(audit._pct_decode("50%-off"), "50%-off")
+
 
 class TestPercentEncodedSpine(unittest.TestCase):
     """Regression: a spine doc whose archive name has a reserved char is
@@ -286,6 +296,7 @@ class TestPercentEncodedSpine(unittest.TestCase):
             r = emptytext.scan_emptytext(self._epub(tmp))
         self.assertGreater(r["chars"], 20000)
         self.assertEqual(emptytext.classify(r, 2000, 20000), "OK")
+
 
 class TestPlaceholderExport(unittest.TestCase):
     """Partial / placeholder exports: most chapters are an identical stub (a DRM
@@ -348,6 +359,7 @@ class TestPlaceholderExport(unittest.TestCase):
             r = emptytext.scan_emptytext(self._epub(tmp, docs))
         self.assertLess(r["stub_docs"], 3)  # distinct text, so no repeated stub
         self.assertEqual(emptytext.classify(r, 2000, 20000), "OK")
+
 
 class TestOcrSplitDetection(unittest.TestCase):
     """End-to-end scan_ocr() over synthetic EPUBs: a mid-sentence paragraph
@@ -446,6 +458,7 @@ class TestOcrSplitDetection(unittest.TestCase):
         self.assertEqual(r["doubled_quotes"], 1)
         self.assertEqual(r["glued"], ["AnkhMorpork~Ankh-Morpork"])
 
+
 class TestIsOcrDamaged(unittest.TestCase):
     """Threshold boundaries on the FLAG gate."""
 
@@ -490,6 +503,7 @@ class TestIsOcrDamaged(unittest.TestCase):
             )
         )
 
+
 class TestAllIncludesOcr(unittest.TestCase):
     """`all` runs the ocr analyzer inside the same single decompression pass."""
 
@@ -526,6 +540,7 @@ class TestAllIncludesOcr(unittest.TestCase):
         self.assertIn("ocr", out)
         self.assertIn("REVIEW", out)
 
+
 class TestVisibleTextCache(unittest.TestCase):
     """emptytext and ocr both need the book's rendered text. Under `all` they
     each used to strip tags over the whole book independently, which is the
@@ -560,10 +575,9 @@ class TestVisibleTextCache(unittest.TestCase):
     def test_cached_text_matches_a_direct_extraction(self):
         with tempfile.TemporaryDirectory() as tmp:
             book = self._book(tmp)
-            direct = [
-                audit._visible_text(book.docs.get(d, "")) for d in book.spine
-            ]
+            direct = [audit._visible_text(book.docs.get(d, "")) for d in book.spine]
             self.assertEqual(book.visible_texts(), direct)
+
 
 class TestAuditEpubConnectRo(unittest.TestCase):
     """Library mode used to open metadata.db with no lock handling at all, so
@@ -620,6 +634,7 @@ class TestAuditEpubConnectRo(unittest.TestCase):
                 locker.rollback()
                 locker.close()
 
+
 class TestContentSections(unittest.TestCase):
     """An injection signature is a defect regardless of the expected-foreign
     flag (regression: a signature hit on a declared-foreign book printed
@@ -638,6 +653,7 @@ class TestContentSections(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertNotIn("expected-foreign", out)
         self.assertIn("1 file(s) need review", out)
+
 
 class TestLoadBookCorruptEntry(unittest.TestCase):
     """A spine document with a corrupted archive entry (bad CRC) reads as
@@ -670,5 +686,6 @@ class TestLoadBookCorruptEntry(unittest.TestCase):
         self.assertEqual(book.spine, ["text.xhtml"])
         self.assertEqual(book.docs["text.xhtml"], "")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
