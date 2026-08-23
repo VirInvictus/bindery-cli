@@ -303,6 +303,7 @@ def drop_duplicate_xmlns(s: str) -> tuple[str, int]:
 def fix_ncx_playorder(s: str) -> tuple[str, int]:
     count = 0
     playorder = 1
+
     def repl(m: re.Match) -> str:
         nonlocal count, playorder
         val = m.group(2)
@@ -311,66 +312,91 @@ def fix_ncx_playorder(s: str) -> tuple[str, int]:
         res = f'{m.group(1)}"{playorder}"'
         playorder += 1
         return res
-    s, n = re.subn(r'(playOrder\s*=\s*)["\']([^"\']+)["\']', repl, s, flags=re.IGNORECASE)
+
+    s, n = re.subn(
+        r'(playOrder\s*=\s*)["\']([^"\']+)["\']', repl, s, flags=re.IGNORECASE
+    )
     return s, count
+
 
 @_outside_protected
 def unwrap_block_in_inline(s: str) -> tuple[str, int]:
     count = 0
+
     def repl(m: re.Match) -> str:
         nonlocal count
         count += 1
         return m.group(2)
-    s, n = re.subn(r'<span[^>]*>\s*(<(div|p|blockquote)[^>]*>.*?</\2>)\s*</span>', repl, s, flags=re.IGNORECASE | re.DOTALL)
+
+    s, n = re.subn(
+        r"<span[^>]*>\s*(<(div|p|blockquote)[^>]*>.*?</\2>)\s*</span>",
+        repl,
+        s,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     return s, n
+
 
 @_outside_protected
 def strip_invalid_value(s: str) -> tuple[str, int]:
     count = 0
+
     def repl(m: re.Match) -> str:
         nonlocal count
         count += 1
         tag = m.group(1)
         before = m.group(2) or ""
         after = m.group(4) or ""
-        return f'<{tag} {before.strip()} {after.strip()}>'.replace("  ", " ")
-    s, n = re.subn(r'<(div|span|p|a|img|h[1-6]|ul|table|tr|td|th)\s+([^>]*\b)?value\s*=\s*(["\'][^"\']*["\'])([^>]*)>', repl, s, flags=re.IGNORECASE)
+        return f"<{tag} {before.strip()} {after.strip()}>".replace("  ", " ")
+
+    s, n = re.subn(
+        r'<(div|span|p|a|img|h[1-6]|ul|table|tr|td|th)\s+([^>]*\b)?value\s*=\s*(["\'][^"\']*["\'])([^>]*)>',
+        repl,
+        s,
+        flags=re.IGNORECASE,
+    )
     return s, n
+
 
 @_outside_protected
 def unwrap_illegal_tags(s: str) -> tuple[str, int]:
     # CSS scan should be done prior, but this regex safely unwraps tags globally
     # In full integration, the CSS scan prevents this from running if styles match
-    illegal_tags = ['st', 'sentence', 'o', 'w', 'pagebreak']
+    illegal_tags = ["st", "sentence", "o", "w", "pagebreak"]
     count = 0
     for tag in illegal_tags:
-        s, n1 = re.subn(rf'<{tag}\b[^>]*>', '', s, flags=re.IGNORECASE)
-        s, n2 = re.subn(rf'</{tag}\s*>', '', s, flags=re.IGNORECASE)
+        s, n1 = re.subn(rf"<{tag}\b[^>]*>", "", s, flags=re.IGNORECASE)
+        s, n2 = re.subn(rf"</{tag}\s*>", "", s, flags=re.IGNORECASE)
         count += n1 + n2
     return s, count
+
 
 @_outside_protected
 def fix_empty_body(s: str) -> tuple[str, int]:
     count = 0
+
     def repl(m: re.Match) -> str:
         nonlocal count
         count += 1
         return m.group(1) + "&nbsp;" + m.group(2)
-    s, n = re.subn(r'(<body[^>]*>\s*)(</body>)', repl, s, flags=re.IGNORECASE)
+
+    s, n = re.subn(r"(<body[^>]*>\s*)(</body>)", repl, s, flags=re.IGNORECASE)
     return s, n
+
 
 @_outside_protected
 def fix_missing_title(s: str) -> tuple[str, int]:
     count = 0
-    if re.search(r'<title\b[^>]*>.*?</title>', s, re.IGNORECASE | re.DOTALL):
+    if re.search(r"<title\b[^>]*>.*?</title>", s, re.IGNORECASE | re.DOTALL):
         return s, 0
-    
+
     # Check for empty self-closing title
     def repl(m: re.Match) -> str:
         nonlocal count
         count += 1
         return "<title>Unknown</title>"
-    s, n = re.subn(r'<title\b[^>]*/>', repl, s, flags=re.IGNORECASE)
+
+    s, n = re.subn(r"<title\b[^>]*/>", repl, s, flags=re.IGNORECASE)
     if n > 0:
         return s, n
 
@@ -379,26 +405,45 @@ def fix_missing_title(s: str) -> tuple[str, int]:
         nonlocal count
         count += 1
         return m.group(1) + "\n<title>Unknown</title>"
-    s, n = re.subn(r'(<head[^>]*>)', repl_head, s, flags=re.IGNORECASE)
+
+    s, n = re.subn(r"(<head[^>]*>)", repl_head, s, flags=re.IGNORECASE)
     return s, n
+
 
 @_outside_protected
 def fix_id_colons(s: str) -> tuple[str, int]:
     count = 0
+
     def repl_id(m: re.Match) -> str:
         nonlocal count
         count += 1
         return m.group(1) + m.group(2).replace(":", "_") + m.group(3)
-    s, n1 = re.subn(r'(id\s*=\s*["\'])([^"\']+)(["\'])', repl_id, s, flags=re.IGNORECASE)
-    
+
+    s, n1 = re.subn(
+        r'(id\s*=\s*["\'])([^"\']+)(["\'])', repl_id, s, flags=re.IGNORECASE
+    )
+
     def repl_href(m: re.Match) -> str:
         nonlocal count
         if ":" in m.group(3):
             count += 1
-            return m.group(1) + m.group(2) + "#" + m.group(3).replace(":", "_") + m.group(4)
+            return (
+                m.group(1)
+                + m.group(2)
+                + "#"
+                + m.group(3).replace(":", "_")
+                + m.group(4)
+            )
         return m.group(0)
-    s, n2 = re.subn(r'(href\s*=\s*["\'])([^"#]*?)#([^"\']+)(["\'])', repl_href, s, flags=re.IGNORECASE)
+
+    s, n2 = re.subn(
+        r'(href\s*=\s*["\'])([^"#]*?)#([^"\']+)(["\'])',
+        repl_href,
+        s,
+        flags=re.IGNORECASE,
+    )
     return s, count
+
 
 HTML_TRANSFORMS = (
     strip_prolog_junk,

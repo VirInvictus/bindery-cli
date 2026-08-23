@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
+import re
 import sys
 import zipfile
-import re
 from pathlib import Path
 
 # regex for finding empty body tags (with optional whitespace)
 # matches <body></body>, <body class="...">   </body>, etc.
-EMPTY_BODY_RE = re.compile(r'<body[^>]*>\s*</body>', re.IGNORECASE)
+EMPTY_BODY_RE = re.compile(r"<body[^>]*>\s*</body>", re.IGNORECASE)
+
 
 def scan_book(path: Path) -> list[str]:
     issues = []
@@ -25,6 +26,7 @@ def scan_book(path: Path) -> list[str]:
         pass
     return issues
 
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(1)
@@ -36,6 +38,7 @@ def main():
             print(f"\n{path}")
             for issue in set(issues):
                 print(f"  {issue}")
+
 
 if __name__ == "__main__":
     main()

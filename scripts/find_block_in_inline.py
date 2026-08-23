@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
+import re
 import sys
 import zipfile
-import re
 from pathlib import Path
 
 # regex for finding <div> or <p> inside <span>
 # This is a bit naive but should catch basic cases
-SPAN_BLOCK_RE = re.compile(r'<span[^>]*>[^<]*(<div|<p|<blockquote)', re.IGNORECASE)
+SPAN_BLOCK_RE = re.compile(r"<span[^>]*>[^<]*(<div|<p|<blockquote)", re.IGNORECASE)
+
 
 def scan_book(path: Path) -> list[str]:
     issues = []
@@ -25,6 +26,7 @@ def scan_book(path: Path) -> list[str]:
         pass
     return issues
 
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(1)
@@ -36,6 +38,7 @@ def main():
             print(f"\n{path}")
             for issue in set(issues):
                 print(f"  {issue}")
+
 
 if __name__ == "__main__":
     main()
