@@ -1,7 +1,7 @@
 <div align="center">
   <img src="logo.svg" width="96" height="96" alt="Bindery logo"/>
   <h1>Bindery</h1>
-  <p>Repair broken EPUBs with safe, deterministic fixes, validated by epubcheck, with optional in-place replacement in a Calibre library.</p>
+  <p>Audit EPUB body text and repair broken EPUBs with safe, deterministic fixes, validated by epubcheck, with optional in-place replacement in a Calibre library.</p>
 </div>
 
 <p align="center">
@@ -135,3 +135,7 @@ If Bindery's useful to you and you'd like to chip in:
   ```
   bc1qkge6zr45tzqfwfmvma2ylumt6mg7wlwmhr05yv
   ```
+
+## Auditing
+
+Bindery includes an `audit` subcommand to inspect EPUB body text for non-English content, baked-in page numbers, empty stubs, or OCR-damaged prose. Run `bindery audit --help` for details.

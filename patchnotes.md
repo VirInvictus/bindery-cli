@@ -1,3 +1,9 @@
+## [0.15.0] - 2026-08-23
+
+### Added
+- Folded `audit_epub` into Bindery as the `bindery audit` subcommand, creating a unified diagnostic and repair toolkit.
+- Merged `audit_epub` tests into the Bindery test suite.
+
 # Bindery Patch Notes
 
 ## v0.14.0 (2026-08-22)
@@ -327,7 +333,7 @@ the safety contract.
   in CDATA-wrapped CSS/JS changes what renders. All body-text transforms (including
   `--strip-bad-attrs`) now skip these spans. This is now a spec invariant.
 - **Hyphenated custom elements are no longer mangled.** `-`, `:`, and `.` are valid
-  XML name characters but not word characters, so the v0.2.0 `\b` boundary still let
+  XML name characters but not word characters, so the v0.2.0 `` boundary still let
   `<col` match inside `<col-group>` and self-close it. The matcher now requires
   whitespace, `/`, or `>` after the element name.
 - **The OPF is located via `META-INF/container.xml`** instead of "first `.opf` in
