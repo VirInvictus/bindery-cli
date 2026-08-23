@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-audit_epub.py: read the actual text of every EPUB and flag content problems that
+bindery audit: read the actual text of every EPUB and flag content problems that
 metadata and structural validators cannot see. Four analyzers, one tool:
 
   content      non-English bodies (wrong-language editions) and injected
@@ -34,10 +34,10 @@ Companion to validate_metadata.py (which audits the catalogue) and to Bindery
 it opens metadata.db strictly mode=ro.
 
 Run from the library directory:
-    python3 audit_epub.py all                 # all four audits, whole library
-    python3 audit_epub.py content             # one audit, whole library
-    python3 audit_epub.py all ~/Downloads     # vet loose .epub files before import
-    python3 audit_epub.py emptytext ~/Downloads --min-chars 1000
+    python3 bindery audit all                 # all four audits, whole library
+    python3 bindery audit content             # one audit, whole library
+    python3 bindery audit all ~/Downloads     # vet loose .epub files before import
+    python3 bindery audit emptytext ~/Downloads --min-chars 1000
 
 Library mode pulls the EPUB list (and tags / declared language) from
 metadata.db; directory mode scans every .epub it finds recursively, the
@@ -1578,9 +1578,9 @@ def main() -> int:
     )
     args = parser.parse_args()
     ui.print_header(
-        "audit_epub.py - Execution [DRY RUN]"
+        "bindery audit - Execution [DRY RUN]"
         if getattr(args, "dry_run", False)
-        else "audit_epub.py - Execution"
+        else "bindery audit - Execution"
     )
     selected = list(ALL) if args.mode == "all" else [args.mode]
     if args.directory:

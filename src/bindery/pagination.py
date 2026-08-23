@@ -8,7 +8,7 @@ running headers) and, where such a number split a sentence, rejoins the two
 paragraphs. It is therefore gated differently (epubcheck must be no worse, since
 the gain is invisible to epubcheck) and is off unless --strip-pagination is given.
 
-The detection mirrors CalibreQuarry's audit_epub_pagenumbers.py: a standalone
+The detection mirrors CalibreQuarry's bindery audit_pagenumbers.py: a standalone
 <p> whose whole text is a bare number is only treated as baked when it genuinely
 interrupts prose. Merging happens only on the two confident interrupt signals (a
 lowercase continuation after the number, or a word split across it); otherwise the

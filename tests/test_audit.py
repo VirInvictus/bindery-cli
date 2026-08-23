@@ -9,19 +9,19 @@ import tempfile
 import unittest
 
 
-from src.bindery import audit as audit_epub
-pagenum = audit_epub
-emptytext = audit_epub
-ocr = audit_epub
+from src.bindery import audit as audit
+pagenum = audit
+emptytext = audit
+ocr = audit
 
 class TestScriptOf(unittest.TestCase):
     def test_known_scripts(self):
-        self.assertEqual(audit_epub.script_of(0x0410), "Cyrillic")
-        self.assertEqual(audit_epub.script_of(0x4E2D), "CJK-Han")
-        self.assertEqual(audit_epub.script_of(0x0627), "Arabic")
+        self.assertEqual(audit.script_of(0x0410), "Cyrillic")
+        self.assertEqual(audit.script_of(0x4E2D), "CJK-Han")
+        self.assertEqual(audit.script_of(0x0627), "Arabic")
 
     def test_latin_is_none(self):
-        self.assertIsNone(audit_epub.script_of(ord("a")))
+        self.assertIsNone(audit.script_of(ord("a")))
 
 class TestFindings(unittest.TestCase):
     def _result(self, **over):
@@ -47,12 +47,12 @@ class TestFindings(unittest.TestCase):
         return r
 
     def test_clean_english(self):
-        self.assertEqual(audit_epub.findings(self._result()), [])
+        self.assertEqual(audit.findings(self._result()), [])
 
     def test_non_latin(self):
         cats = [
             c
-            for c, _ in audit_epub.findings(
+            for c, _ in audit.findings(
                 self._result(nonlatin=500, nonlatin_frac=0.5, scripts={"Cyrillic": 500})
             )
         ]
@@ -61,7 +61,7 @@ class TestFindings(unittest.TestCase):
     def test_latin_foreign(self):
         cats = [
             c
-            for c, _ in audit_epub.findings(
+            for c, _ in audit.findings(
                 self._result(
                     best="pt",
                     ratios={
@@ -79,11 +79,11 @@ class TestFindings(unittest.TestCase):
         self.assertIn("LATIN-SCRIPT FOREIGN", cats)
 
     def test_injection_signature(self):
-        cats = [c for c, _ in audit_epub.findings(self._result(signature=True))]
+        cats = [c for c, _ in audit.findings(self._result(signature=True))]
         self.assertIn("INJECTION SIGNATURE", cats)
 
 class TestResolveLibraryRoot(unittest.TestCase):
-    """audit_epub_content finds the library next to the script or in the cwd."""
+    """audit_content finds the library next to the script or in the cwd."""
 
     @contextlib.contextmanager
     def _cwd(self, path):
@@ -98,14 +98,14 @@ class TestResolveLibraryRoot(unittest.TestCase):
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="cq_root_"))
         (tmp / "metadata.db").write_bytes(b"")
         with self._cwd(tmp):
-            root = audit_epub.resolve_library_root()
+            root = audit.resolve_library_root()
         self.assertIsNotNone(root)
         self.assertEqual(root.resolve(), tmp.resolve())
 
     def test_no_db_anywhere_is_none(self):
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="cq_empty_"))
         with self._cwd(tmp):
-            self.assertIsNone(audit_epub.resolve_library_root())
+            self.assertIsNone(audit.resolve_library_root())
 
 class TestPageNumberValue(unittest.TestCase):
     def test_arabic_and_roman(self):
@@ -245,15 +245,15 @@ class TestEmptyTextScan(unittest.TestCase):
 class TestPctDecode(unittest.TestCase):
     def test_reserved_char(self):
         self.assertEqual(
-            audit_epub._pct_decode("Text/CR%21X_split.html"), "Text/CR!X_split.html"
+            audit._pct_decode("Text/CR%21X_split.html"), "Text/CR!X_split.html"
         )
 
     def test_multibyte_utf8(self):
         # 'ö' is the two-byte run %C3%B6, which must decode together, not per-byte
-        self.assertEqual(audit_epub._pct_decode("a%C3%B6b"), "aöb")
+        self.assertEqual(audit._pct_decode("a%C3%B6b"), "aöb")
 
     def test_invalid_escape_left_literal(self):
-        self.assertEqual(audit_epub._pct_decode("50%-off"), "50%-off")
+        self.assertEqual(audit._pct_decode("50%-off"), "50%-off")
 
 class TestPercentEncodedSpine(unittest.TestCase):
     """Regression: a spine doc whose archive name has a reserved char is
@@ -495,7 +495,7 @@ class TestAllIncludesOcr(unittest.TestCase):
     """`all` runs the ocr analyzer inside the same single decompression pass."""
 
     def test_all_tuple_has_ocr(self):
-        self.assertIn("ocr", audit_epub.ALL)
+        self.assertIn("ocr", audit.ALL)
 
     def test_directory_all_run_reports_ocr(self):
         import contextlib as cl
@@ -519,8 +519,8 @@ class TestAllIncludesOcr(unittest.TestCase):
                 z.writestr("text.xhtml", f"<html><body>{body}</body></html>")
             buf = io.StringIO()
             with cl.redirect_stdout(buf):
-                rc = audit_epub.run_directory(
-                    pathlib.Path(tmp), list(audit_epub.ALL), 2000, 20000
+                rc = audit.run_directory(
+                    pathlib.Path(tmp), list(audit.ALL), 2000, 20000
                 )
         out = buf.getvalue()
         self.assertEqual(rc, 1)
@@ -542,27 +542,27 @@ class TestVisibleTextCache(unittest.TestCase):
             z.writestr("META-INF/container.xml", TestEmptyTextScan.CONTAINER)
             z.writestr("content.opf", TestEmptyTextScan.OPF)
             z.writestr("text.xhtml", f"<html><body>{body}</body></html>")
-        return audit_epub.load_book(p)
+        return audit.load_book(p)
 
     def test_text_is_extracted_once_and_reused(self):
         with tempfile.TemporaryDirectory() as tmp:
             book = self._book(tmp)
             calls = []
-            real = audit_epub._visible_text
-            audit_epub._visible_text = lambda html: (calls.append(1), real(html))[1]
+            real = audit._visible_text
+            audit._visible_text = lambda html: (calls.append(1), real(html))[1]
             try:
-                audit_epub.analyze_emptytext(book)
+                audit.analyze_emptytext(book)
                 after_first = len(calls)
-                audit_epub.analyze_ocr(book)
+                audit.analyze_ocr(book)
                 self.assertEqual(len(calls), after_first)  # ocr reused the cache
             finally:
-                audit_epub._visible_text = real
+                audit._visible_text = real
 
     def test_cached_text_matches_a_direct_extraction(self):
         with tempfile.TemporaryDirectory() as tmp:
             book = self._book(tmp)
             direct = [
-                audit_epub._visible_text(book.docs.get(d, "")) for d in book.spine
+                audit._visible_text(book.docs.get(d, "")) for d in book.spine
             ]
             self.assertEqual(book.visible_texts(), direct)
 
@@ -583,7 +583,7 @@ class TestAuditEpubConnectRo(unittest.TestCase):
 
     def test_unlocked_db_is_read_directly(self):
         with tempfile.TemporaryDirectory() as tmp:
-            con, tmpdir = audit_epub.connect_ro(self._library(tmp))
+            con, tmpdir = audit.connect_ro(self._library(tmp))
             try:
                 self.assertIsNone(tmpdir)
                 self.assertEqual(con.execute("SELECT id FROM books").fetchone()[0], 1)
@@ -606,9 +606,9 @@ class TestAuditEpubConnectRo(unittest.TestCase):
 
             try:
                 with mock.patch.object(
-                    audit_epub.sqlite3, "connect", side_effect=quick_connect
+                    audit.sqlite3, "connect", side_effect=quick_connect
                 ):
-                    con, tmpdir = audit_epub.connect_ro(path)
+                    con, tmpdir = audit.connect_ro(path)
                 try:
                     self.assertIsNotNone(tmpdir)
                     self.assertEqual(
@@ -630,7 +630,7 @@ class TestContentSections(unittest.TestCase):
     def test_signature_on_expected_foreign_book_counts(self):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            rc = audit_epub._content_sections(
+            rc = audit._content_sections(
                 [],
                 [],
                 [(101, "Some Foreign Book", "fiction", True, "importknig signature")],
@@ -667,7 +667,7 @@ class TestLoadBookCorruptEntry(unittest.TestCase):
                 byte = f.read(1)
                 f.seek(-1, os.SEEK_CUR)
                 f.write(bytes([byte[0] ^ 0xFF]))
-            book = audit_epub.load_book(p)
+            book = audit.load_book(p)
         self.assertEqual(book.spine, ["text.xhtml"])
         self.assertEqual(book.docs["text.xhtml"], "")
 

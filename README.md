@@ -72,13 +72,13 @@ PYTHONPATH=src uv run --with html5lib python3 -m bindery --help   # incl. --rese
 
 ## Auditing
 
-Bindery includes a comprehensive auditing tool to inspect EPUB body text for non-schema flaws that epubcheck cannot catch. It extracts and analyzes the visible text to detect content issues, producing CSV reports that can be used to filter your library or feed into `bindery repair`.
+Bindery includes a comprehensive auditing tool to inspect EPUB body text for non-schema flaws that epubcheck cannot catch. It extracts and analyzes the visible text to detect content issues, producing console reports that can be used to filter your library or feed into `bindery repair`.
 
 Scan a Calibre library for specific issues:
 
 ```sh
 # Detect non-English content (e.g., Cyrillic or CJK in an English library)
-bindery audit content ~/docs/Calibre\ Library
+cd ~/docs/Calibre\ Library && bindery audit content
 
 # Find books with hardcoded print page numbers interrupting the text
 bindery audit pagenumbers ~/docs/Calibre\ Library
@@ -90,7 +90,7 @@ bindery audit emptytext ~/docs/Calibre\ Library
 bindery audit ocr ~/docs/Calibre\ Library
 
 # Run all audits and generate a comprehensive CSV
-bindery audit all ~/docs/Calibre\ Library
+cd ~/docs/Calibre\ Library && bindery audit all
 ```
 
 Audits can also be run on a directory of loose `.epub` files by passing the path as the second argument:

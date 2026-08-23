@@ -554,7 +554,7 @@ def run_audit_cmd(args: argparse.Namespace) -> int:
     selected = list(ALL) if args.mode == "all" else [args.mode]
     if args.path:
         return run_directory(Path(args.path).expanduser(), selected, args.min_chars, args.thin_chars)
-    return run_library(selected, args.min_chars, args.thin_chars)
+    return run_audit_library(selected, args.min_chars, args.thin_chars)
 
 def build_parser() -> argparse.ArgumentParser:
     # Generate an attractive, perfectly aligned help block for the shared flags

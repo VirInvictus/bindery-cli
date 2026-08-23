@@ -8,7 +8,7 @@
   - **`pagenumbers`:** Detects books polluted with hardcoded print page numbers (using sliding window regex to find high-density sequential digits interrupting prose), seamlessly bridging into `bindery repair --strip-pagination` for the fix.
   - **`emptytext`:** Audits EPUBs to find effectively empty books or spine stubs (below configurable `--min-chars` and `--thin-chars` thresholds).
   - **`ocr`:** Scans for systemic OCR damage by detecting disproportionately high densities of hyphenation, disjointed characters, or garbage sequences.
-  - **Library Integration:** Directly operates on a Calibre library tree or loose directories, producing actionable CSV reports designed to be piped into `bindery library --audit`.
+  - **Library Integration:** Directly operates on a Calibre library tree or loose directories, producing actionable console reports designed to be piped into `bindery library --audit`.
 
 ## v0.14.0 (2026-08-22)
 
