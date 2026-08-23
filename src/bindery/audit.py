@@ -84,29 +84,6 @@ def resolve_library_root() -> Path | None:
     return None
 
 
-def db_uri_ro(path: Path) -> str:
-    """Read-only SQLite URI for a path. The path must be percent-encoded: '?'
-    and '#' are URI syntax, so a library at "Books #2/metadata.db" interpolated
-    raw opens some other file and fails with "no such table: books"."""
-    return f"file:{quote(str(path))}?mode=ro"
-
-
-def connect_ro(db_path: Path) -> tuple[sqlite3.Connection, str | None]:
-    """Open read-only; if Calibre holds the lock, read a temp copy (returning
-    the temp dir for cleanup). Mirrors the cquarry package and the other
-    companion scripts, which all degrade this way instead of dying on a lock."""
-    con = sqlite3.connect(db_uri_ro(db_path), uri=True)
-    try:
-        con.execute("SELECT 1 FROM books LIMIT 1")
-        return con, None
-    except sqlite3.OperationalError:
-        con.close()
-    tmpdir = tempfile.mkdtemp(prefix="cquarry-epub-")
-    for suffix in ("", "-wal", "-shm"):
-        src = Path(str(db_path) + suffix)
-        if src.exists():
-            shutil.copy2(src, Path(tmpdir) / ("metadata.db" + suffix))
-    return sqlite3.connect(db_uri_ro(Path(tmpdir) / "metadata.db"), uri=True), tmpdir
 
 
 # ANSI colours; suppress when stdout isn't a TTY.
@@ -1334,13 +1311,14 @@ def run_library(selected: list[str], min_chars: int, thin_chars: int) -> int:
         return 2
     db_path = library_root / "metadata.db"
 
+    from cquarry.db import CalibreDB
     try:
-        con, tmpdir = connect_ro(db_path)
-    except sqlite3.Error as e:
+        db = CalibreDB(str(db_path))
+    except Exception as e:
         print(f"ERROR: cannot open {db_path}: {e}")
         return 2
     try:
-        cur = con.cursor()
+        cur = db.conn.cursor()
         booktags: dict[int, list[str]] = {}
         for bid, tname in cur.execute(
             "SELECT bt.book, t.name FROM books_tags_link bt JOIN tags t ON t.id = bt.tag"
@@ -1357,9 +1335,7 @@ def run_library(selected: list[str], min_chars: int, thin_chars: int) -> int:
             "JOIN books b ON b.id = d.book WHERE d.format = 'EPUB' ORDER BY b.id"
         ).fetchall()
     finally:
-        con.close()
-        if tmpdir:
-            shutil.rmtree(tmpdir, ignore_errors=True)
+        db.close()
 
     nonlatin_hits: list[tuple] = []
     latin_foreign: list[tuple] = []

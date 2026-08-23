@@ -579,62 +579,6 @@ class TestVisibleTextCache(unittest.TestCase):
             self.assertEqual(book.visible_texts(), direct)
 
 
-class TestAuditEpubConnectRo(unittest.TestCase):
-    """Library mode used to open metadata.db with no lock handling at all, so
-    a run while Calibre held the database died with a traceback."""
-
-    def _library(self, tmp):
-        path = pathlib.Path(tmp) / "metadata.db"
-        con = sqlite3.connect(path)
-        con.executescript(
-            "CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, path TEXT);"
-            "INSERT INTO books VALUES (1, 'T', 'A/T (1)');"
-        )
-        con.commit()
-        con.close()
-        return path
-
-    def test_unlocked_db_is_read_directly(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            con, tmpdir = audit.connect_ro(self._library(tmp))
-            try:
-                self.assertIsNone(tmpdir)
-                self.assertEqual(con.execute("SELECT id FROM books").fetchone()[0], 1)
-            finally:
-                con.close()
-
-    def test_a_locked_db_falls_back_to_a_snapshot(self):
-        from unittest import mock
-
-        with tempfile.TemporaryDirectory() as tmp:
-            path = self._library(tmp)
-            locker = sqlite3.connect(path)
-            locker.execute("BEGIN EXCLUSIVE")
-            locker.execute("INSERT INTO books VALUES (2, 'T2', 'A/T2 (2)')")
-            real_connect = sqlite3.connect
-
-            def quick_connect(*a, **kw):
-                kw.setdefault("timeout", 0.1)  # do not sit out the 5s busy wait
-                return real_connect(*a, **kw)
-
-            try:
-                with mock.patch.object(
-                    audit.sqlite3, "connect", side_effect=quick_connect
-                ):
-                    con, tmpdir = audit.connect_ro(path)
-                try:
-                    self.assertIsNotNone(tmpdir)
-                    self.assertEqual(
-                        con.execute("SELECT id FROM books").fetchone()[0], 1
-                    )
-                finally:
-                    con.close()
-                    shutil.rmtree(tmpdir, ignore_errors=True)
-            finally:
-                locker.rollback()
-                locker.close()
-
-
 class TestContentSections(unittest.TestCase):
     """An injection signature is a defect regardless of the expected-foreign
     flag (regression: a signature hit on a declared-foreign book printed
