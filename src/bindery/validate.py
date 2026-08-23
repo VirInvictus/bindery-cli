@@ -170,7 +170,13 @@ class _EpubcheckDaemon:
 
     def stop(self):
         if self._proc:
+            if self._proc.stdin:
+                try:
+                    self._proc.stdin.close()
+                except OSError:
+                    pass
             self._proc.terminate()
+            self._proc.wait(timeout=2)
             self._proc = None
         if hasattr(self, "workdir") and os.path.exists(self.workdir):
             shutil.rmtree(self.workdir, ignore_errors=True)
