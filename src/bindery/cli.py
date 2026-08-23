@@ -592,7 +592,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.set_defaults(func=run_repair)
 
 
-    audit = sub.add_parser("audit", help="audit EPUB body text (content, pagenumbers, emptytext, ocr)")
+    audit = sub.add_parser("audit", help="audit EPUB body text to detect non-schema content flaws (OCR damage, hardcoded page numbers, empty books, non-English text)")
     audit.add_argument("mode", choices=("content", "pagenumbers", "emptytext", "ocr", "all"), help="which audit to run")
     audit.add_argument("path", nargs="?", help="vet loose .epub files under this directory instead of the library")
     audit.add_argument("--min-chars", type=int, default=DEFAULT_MIN_CHARS, help="emptytext EMPTY threshold")

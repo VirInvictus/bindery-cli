@@ -4,7 +4,7 @@ Per-project guidance. Overrides the global file where they conflict.
 
 ## What this is
 
-A focused EPUB repair tool: deterministic well-formedness fixes, gated by epubcheck,
+A focused EPUB repair and diagnostic tool: deterministic well-formedness fixes, gated by epubcheck,
 with atomic in-place replacement in a Calibre library. Sibling to oceanstrip. Born from
 the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
 

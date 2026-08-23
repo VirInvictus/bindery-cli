@@ -1,10 +1,14 @@
-## [0.15.0] - 2026-08-23
-
-### Added
-- Folded `audit_epub` into Bindery as the `bindery audit` subcommand, creating a unified diagnostic and repair toolkit.
-- Merged `audit_epub` tests into the Bindery test suite.
-
 # Bindery Patch Notes
+
+## v0.15.0 (2026-08-23)
+
+### Features
+- **Integrated EPUB Auditing (`bindery audit`):** Successfully absorbed the external `audit_epub` codebase directly into Bindery as a native subcommand. This transforms Bindery from a pure repair tool into a complete EPUB lifecycle toolkit (Audit -> Repair -> Validate). 
+  - **`content`:** Identifies non-English text by sniffing the text blocks, reporting the predominant script block (e.g., Cyrillic, CJK) to catch untranslated or mis-encoded EPUBs.
+  - **`pagenumbers`:** Detects books polluted with hardcoded print page numbers (using sliding window regex to find high-density sequential digits interrupting prose), seamlessly bridging into `bindery repair --strip-pagination` for the fix.
+  - **`emptytext`:** Audits EPUBs to find effectively empty books or spine stubs (below configurable `--min-chars` and `--thin-chars` thresholds).
+  - **`ocr`:** Scans for systemic OCR damage by detecting disproportionately high densities of hyphenation, disjointed characters, or garbage sequences.
+  - **Library Integration:** Directly operates on a Calibre library tree or loose directories, producing actionable CSV reports designed to be piped into `bindery library --audit`.
 
 ## v0.14.0 (2026-08-22)
 
