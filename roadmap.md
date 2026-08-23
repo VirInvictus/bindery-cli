@@ -331,3 +331,11 @@ Following a comprehensive sweep of a 5,000-book library (detailed in `BINDERY_RE
 - [ ] **Block-in-Inline Nesting (`<span><div></div></span>`):** Develop a strategy to unwrap or restructure inline elements that improperly contain block-level children.
 - [ ] **NCX Duplicate `playOrder`:** Re-sequence `playOrder` integers in the `toc.ncx` file to ensure they are strictly sequential without gaps or duplicates.
 - [ ] **Invalid Attributes (`value` in lists):** Strip invalid `value` attributes from tags where they don't belong according to EPUB schemas (such as arbitrary `<li>` markers).
+
+## Phase 4: cquarry Integration (Upcoming)
+
+With the transition to the `cquarry` shared library (v0.16.0), Bindery inherits the ability to perform complex search and batch resolution natively. As the `cquarry` library adds new write capabilities, Bindery is slated to adopt the following upgrades:
+
+- **Format Path Resolution:** Transition to `cquarry.get_format_path()` to remove manual path concatenations during file discovery.
+- **Safe Tag Application:** When `cquarry` implements safe DB writes (`add_tag`), Bindery will gain the ability to automatically tag books in the Calibre UI as "Audited" or "Flagged" when issues are found, rather than relying strictly on console output.
+- **Single-Entity Fetching:** Utilize `get_book(book_id)` for faster isolated audits when analyzing a single book, avoiding the overhead of caching the entire library layout.
