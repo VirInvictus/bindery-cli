@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bindery"
-version = "0.15.0"
+version = "0.16.0"
 description = "High-speed EPUB repair surgeon with a persistent Java validation daemon, safe HTML unwrapping, and native Calibre integration."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -16,7 +16,8 @@ authors = [
 # Core dependencies are minimal. html5lib is needed only for the opt-in --reserialize structural
 # repair; it is imported lazily, so every other mode works without it installed.
 dependencies = [
-  "tqdm",]
+  "tqdm",
+  "cquarry @ git+https://github.com/VirInvictus/cquarry.git",]
 
 [project.optional-dependencies]
 reserialize = ["html5lib>=1.1"]
@@ -38,3 +39,6 @@ packages = ["src/bindery"]
 # SIM103 would collapse validate.no_worse's commented guard clauses into one
 # negated expression.
 select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
