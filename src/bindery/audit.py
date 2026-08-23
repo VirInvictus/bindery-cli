@@ -80,8 +80,6 @@ def resolve_library_root() -> Path | None:
     return None
 
 
-
-
 # ANSI colours; suppress when stdout isn't a TTY.
 USE_COLOR = sys.stdout.isatty()
 RED = "\033[31m" if USE_COLOR else ""
@@ -1308,6 +1306,7 @@ def run_library(selected: list[str], min_chars: int, thin_chars: int) -> int:
     db_path = library_root / "metadata.db"
 
     from cquarry.db import CalibreDB
+
     try:
         db = CalibreDB(str(db_path))
     except Exception as e:
