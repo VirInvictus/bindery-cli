@@ -1,5 +1,14 @@
 # Bindery Patch Notes
 
+## v0.16.0 (2026-08-23)
+
+---
+
+### Core Upgrades
+
+**Centralized Calibre DB Access:** Bindery has transitioned to the unified `cquarry` library for all read-only `metadata.db` accesses. The internal `bindery.audit` DB connection logic has been completely replaced with `cquarry.db.CalibreDB`. This inherits robust Calibre lock handling, database snapshotting, and ensures query logic stays perfectly synchronized with `CalibreQuarry` and `Hermitage`.
+
+
 ## v0.15.0 (2026-08-23)
 
 ### Features
