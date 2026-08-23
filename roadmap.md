@@ -339,3 +339,20 @@ With the transition to the `cquarry` shared library (v0.16.0), Bindery inherits 
 - **Format Path Resolution:** Transition to `cquarry.get_format_path()` to remove manual path concatenations during file discovery.
 - **Safe Tag Application:** When `cquarry` implements safe DB writes (`add_tag`), Bindery will gain the ability to automatically tag books in the Calibre UI as "Audited" or "Flagged" when issues are found, rather than relying strictly on console output.
 - **Single-Entity Fetching:** Utilize `get_book(book_id)` for faster isolated audits when analyzing a single book, avoiding the overhead of caching the entire library layout.
+
+## Phase 6: Code Sweep & Fixes (2026-08-23)
+*Context: Fixing severe data loss and platform incompatibility issues found during sweep.*
+
+### Bugs to Fix
+- [ ] **Critical Content Loss:** Fix `unwrap_block_in_inline` to preserve inner text blocks rather than replacing them with literal strings.
+- [ ] **Missing `--replace` Flag:** Update `calibredb_replace` to pass `--replace` so Calibre doesn't crash on existing formats.
+- [ ] **Non-Existent Method Call:** Fix `analyze_brokentags` in `audit.py` calling `iter_html_text` on `Book` (which doesn't exist).
+- [ ] **Hardcoded Java Version:** Remove `--release 25` from `EpubcheckDaemon` so it boots on standard Java 17/21 systems.
+- [ ] **Unbounded URL Mutation:** Fix `fix_id_colons` regex so it checks word boundaries and ignores non-id attributes and external fragment links.
+- [ ] **Trailing Whitespace Deletion:** Fix `strip_invalid_value` wiping consecutive spaces in valid attributes.
+- [ ] **Empty `<title>` Tag Failure:** Fix `fix_missing_title` failing to replace `<title></title>` with `<title>Unknown</title>`.
+
+### Refactoring & Growth
+- [ ] **Decouple Opt-In Transforms:** Remove experimental/lossy transforms from the default `HTML_TRANSFORMS` block and gate them strictly behind their documented CLI flags.
+- [ ] **cquarry Integration:** Use `cquarry` to accurately build Calibre file paths instead of guessing.
+- [ ] **True CSS-Aware Unwrapping:** Read EPUB CSS stylesheets to skip `unwrap_illegal_tags` on styled custom elements.
