@@ -57,14 +57,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import os
 import re
-import shutil
-import sqlite3
 import sys
-import tempfile
 import zipfile
 from collections import Counter
 from pathlib import Path
-from urllib.parse import quote
 from xml.etree import ElementTree as ET
 
 import ui

@@ -2,8 +2,6 @@ import contextlib
 import io
 import os
 import pathlib
-import shutil
-import sqlite3
 import tempfile
 import unittest
 
