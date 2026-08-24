@@ -1,5 +1,8 @@
 # Bindery Patch Notes
 
+## v0.16.1 (2026-08-24)
+
+- **Build:** Cleaned up orphaned scratch files to resolve strict ruff linting failures.
 ## v0.16.0 (2026-08-23)
 
 ---
