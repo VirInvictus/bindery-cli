@@ -3,7 +3,10 @@ import re
 
 content = Path("pyproject.toml").read_text()
 content = content.replace('version = "0.15.0"', 'version = "0.16.0"')
-content = content.replace('dependencies = [\n  "tqdm",]', 'dependencies = [\n  "tqdm",\n  "cquarry @ git+https://github.com/VirInvictus/cquarry.git",]')
+content = content.replace(
+    'dependencies = [\n  "tqdm",]',
+    'dependencies = [\n  "tqdm",\n  "cquarry @ git+https://github.com/VirInvictus/cquarry.git",]',
+)
 content += "\n[tool.hatch.metadata]\nallow-direct-references = true\n"
 
 Path("pyproject.toml").write_text(content)
