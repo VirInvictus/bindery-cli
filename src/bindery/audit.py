@@ -63,7 +63,7 @@ from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-import ui
+import vir_tui as ui
 
 # ----------------------------------------------------------------------------
 # Shared scaffolding

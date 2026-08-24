@@ -1,3 +1,6 @@
+## 0.16.2
+- Replaced local `ui.py` module with standardized `vir-tui` package.
+
 # Bindery Patch Notes
 
 ## v0.16.1 (2026-08-24)

@@ -4,7 +4,7 @@ import zipfile
 from pathlib import Path
 from urllib.parse import unquote
 
-import ui
+import vir_tui as ui
 
 
 def find_missing_images(library_path):
