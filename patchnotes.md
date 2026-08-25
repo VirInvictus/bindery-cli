@@ -20,8 +20,6 @@
   foreign-language body text flagged, tagged `[Flagged]`, `last_modified` bumped, second run reports
   the book already tagged.
 
-# Bindery Patch Notes
-
 ## v0.17.0 (2026-08-25)
 
 **The default repair pass is well-formedness only again.** v0.14.0 had promoted six structural
