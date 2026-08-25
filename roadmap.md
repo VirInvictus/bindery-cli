@@ -323,7 +323,7 @@ separate repos with separate licences and no dependency between them.
 
 
 ## Supplementary Phase (Based on Library Audit)
-Following a comprehensive sweep of a 5,000-book library (detailed in `BINDERY_REPORT.md`), several recurring `epubcheck` schemas were identified that Bindery currently does not resolve. An AI agent picking up this roadmap should build standard, opt-in/safe repairs for the following:
+Following a comprehensive epubcheck sweep of a 5,043-book Calibre library on 2026-08-22 (~3,228 candidates for repair), several recurring error schemas were identified; all have since shipped. (This section absorbs the one-off `BINDERY_REPORT.md`, retired in v0.17.0 — its performance notes live in the v0.13.0 patchnotes, and its findings are the checked items below.)
 
 - [x] **XML NCName Violation (`id` contains colons):** Fix IDs that contain invalid characters (specifically colons like `id="foo:bar"`). These must be string-replaced in the declaration and across all referencing `href` or `idref` attributes throughout the EPUB. *(shipped v0.14.0 as `--fix-id-colons`; made genuinely opt-in in v0.17.0 — see Phase 6 below)*
 - [x] **Empty Body (`<body></body>`):** Inject a placeholder so parsers accept the document. *(shipped v0.14.0 as `--fix-empty-body` appending `&nbsp;`; opt-in since v0.17.0)*
@@ -331,6 +331,11 @@ Following a comprehensive sweep of a 5,000-book library (detailed in `BINDERY_RE
 - [x] **Block-in-Inline Nesting (`<span><div></div></span>`):** Develop a strategy to unwrap or restructure inline elements that improperly contain block-level children. *(shipped v0.14.0 as `--unwrap-block-in-inline`; opt-in since v0.17.0)*
 - [x] **NCX Duplicate `playOrder`:** Re-sequence `playOrder` integers in the `toc.ncx` file to ensure they are strictly sequential without gaps or duplicates. *(shipped v0.14.0 as `fix_ncx_playorder`, part of the always-on NCX pipeline — NCX-internal attribute normalization)*
 - [x] **Invalid Attributes (`value` in lists):** Strip invalid `value` attributes from tags where they don't belong according to EPUB schemas (such as arbitrary `<li>` markers). *(shipped v0.14.0 as `--strip-invalid-value`; opt-in since v0.17.0)*
+
+Considered from the same sweep and deliberately **not** scheduled: enabling `--add-img-alt`
+by default (missing `alt` was the sweep's #2 recurring error at 5x sample frequency).
+Rejected because `alt=""` asserts "decorative" to screen readers and adds markup the author
+never wrote — exactly the class of fix that must stay opt-in under the safety contract.
 
 ## Phase 4: cquarry Integration (Upcoming)
 
