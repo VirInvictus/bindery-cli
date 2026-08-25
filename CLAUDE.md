@@ -55,7 +55,7 @@ the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
 - `src/bindery/pagination.py`: the opt-in lossy page-number strip (runhead detection, page-layer decision, block-centric removal/merge, safety nets).
 - `src/bindery/watermark.py`: the opt-in lossy watermark strip (anchored and anchorless signature removal).
 - `src/bindery/reserialize.py`: structural repair via `html5lib`.
-- `src/bindery/audit.py`: read-only body-text audits (`content`, `pagenumbers`, `emptytext`, `ocr`) behind the `audit` subcommand (v0.15.0).
+- `src/bindery/audit.py`: read-only body-text audits (`content`, `pagenumbers`, `emptytext`, `ocr`) behind the `audit` subcommand (v0.15.0). Since v0.18.0 library mode resolves EPUB paths through `cquarry.get_format_path()` and can apply a tag to flagged books via `cquarry.write.WritableCalibreDB` (only with explicit `--tag`; the only sanctioned write path). Hazard: the scan loop reuses `tag` as its per-book display column, so the `--tag` argument is captured as `audit_tag` at function entry — do not collapse them again.
 - `src/bindery/epub.py`: archive rewrite, NCX uid sync, RepairReport, mismatch detection, and the opt-in structural-repair plumbing (including the CSS precondition scan).
 - `src/bindery/validate.py`: epubcheck wrapper, the `gate` (improvement) and `no_worse` (no-regression, for the lossy strips) acceptance bars.
 - `src/bindery/library.py`: Calibre walk, atomic replace, backups, and native Calibre replacement.

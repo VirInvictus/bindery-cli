@@ -1,5 +1,27 @@
 # Bindery Patch Notes
 
+## v0.18.0 (2026-08-25)
+
+**cquarry 1.1 adoption: canonical format-path resolution and an opt-in tagging pass.**
+
+- **Canonical EPUB resolution:** library-mode audits (`bindery audit ...` with no directory
+  argument) now resolve each book's EPUB through `cquarry.db.CalibreDB.get_format_path()` instead of
+  hand-building `<root>/<books.path>/<name>.epub`. The storage-layout logic lives in exactly one
+  place across the ecosystem, and a missing file surfaces as a normal scan error naming the expected
+  path.
+- **`--tag TAG` (opt-in):** after a library-mode audit, apply `TAG` to every flagged book via
+  cquarry's separate `WritableCalibreDB` write module (trigger-safe: registers Calibre's
+  `title_sort`/`uuid4` SQL functions, bumps `last_modified`, cleans link tables before tags). The
+  audit itself remains strictly read-only; nothing is written unless `--tag` is passed, and THIN
+  emptytext advisories stay untagged. Books already carrying the tag are skipped (idempotent).
+  Calibre must be closed so the write does not fight its lock.
+- **Requires `cquarry>=1.1`.**
+- **Tests:** suite still green (201 tests) plus an end-to-end smoke run against a synthetic library:
+  foreign-language body text flagged, tagged `[Flagged]`, `last_modified` bumped, second run reports
+  the book already tagged.
+
+# Bindery Patch Notes
+
 ## v0.17.0 (2026-08-25)
 
 **The default repair pass is well-formedness only again.** v0.14.0 had promoted six structural

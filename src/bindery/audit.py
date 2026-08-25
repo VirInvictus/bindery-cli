@@ -1296,7 +1296,15 @@ def _ocr_sections(found) -> int:
 ALL: tuple[str, ...] = ("content", "pagenumbers", "emptytext", "ocr")
 
 
-def run_library(selected: list[str], min_chars: int, thin_chars: int) -> int:
+def run_library(
+    selected: list[str],
+    min_chars: int,
+    thin_chars: int,
+    tag: str | None = None,
+) -> int:
+    # The scan loop below reuses `tag` for its per-book display column; keep
+    # the --tag argument under a distinct name so it survives that shadowing.
+    audit_tag = tag
     library_root = resolve_library_root()
     if library_root is None:
         print(
@@ -1327,9 +1335,19 @@ def run_library(selected: list[str], min_chars: int, thin_chars: int) -> int:
         ):
             declared.setdefault(bid, set()).add(lang)
         rows = cur.execute(
-            "SELECT b.id, b.title, b.path, d.name FROM data d "
-            "JOIN books b ON b.id = d.book WHERE d.format = 'EPUB' ORDER BY b.id"
+            "SELECT b.id, b.title FROM books b "
+            "JOIN data d ON d.book = b.id WHERE d.format = 'EPUB' ORDER BY b.id"
         ).fetchall()
+        # Canonical path resolution (library root / books.path / name.epub)
+        # comes from cquarry so the layout logic lives in exactly one place.
+        epubs = [
+            (
+                bid,
+                title,
+                Path(db.get_format_path(bid, "EPUB", verify=False)),
+            )
+            for bid, title in rows
+        ]
     finally:
         db.close()
 
@@ -1344,8 +1362,7 @@ def run_library(selected: list[str], min_chars: int, thin_chars: int) -> int:
     errors: list[tuple] = []
     scanned = 0
 
-    for book_id, title, path, name in ui.tqdm(rows, desc=ui.info("Scanning library")):
-        full = library_root / path / f"{name}.epub"
+    for book_id, title, full in ui.tqdm(epubs, desc=ui.info("Scanning library")):
         tags = booktags.get(book_id, [])
         tag = tags[0] if tags else "?"
         try:
@@ -1419,7 +1436,50 @@ def run_library(selected: list[str], min_chars: int, thin_chars: int) -> int:
             print(f"  #{book_id} [{tag}] {title}\n    {msg}")
         print()
         rc |= 1
+
+    if audit_tag:
+        rc |= _apply_audit_tag(library_root, audit_tag, {
+            "content": [h[0] for h in nonlatin_hits]
+            + [h[0] for h in latin_foreign]
+            + [h[0] for h in signature_hits],
+            "pagenumbers": [h[0] for h in pagenum_found],
+            "emptytext": [
+                h[0] for h in empty_hits + partial_hits
+            ],  # THIN is advisory and stays untagged
+            "ocr": [h[0] for h in ocr_found],
+        })
     return rc
+
+
+def _apply_audit_tag(library_root: Path, tag: str, flagged: dict[str, list[int]]) -> int:
+    """Apply ``tag`` to every flagged book via cquarry's opt-in write path.
+
+    Only reached with the explicit --tag flag; the audit itself stays strictly
+    read-only. Calibre should be closed so the write does not fight its lock.
+    Returns 0 on success, 2 on setup failure.
+    """
+    from cquarry.write import WritableCalibreDB
+
+    ids = sorted({bid for bids in flagged.values() for bid in bids})
+    if not ids:
+        print("Nothing flagged; no tags applied.")
+        return 0
+    db_path = library_root / "metadata.db"
+    try:
+        with WritableCalibreDB(str(db_path)) as wdb:
+            applied = 0
+            for bid in ids:
+                if wdb.add_tag(bid, tag):
+                    applied += 1
+    except Exception as e:
+        print(f"ERROR: tagging failed ({type(e).__name__}: {e}).")
+        print("Is Calibre closed? The write path refuses to fight its lock.")
+        return 2
+    print(
+        f"Tagged {applied} of {len(ids)} flagged books with [{tag}]"
+        " (already-tagged books skipped)."
+    )
+    return 0
 
 
 def _content_dir(r: dict) -> tuple[bool, str, list[str]]:
@@ -1552,6 +1612,13 @@ def main() -> int:
         default=DEFAULT_THIN_CHARS,
         help=f"emptytext THIN advisory threshold (default {DEFAULT_THIN_CHARS})",
     )
+    parser.add_argument(
+        "--tag",
+        metavar="TAG",
+        default=None,
+        help="library mode only: tag every flagged book via cquarry's opt-in "
+        "write path (Calibre must be closed; audit itself stays read-only)",
+    )
     args = parser.parse_args()
     ui.print_header(
         "bindery audit - Execution [DRY RUN]"
@@ -1563,7 +1630,9 @@ def main() -> int:
         return run_directory(
             Path(args.directory).expanduser(), selected, args.min_chars, args.thin_chars
         )
-    return run_library(selected, args.min_chars, args.thin_chars)
+    return run_library(
+        selected, args.min_chars, args.thin_chars, tag=args.tag
+    )
 
 
 if __name__ == "__main__":

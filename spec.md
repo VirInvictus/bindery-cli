@@ -233,12 +233,20 @@ Optionally, Bindery can replace the format natively inside Calibre using `calibr
 
 ## Audit subcommand (read-only)
 
-`bindery audit {content,pagenumbers,emptytext,ocr,all} [PATH]` (v0.15.0, `audit.py`) inspects
-EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in
-page-number layers (sliding-window density heuristics), empty or thin books, and systemic OCR
-damage. It operates on a Calibre library tree or loose directories, writes nothing, and shares
-no code path with replacement; its `pagenumbers` findings bridge naturally into
+`bindery audit {content,pagenumbers,emptytext,ocr,all} [PATH] [--tag TAG]` (v0.15.0, `audit.py`;
+`--tag` since v0.18.0) inspects EPUB body text for flaws epubcheck cannot see: non-English script
+blocks, baked-in page-number layers (sliding-window density heuristics), empty or thin books, and
+systemic OCR damage. It operates on a Calibre library tree or loose directories and shares no code
+path with replacement; its `pagenumbers` findings bridge naturally into
 `bindery repair --strip-pagination`.
+
+In library mode, EPUB files are resolved through `cquarry.db.CalibreDB.get_format_path()` — the
+storage-layout logic is not duplicated here. The scan itself still writes nothing. The opt-in
+`--tag TAG` pass applies `TAG` to flagged books via `cquarry.write.WritableCalibreDB`, the
+separate trigger-safe write module (it registers Calibre's `title_sort`/`uuid4` SQL functions,
+bumps `books.last_modified`, and cleans link tables before tag deletion). THIN emptytext
+advisories stay untagged; already-tagged books are skipped; a missing file is a scan error, not a
+silent skip.
 
 ## Out of scope (non-goals)
 

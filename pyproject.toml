@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bindery"
-version = "0.17.0"
+version = "0.18.0"
 description = "High-speed EPUB repair surgeon with a persistent Java validation daemon, safe HTML unwrapping, and native Calibre integration."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -20,7 +20,7 @@ authors = [
 dependencies = [
   "tqdm",
   "vir-tui @ git+https://github.com/VirInvictus/vir-tui.git@d13ad0ed2c4afc05d0c052d14e644747f1e9e73f",
-  "cquarry @ git+https://github.com/VirInvictus/cquarry.git@4b771aa3e97390e163bab9d1464ad530de131d4e",]
+  "cquarry @ git+https://github.com/VirInvictus/cquarry.git@99f038b077f3266ccacc88f214c2181b1679d00b",]
 
 [project.optional-dependencies]
 reserialize = ["html5lib>=1.1"]

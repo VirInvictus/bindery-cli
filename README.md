@@ -98,6 +98,20 @@ Audits can also be run on a directory of loose `.epub` files by passing the path
 bindery audit pagenumbers /path/to/loose/epubs
 ```
 
+### Tagging flagged books (opt-in)
+
+By default an audit writes nothing. With `--tag TAG` (library mode only), every book the audit
+flags is tagged in `metadata.db` through cquarry's trigger-safe write module — useful for piping
+flagged books back into Calibre views:
+
+```sh
+cd ~/docs/Calibre\ Library && bindery audit content --tag "Audit Flagged"
+```
+
+The audit itself stays read-only; only the final tagging pass writes, it skips books that already
+carry the tag, and THIN emptytext advisories are never tagged. Close Calibre first so the write
+does not fight its lock.
+
 
 Repair one book to a new file (gated; writes only if it is an improvement):
 
