@@ -394,5 +394,122 @@ class TestRepairEpub(unittest.TestCase):
             self.assertEqual(z.read("OEBPS/clean.xhtml"), raw)
 
 
+class TestOptInStructuralRepairs(unittest.TestCase):
+    """End-to-end: the six structural repairs fire only behind their flags, and the
+    CSS precondition protects styled tags book-wide during --unwrap-illegal-tags."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = Path(self.tmp.name) / "in.epub"
+        self.dst = Path(self.tmp.name) / "out.epub"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _build(self, css: str, content: str | None = None):
+        doc = content or (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head></head>'
+            '<body><p id="sec:1">one</p>'
+            '<div class="c" value="7">x</div>'
+            "<w>bold</w><sentence>s</sentence>"
+            "<span><p>inner</p></span></body></html>"
+        )
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/c1.xhtml", doc)
+            z.writestr("OEBPS/style.css", css)
+            z.writestr("OEBPS/content.opf", OPF)
+            z.writestr("OEBPS/toc.ncx", NCX_BAD)
+
+    STRUCTURAL_KEYS = (
+        "fix_empty_body",
+        "fix_missing_title",
+        "fix_id_colons",
+        "unwrap_block_in_inline",
+        "strip_invalid_value",
+        "unwrap_illegal_tags",
+    )
+
+    def test_default_repair_touches_nothing_structural(self):
+        self._build(css="p { margin: 0 }")
+        report = repair_epub(self.src, self.dst)
+        for key in self.STRUCTURAL_KEYS:
+            self.assertNotIn(key, report.fixes)
+        with zipfile.ZipFile(self.dst) as z:
+            c = z.read("OEBPS/c1.xhtml").decode()
+        self.assertIn('id="sec:1"', c)
+        self.assertIn("<w>bold</w>", c)
+        self.assertIn('value="7"', c)
+        self.assertIn("<span><p>inner</p></span>", c)
+        self.assertNotIn("<title>Unknown", c)
+
+    def test_flags_fire_but_css_styled_tag_is_protected(self):
+        self._build(css="/* book styling */\nw { color: red }\np { margin: 0 }")
+        report = repair_epub(
+            self.src,
+            self.dst,
+            missing_title=True,
+            id_colons=True,
+            block_in_inline=True,
+            invalid_value=True,
+            illegal_tags=True,
+        )
+        self.assertIn("fix_missing_title", report.fixes)
+        self.assertIn("fix_id_colons", report.fixes)
+        self.assertIn("unwrap_block_in_inline", report.fixes)
+        self.assertIn("strip_invalid_value", report.fixes)
+        # <sentence> had no styling -> unwrapped; <w> is styled -> protected.
+        self.assertIn("unwrap_illegal_tags", report.fixes)
+        with zipfile.ZipFile(self.dst) as z:
+            c = z.read("OEBPS/c1.xhtml").decode()
+        self.assertIn("<w>bold</w>", c)
+        self.assertNotIn("<sentence>", c)
+        self.assertIn('id="sec_1"', c)
+        self.assertIn("<title>Unknown</title>", c)
+        self.assertNotIn('value="7"', c)
+        self.assertNotIn("<span><p>", c)
+        self.assertIn("<p>inner</p>", c)
+
+    def test_unstyled_book_loses_all_illegal_tags(self):
+        self._build(css="p { margin: 0 }")
+        repair_epub(self.src, self.dst, illegal_tags=True)
+        with zipfile.ZipFile(self.dst) as z:
+            c = z.read("OEBPS/c1.xhtml").decode()
+        self.assertNotIn("<w>", c)
+        self.assertIn("bold", c)  # inner text survives
+
+    def test_inline_style_block_protects_without_a_stylesheet(self):
+        self._build(
+            css="/* nothing relevant */",
+            content=(
+                '<?xml version="1.0" encoding="utf-8"?>'
+                '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+                "<style>sentence { font-style: italic }</style></head>"
+                "<body><w>x</w><sentence>y</sentence></body></html>"
+            ),
+        )
+        repair_epub(self.src, self.dst, illegal_tags=True)
+        with zipfile.ZipFile(self.dst) as z:
+            c = z.read("OEBPS/c1.xhtml").decode()
+        self.assertIn("<sentence>y</sentence>", c)  # protected via inline <style>
+        self.assertNotIn("<w>", c)  # unstyled -> removed
+
+    def test_empty_body_fix_is_opt_in(self):
+        # A book with nothing else wrong: no OPF/NCX sidecars, so the default run
+        # must be a true noop (an empty RepairReport).
+        content = (
+            '<?xml version="1.0"?><html '
+            'xmlns="http://www.w3.org/1999/xhtml">'
+            "<head><title>t</title></head><body> </body></html>"
+        )
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", b"application/epub+zip")
+            z.writestr("OEBPS/c1.xhtml", content)
+        self.assertFalse(repair_epub(self.src, self.dst))
+        report = repair_epub(self.src, self.dst, empty_body=True)
+        self.assertIn("fix_empty_body", report.fixes)
+
+
 if __name__ == "__main__":
     unittest.main()

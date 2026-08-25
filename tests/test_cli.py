@@ -15,7 +15,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from bindery.cli import _load_audit, main, process_book
+from bindery.cli import _load_audit, build_parser, main, process_book
 from bindery.epub import RepairReport
 from bindery.validate import CheckResult
 
@@ -352,6 +352,57 @@ class TestSweepSelection(unittest.TestCase):
                     main(["library", td, "--sweep", "--audit", "x.csv"]), 1
                 )
                 self.assertEqual(main(["library", td, "--sweep", "--only", "ncx"]), 1)
+
+
+class TestOptInFlagWiring(unittest.TestCase):
+    """Every structural repair must exist as a real flag on both subcommands,
+    default off, and --all must turn each of them on."""
+
+    NEW_FLAGS = (
+        "fix_empty_body",
+        "fix_missing_title",
+        "fix_id_colons",
+        "unwrap_block_in_inline",
+        "strip_invalid_value",
+        "unwrap_illegal_tags",
+    )
+
+    def test_flags_default_off_on_both_subcommands(self):
+        parser = build_parser()
+        for argv in (["repair", "x.epub"], ["library", "/tmp"]):
+            args = parser.parse_args(argv)
+            for flag in self.NEW_FLAGS:
+                self.assertFalse(getattr(args, flag), f"{argv} {flag}")
+
+    def test_all_enables_every_new_flag_at_the_call_site(self):
+        # --all ORs into each flag where process_book calls repair_epub (the same
+        # wiring the pre-existing opt-ins use); argparse itself stays a plain
+        # store_true, so assert at the call site.
+        FLAG_KWARGS = (
+            "empty_body",
+            "missing_title",
+            "id_colons",
+            "block_in_inline",
+            "invalid_value",
+            "illegal_tags",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/c1.xhtml", "<html><body><p>x</p></body></html>")
+            report = RepairReport(fixes={"self_close_void": 1})
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("bindery.cli.repair_epub", return_value=report) as repair,
+                mock.patch("bindery.cli.run_epubcheck", return_value=None),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                main(["repair", str(src), "--all"])
+            kwargs = repair.call_args.kwargs
+            for kw in FLAG_KWARGS:
+                self.assertTrue(kwargs.get(kw), kw)
 
 
 if __name__ == "__main__":

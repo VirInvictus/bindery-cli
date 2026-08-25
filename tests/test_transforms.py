@@ -9,13 +9,21 @@ from bindery.transforms import (
     HTML_TRANSFORMS,
     add_img_alt,
     apply_transforms,
+    css_protected_tags,
     drop_duplicate_xmlns,
     escape_bare_amp,
     escape_unknown_entities,
+    fix_empty_body,
+    fix_id_colons,
+    fix_missing_title,
     fix_named_entities,
     self_close_void,
     strip_invalid_attributes,
+    strip_invalid_value,
     strip_prolog_junk,
+    style_block_tags,
+    unwrap_block_in_inline,
+    unwrap_illegal_tags,
 )
 
 
@@ -317,6 +325,99 @@ class TestProtectedSpans(unittest.TestCase):
         self.assertEqual(n, 1)
         self.assertIn('<!-- <img v:shapes="x"> -->', out)
         self.assertNotIn('v:shapes="y"', out)
+
+
+class TestStructuralRepairsAreOptIn(unittest.TestCase):
+    """The six structural repairs must never ride along in the default pipeline.
+
+    Until v0.17 these ran on every book via HTML_TRANSFORMS, so a plain repair
+    could delete attributes, unwrap elements, and fabricate content the author
+    never wrote. The default pass is well-formedness only; each structural defect
+    must survive it byte-for-byte and yield zero fix counts.
+    """
+
+    CASES = {
+        "empty body": "<html><head><title>t</title></head><body> </body></html>",
+        "missing title": "<html><head></head><body><p>x</p></body></html>",
+        "id colons": '<p id="a:b">x</p><a href="#c:d">y</a>',
+        "block in inline": "<span><div>x</div></span>",
+        "invalid value": '<div class="c" value="7">x</div>',
+        "illegal tags": "<w>bold</w><sentence>s</sentence><pagebreak/>",
+    }
+
+    def test_default_pipeline_leaves_every_structural_defect_alone(self):
+        for name, doc in self.CASES.items():
+            with self.subTest(defect=name):
+                out, counts = apply_transforms(doc, HTML_TRANSFORMS)
+                self.assertEqual((out, counts), (doc, {}))
+
+    def test_each_function_still_fires_when_called_directly(self):
+        functions = [
+            fix_empty_body,
+            fix_missing_title,
+            fix_id_colons,
+            unwrap_block_in_inline,
+            strip_invalid_value,
+            lambda s: unwrap_illegal_tags(s),
+        ]
+        for fn, (_, doc) in zip(functions, self.CASES.items(), strict=True):
+            with self.subTest(
+                transform=fn.__name__ if hasattr(fn, "__name__") else "unwrap"
+            ):
+                _, n = fn(doc)
+                self.assertGreaterEqual(n, 1)
+
+
+class TestCssProtectedTags(unittest.TestCase):
+    def test_element_selector_protects(self):
+        self.assertIn("st", css_protected_tags("st { color: red }"))
+        self.assertIn("w", css_protected_tags("p st, x > w { margin: 0 }"))
+        self.assertIn("o", css_protected_tags("@media print { o > sentence {} }"))
+        # case-insensitive both ways
+        self.assertIn("w", css_protected_tags("W:first-line { }"))
+
+    def test_compound_selector_with_class_or_pseudo_protects(self):
+        # `pagebreak.new` styles pagebreak ELEMENTS that carry class new; missing
+        # this would let the unwrap destroy real formatting.
+        self.assertIn("pagebreak", css_protected_tags("pagebreak.new:after {}"))
+
+    def test_class_and_id_selectors_do_not_protect(self):
+        self.assertEqual(css_protected_tags(".st { color: red }"), frozenset())
+        self.assertEqual(css_protected_tags("#w { color: red }"), frozenset())
+        self.assertEqual(css_protected_tags("div.st { }"), frozenset())
+
+    def test_similar_names_do_not_match(self):
+        # 'strong' contains 'st'; the selector-boundary regex must not care.
+        self.assertNotIn("st", css_protected_tags("strong { font-weight: bold }"))
+
+    def test_comments_are_ignored(self):
+        self.assertEqual(css_protected_tags("/* w { } */ p { }"), frozenset())
+
+    def test_style_block_tags_scans_inline_css(self):
+        doc = "<style>w { }</style><p>hi</p>"
+        self.assertIn("w", style_block_tags(doc))
+        self.assertEqual(style_block_tags("<p>.w { }</p>"), frozenset())
+
+
+class TestUnwrapIllegalTagsProtection(unittest.TestCase):
+    def test_protected_tag_survives_unstyled_removed(self):
+        doc = "<p><w>b</w></p><p><sentence>s</sentence></p>"
+        out, n = unwrap_illegal_tags(doc, protected_tags=frozenset({"w"}))
+        self.assertIn("<w>b</w>", out)
+        self.assertNotIn("<sentence>", out)
+        self.assertIn("s", out)  # inner text of removed tag survives
+        self.assertEqual(n, 2)
+
+    def test_default_removes_every_illegal_tag(self):
+        out, n = unwrap_illegal_tags("<w>a</w><o>b</o>")
+        self.assertEqual(out, "ab")
+        self.assertEqual(n, 4)
+
+    def test_case_insensitive_removal_and_protection(self):
+        out, n = unwrap_illegal_tags("<W>x</W>")
+        self.assertEqual((out, n), ("x", 2))
+        out, _ = unwrap_illegal_tags("<W>x</W>", protected_tags=frozenset({"w"}))
+        self.assertEqual(out, "<W>x</W>")
 
 
 class TestPipeline(unittest.TestCase):

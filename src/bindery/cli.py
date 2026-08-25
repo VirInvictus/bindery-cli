@@ -58,6 +58,12 @@ def process_book(
     strip_watermarks: bool = False,
     escape_entities: bool = False,
     img_alt: bool = False,
+    empty_body: bool = False,
+    missing_title: bool = False,
+    id_colons: bool = False,
+    block_in_inline: bool = False,
+    invalid_value: bool = False,
+    illegal_tags: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -76,6 +82,12 @@ def process_book(
         strip_watermarks=strip_watermarks,
         escape_entities=escape_entities,
         img_alt=img_alt,
+        empty_body=empty_body,
+        missing_title=missing_title,
+        id_colons=id_colons,
+        block_in_inline=block_in_inline,
+        invalid_value=invalid_value,
+        illegal_tags=illegal_tags,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -233,10 +245,14 @@ def run_library(args) -> int:
             "note: dry run -- --backup/--backup-inplace do nothing without --apply",
             file=sys.stderr,
         )
-    if args.apply and args.strip_pagination and not wants_backup:
+    if (
+        args.apply
+        and not wants_backup
+        and (args.strip_pagination or args.strip_broken_tags or args.strip_watermarks)
+    ):
         print(
-            "WARNING: --strip-pagination is the one lossy mode; strongly consider "
-            "--backup DIR or --backup-inplace when applying it.",
+            "WARNING: the --strip-* modes are lossy; strongly consider --backup DIR "
+            "or --backup-inplace when applying them.",
             file=sys.stderr,
         )
 
@@ -298,6 +314,15 @@ def run_library(args) -> int:
                     escape_entities=args.escape_unknown_entities
                     or getattr(args, "all", False),
                     img_alt=args.add_img_alt or getattr(args, "all", False),
+                    empty_body=args.fix_empty_body or getattr(args, "all", False),
+                    missing_title=args.fix_missing_title or getattr(args, "all", False),
+                    id_colons=args.fix_id_colons or getattr(args, "all", False),
+                    block_in_inline=args.unwrap_block_in_inline
+                    or getattr(args, "all", False),
+                    invalid_value=args.strip_invalid_value
+                    or getattr(args, "all", False),
+                    illegal_tags=args.unwrap_illegal_tags
+                    or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -467,6 +492,13 @@ def run_repair(args) -> int:
                 escape_entities=args.escape_unknown_entities
                 or getattr(args, "all", False),
                 img_alt=args.add_img_alt or getattr(args, "all", False),
+                empty_body=args.fix_empty_body or getattr(args, "all", False),
+                missing_title=args.fix_missing_title or getattr(args, "all", False),
+                id_colons=args.fix_id_colons or getattr(args, "all", False),
+                block_in_inline=args.unwrap_block_in_inline
+                or getattr(args, "all", False),
+                invalid_value=args.strip_invalid_value or getattr(args, "all", False),
+                illegal_tags=args.unwrap_illegal_tags or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -533,6 +565,41 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         "internal subset (which can declare custom entities) are skipped",
     )
     p.add_argument(
+        "--fix-empty-body",
+        action="store_true",
+        help="append &nbsp; to a strictly empty <body></body> (adds visible "
+        "content; hence opt-in)",
+    )
+    p.add_argument(
+        "--fix-missing-title",
+        action="store_true",
+        help="inject a <title>Unknown</title> fallback when the head has none",
+    )
+    p.add_argument(
+        "--fix-id-colons",
+        action="store_true",
+        help='translate illegal colons in id="X:Y" and their matching #X:Y '
+        "fragment references to underscores",
+    )
+    p.add_argument(
+        "--unwrap-block-in-inline",
+        action="store_true",
+        help="unwrap a <span> that illegally wraps a block element (<div>/<p>/"
+        "<blockquote>), keeping the block and its text",
+    )
+    p.add_argument(
+        "--strip-invalid-value",
+        action="store_true",
+        help='strip misplaced value="..." attributes from non-form elements',
+    )
+    p.add_argument(
+        "--unwrap-illegal-tags",
+        action="store_true",
+        help="delete illegal/deprecated tags (<st>, <sentence>, <o>, <w>, "
+        "<pagebreak>) keeping inner text; any tag a stylesheet styles as an "
+        "element selector is protected book-wide",
+    )
+    p.add_argument(
         "--strip-pagination",
         action="store_true",
         help="LOSSY: remove print page numbers/running headers baked into the body "
@@ -552,7 +619,8 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--all",
         action="store_true",
-        help="enable all individual fix flags",
+        help="enable every opt-in fix flag (the safe structural repairs above "
+        "and all lossy strips)",
     )
     p.add_argument("--no-validate", action="store_true", help="skip the epubcheck gate")
 

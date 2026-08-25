@@ -321,6 +321,13 @@ def fix_ncx_playorder(s: str) -> tuple[str, int]:
 
 @_outside_protected
 def unwrap_block_in_inline(s: str) -> tuple[str, int]:
+    """Unwrap a <span> that illegally wraps a block element (`<span><div>...</div>
+    </span>` -> the div alone).
+
+    Opt-in (--unwrap-block-in-inline): it restructures nesting, not just
+    well-formedness tokens, so it is never part of the core pass. Inner text is
+    always preserved.
+    """
     count = 0
 
     def repl(m: re.Match) -> str:
@@ -339,6 +346,11 @@ def unwrap_block_in_inline(s: str) -> tuple[str, int]:
 
 @_outside_protected
 def strip_invalid_value(s: str) -> tuple[str, int]:
+    """Strip misplaced `value="..."` attributes from non-form elements.
+
+    Opt-in (--strip-invalid-value): deleting attributes goes beyond making markup
+    parseable, so it is never part of the core pass.
+    """
     count = 0
 
     def repl(m: re.Match) -> str:
@@ -358,13 +370,67 @@ def strip_invalid_value(s: str) -> tuple[str, int]:
     return s, n
 
 
-@_outside_protected
-def unwrap_illegal_tags(s: str) -> tuple[str, int]:
-    # CSS scan should be done prior, but this regex safely unwraps tags globally
-    # In full integration, the CSS scan prevents this from running if styles match
-    illegal_tags = ["st", "sentence", "o", "w", "pagebreak"]
+# The tags --unwrap-illegal-tags removes wherever they appear. A tag name that any
+# stylesheet references as an element selector is skipped for that book (see
+# css_protected_tags): unwrapping styled elements would silently destroy formatting,
+# which no lossy convenience is worth.
+ILLEGAL_TAGS = ("st", "sentence", "o", "w", "pagebreak")
+
+_CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_STYLE_BLOCK_RE = re.compile(r"<style\b[^>]*>(.*?)</style>", re.IGNORECASE | re.DOTALL)
+
+
+def css_protected_tags(*sheets: str) -> frozenset[str]:
+    """Illegal-tag names referenced as element selectors in the given CSS text(s).
+
+    Selector-aware, so `.st { ... }` (a class) or `#w { ... }` (an id) does NOT
+    protect anything while `st { ... }` or `p st, x > w { ... }` does. Comments are
+    stripped first; matching is case-insensitive and returns lowercase names. This
+    ports scripts/find_css_illegal_tags.py into the library so the transform can
+    enforce its own precondition instead of trusting callers to scan.
+    """
+    tags: set[str] = set()
+    for css in sheets:
+        stripped = _CSS_COMMENT_RE.sub("", css)
+        # Candidate selector lists are whatever precedes a '{'. Scanning this way
+        # (rather than splitting on '}') keeps nested at-rules working: in
+        # `@media print { o > sentence {} }`, `o > sentence` precedes the INNER '{'
+        # and is found, where a naive outer split would lose it. Declarations never
+        # precede a '{'.
+        for m in re.finditer(r"([^{}]*)\{", stripped):
+            selectors = m.group(1)
+            for tag in ILLEGAL_TAGS:
+                # The trailing boundary includes . and #: `pagebreak.new:after`
+                # styles pagebreak ELEMENTS, so it must protect the name, while a
+                # LEADING . or # stays unprotected (`div.st` styles a class).
+                if re.search(
+                    rf"(^|[\s,>+~]){tag}([\s,>+~:\[.#]|$)", selectors, re.IGNORECASE
+                ):
+                    tags.add(tag)
+    return frozenset(tags)
+
+
+def style_block_tags(doc: str) -> frozenset[str]:
+    """css_protected_tags over every inline `<style>` block in a content document."""
+    return css_protected_tags(*_STYLE_BLOCK_RE.findall(doc))
+
+
+def unwrap_illegal_tags(
+    s: str, protected_tags: frozenset[str] = frozenset()
+) -> tuple[str, int]:
+    """Remove illegal/deprecated tags (`<st>`, `<sentence>`, `<o>`, `<w>`,
+    `<pagebreak>`) outright, keeping their inner text.
+
+    Opt-in (`--unwrap-illegal-tags`) because deleting elements is more than
+    well-formedness repair. Names in `protected_tags` (the union of every
+    stylesheet's element selectors, see css_protected_tags/style_block_tags) are
+    left untouched: if a book styles one of these tags, unwrapping it would change
+    how the text renders, so preservation wins.
+    """
     count = 0
-    for tag in illegal_tags:
+    for tag in ILLEGAL_TAGS:
+        if tag in protected_tags:
+            continue
         s, n1 = re.subn(rf"<{tag}\b[^>]*>", "", s, flags=re.IGNORECASE)
         s, n2 = re.subn(rf"</{tag}\s*>", "", s, flags=re.IGNORECASE)
         count += n1 + n2
@@ -373,6 +439,11 @@ def unwrap_illegal_tags(s: str) -> tuple[str, int]:
 
 @_outside_protected
 def fix_empty_body(s: str) -> tuple[str, int]:
+    """Append `&nbsp;` to a strictly empty `<body></body>` ("body incomplete").
+
+    Opt-in (--fix-empty-body): this ADDS visible content the author never wrote,
+    the same reason --add-img-alt is opt-in; it is never part of the core pass.
+    """
     count = 0
 
     def repl(m: re.Match) -> str:
@@ -386,6 +457,12 @@ def fix_empty_body(s: str) -> tuple[str, int]:
 
 @_outside_protected
 def fix_missing_title(s: str) -> tuple[str, int]:
+    """Inject `<title>Unknown</title>` when a document has no usable title.
+
+    Opt-in (--fix-missing-title): it fabricates content the author never wrote,
+    so it is never part of the core pass. An existing non-empty <title> anywhere
+    in the document means no-op.
+    """
     count = 0
     if re.search(r"<title\b[^>]*>.*?</title>", s, re.IGNORECASE | re.DOTALL):
         return s, 0
@@ -412,6 +489,12 @@ def fix_missing_title(s: str) -> tuple[str, int]:
 
 @_outside_protected
 def fix_id_colons(s: str) -> tuple[str, int]:
+    """Translate illegal colons in `id="X:Y"` and matching `#X:Y` fragments to `_`.
+
+    Opt-in (--fix-id-colons): it rewrites every id-bearing attribute and internal
+    fragment reference, so it stays out of the core pass despite being
+    rendering-neutral. Word boundaries keep external URLs intact.
+    """
     count = 0
 
     def repl_id(m: re.Match) -> str:
@@ -445,18 +528,17 @@ def fix_id_colons(s: str) -> tuple[str, int]:
     return s, count
 
 
+# The always-on core: exactly the five semantics-preserving well-formedness fixes
+# the spec names, nothing else. Everything that adds markup, deletes attributes, or
+# removes/restructures elements lives behind an explicit CLI flag (threaded through
+# repair_epub), so the default pass can never change more than parsing requires.
+# See spec.md "Transforms" and the per-flag sections.
 HTML_TRANSFORMS = (
     strip_prolog_junk,
     drop_duplicate_xmlns,
     escape_bare_amp,
     fix_named_entities,
     self_close_void,
-    fix_empty_body,
-    fix_missing_title,
-    fix_id_colons,
-    unwrap_block_in_inline,
-    strip_invalid_value,
-    unwrap_illegal_tags,
 )
 
 # A lighter set for XML sidecars (NCX): no HTML-specific element rewriting.

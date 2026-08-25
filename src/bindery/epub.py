@@ -21,9 +21,17 @@ from .transforms import (
     XML_TRANSFORMS,
     add_img_alt,
     apply_transforms,
+    css_protected_tags,
     escape_unknown_entities,
+    fix_empty_body,
+    fix_id_colons,
+    fix_missing_title,
     strip_broken_tags,
     strip_invalid_attributes,
+    strip_invalid_value,
+    style_block_tags,
+    unwrap_block_in_inline,
+    unwrap_illegal_tags,
 )
 from .watermark import strip_watermark_html
 
@@ -252,6 +260,12 @@ def repair_epub(
     strip_watermarks: bool = False,
     escape_entities: bool = False,
     img_alt: bool = False,
+    empty_body: bool = False,
+    missing_title: bool = False,
+    id_colons: bool = False,
+    block_in_inline: bool = False,
+    invalid_value: bool = False,
+    illegal_tags: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -266,7 +280,17 @@ def repair_epub(
     With `escape_entities`, escape entity names outside the HTML5 table
     (`&foo;` -> `&amp;foo;`); documents with a DOCTYPE internal subset are skipped.
     With `strip_brokentags`, strip leaked HTML closing tags (e.g. </P>) that render as text.
-    With `strip_watermarks`, remove known producer watermarks (e.g. OceanofPDF). (e.g. </P>) that render as text.
+    With `strip_watermarks`, remove known producer watermarks (e.g. OceanofPDF).
+
+    The structural repairs are all opt-in, never part of the core pass:
+    with `empty_body`, append &nbsp; to a strictly empty <body>; with `missing_title`,
+    inject a <title>Unknown</title> fallback; with `id_colons`, translate illegal
+    colons in id attributes and their #fragment references; with `block_in_inline`,
+    unwrap a <span> that illegally wraps a block element; with `invalid_value`, strip
+    misplaced value="..." attributes; with `illegal_tags`, delete illegal/deprecated
+    tags (<st>, <sentence>, <o>, <w>, <pagebreak>) keeping their inner text — any tag
+    name an EPUB stylesheet styles as an element selector is protected for the whole
+    book, so styled formatting can never be silently destroyed.
     """
     report = RepairReport()
 
@@ -287,6 +311,19 @@ def repair_epub(
             ]
             runheads = collect_runheads(htmls)
             delete_layer = detect_page_layer(htmls, runheads)
+
+        # The CSS precondition for --unwrap-illegal-tags is a whole-book property:
+        # a stylesheet anywhere can style a content document, so scan every stylesheet
+        # once up front and protect those tag names everywhere (inline <style> blocks
+        # are added per document below).
+        book_css_tags: frozenset[str] = frozenset()
+        if illegal_tags:
+            css_texts = [
+                zin.read(i).decode("utf-8", "replace")
+                for i in zin.infolist()
+                if i.filename.lower().endswith(".css")
+            ]
+            book_css_tags = css_protected_tags(*css_texts)
 
         # The mimetype content is an OCF constant, so adding a missing entry and
         # normalizing wrong or whitespace-padded content is deterministic and
@@ -370,6 +407,31 @@ def repair_epub(
                     text, n = reserialize_if_broken(text)
                     if n:
                         counts["reserialized"] = n
+                if empty_body:
+                    text, n = fix_empty_body(text)
+                    if n:
+                        counts["fix_empty_body"] = n
+                if missing_title:
+                    text, n = fix_missing_title(text)
+                    if n:
+                        counts["fix_missing_title"] = n
+                if id_colons:
+                    text, n = fix_id_colons(text)
+                    if n:
+                        counts["fix_id_colons"] = n
+                if block_in_inline:
+                    text, n = unwrap_block_in_inline(text)
+                    if n:
+                        counts["unwrap_block_in_inline"] = n
+                if invalid_value:
+                    text, n = strip_invalid_value(text)
+                    if n:
+                        counts["strip_invalid_value"] = n
+                if illegal_tags:
+                    protected = book_css_tags | style_block_tags(text)
+                    text, n = unwrap_illegal_tags(text, protected_tags=protected)
+                    if n:
+                        counts["unwrap_illegal_tags"] = n
                 if strip_watermarks:
                     text, n = strip_watermark_html(text)
                     if n:

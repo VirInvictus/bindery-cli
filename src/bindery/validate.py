@@ -186,16 +186,16 @@ _daemon = _EpubcheckDaemon()
 
 
 def run_epubcheck(path: Path, timeout: int = 300) -> CheckResult | None:
+    """Run epubcheck and return parsed counts, or None if it could not be parsed.
+
+    Counts come from `--json -` (locale-independent) first; the English summary-line
+    regex stays as the fallback for epubchecks too old for `--json`, kept meaningful
+    by the JVM locale pin in the env. The persistent daemon answers first when it is
+    available; None anywhere means the caller falls back to (or reports) failure.
+    """
     res = _daemon.check(path)
     if res is not None:
         return res
-
-    """Run epubcheck and return parsed counts, or None if it could not be parsed.
-
-    Counts come from `--json -` (locale-independent) first; the English
-    summary-line regex stays as the fallback for epubchecks too old for
-    `--json`, kept meaningful by the JVM locale pin in the env.
-    """
     try:
         out = subprocess.run(
             ["epubcheck", str(path), "--json", "-"],
