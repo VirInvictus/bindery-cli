@@ -13,8 +13,16 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" are the **opt-in lossy modes** (`--strip-pagination`, `--strip-broken-tags`, and `--strip-watermarks`). They remove content a converter injected, not content the author wrote, so they are off by default and gated differently.
-Everything else in this spec is the always-safe core. The `--all` flag enables every opt-in transform (both safe and lossy) for a comprehensive repair pass.
+The deliberate exceptions to "semantics-preserving" come in two kinds, both strictly
+opt-in. The six **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
+`--fix-id-colons`, `--unwrap-block-in-inline`, `--strip-invalid-value`,
+`--unwrap-illegal-tags`) alter markup structure or fabricate minimal content; the three
+**lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
+content a converter injected rather than content the author wrote. The default pass runs
+ONLY the transforms listed above and the NCX pipeline — nothing else. (v0.14–v0.16 briefly
+ran the structural repairs unconditionally, which broke this contract; v0.17.0 restored
+it.) The `--all` flag enables every opt-in transform (safe, structural, and lossy) for a
+comprehensive repair pass.
 
 ## Transforms
 
@@ -71,6 +79,34 @@ markup the author never wrote, and `alt=""` asserts "decorative" to a screen rea
 where a missing alt did not; hence off by default, never a core transform. Existing
 alt attributes (either quote style) are untouched and the fix is idempotent; the
 normal gate applies.
+
+### Opt-in: structural repairs
+
+Six repairs go past well-formedness and therefore require their own flag; none is ever
+part of the default pipeline:
+
+- **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
+  incomplete"). Adds visible content, hence opt-in like `--add-img-alt`.
+- **`--fix-missing-title`**: inject `<title>Unknown</title>` when the head has no usable
+  title.
+- **`--fix-id-colons`**: illegal colons in `id="X:Y"` and their matching `#X:Y` fragment
+  references become `_`; word-bounded, so external URLs are untouched.
+- **`--unwrap-block-in-inline`**: drop a `<span>` that illegally wraps a
+  `<div>/<p>/<blockquote>`, keeping the block element and its text.
+- **`--strip-invalid-value`**: remove misplaced `value="..."` attributes from non-form
+  elements.
+- **`--unwrap-illegal-tags`**: delete `<st> <sentence> <o> <w> <pagebreak>` tags outright,
+  inner text preserved. Its CSS precondition is enforced by the library itself:
+  `transforms.css_protected_tags` scans every stylesheet entry in the book (nested at-rules
+  included) and `style_block_tags` each document's inline `<style>` blocks for these names
+  used as *element selectors* (`w { }`, `pagebreak.new:after {}`; `.st`/`#w` class/id
+  selectors do not protect), and protected names are skipped for the whole book — styled
+  formatting can never be silently destroyed.
+
+All six are evaluated by the normal `gate`: unlike the lossy strips, their benefit is
+visible to epubcheck (they clear errors), so a run with no measurable improvement is a
+noop and nothing is applied. CDATA sections and comments are never rewritten, as
+everywhere else.
 
 ### Transform invariants
 
@@ -194,6 +230,15 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
 
 ### calibredb replacement (`--install-to-calibre`)
 Optionally, Bindery can replace the format natively inside Calibre using `calibredb add_format --replace`. This natively manages the database change (updating sizes, retaining metadata, keeping custom columns intact). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted from the candidate's filesystem path.
+
+## Audit subcommand (read-only)
+
+`bindery audit {content,pagenumbers,emptytext,ocr,all} [PATH]` (v0.15.0, `audit.py`) inspects
+EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in
+page-number layers (sliding-window density heuristics), empty or thin books, and systemic OCR
+damage. It operates on a Calibre library tree or loose directories, writes nothing, and shares
+no code path with replacement; its `pagenumbers` findings bridge naturally into
+`bindery repair --strip-pagination`.
 
 ## Out of scope (non-goals)
 

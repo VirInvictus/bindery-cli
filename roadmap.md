@@ -325,12 +325,12 @@ separate repos with separate licences and no dependency between them.
 ## Supplementary Phase (Based on Library Audit)
 Following a comprehensive sweep of a 5,000-book library (detailed in `BINDERY_REPORT.md`), several recurring `epubcheck` schemas were identified that Bindery currently does not resolve. An AI agent picking up this roadmap should build standard, opt-in/safe repairs for the following:
 
-- [ ] **XML NCName Violation (`id` contains colons):** Fix IDs that contain invalid characters (specifically colons like `id="foo:bar"`). These must be string-replaced in the declaration and across all referencing `href` or `idref` attributes throughout the EPUB.
-- [ ] **Empty Body (`<body></body>`):** Inject a structural placeholder (e.g., an empty `<div>` or `<p>`) or gracefully remove empty XHTML documents if they are unreferenced.
-- [ ] **Missing `<title>` in `<head>`:** Inject a placeholder `<title>` tag in XHTML documents where it is entirely omitted.
-- [ ] **Block-in-Inline Nesting (`<span><div></div></span>`):** Develop a strategy to unwrap or restructure inline elements that improperly contain block-level children.
-- [ ] **NCX Duplicate `playOrder`:** Re-sequence `playOrder` integers in the `toc.ncx` file to ensure they are strictly sequential without gaps or duplicates.
-- [ ] **Invalid Attributes (`value` in lists):** Strip invalid `value` attributes from tags where they don't belong according to EPUB schemas (such as arbitrary `<li>` markers).
+- [x] **XML NCName Violation (`id` contains colons):** Fix IDs that contain invalid characters (specifically colons like `id="foo:bar"`). These must be string-replaced in the declaration and across all referencing `href` or `idref` attributes throughout the EPUB. *(shipped v0.14.0 as `--fix-id-colons`; made genuinely opt-in in v0.17.0 — see Phase 6 below)*
+- [x] **Empty Body (`<body></body>`):** Inject a placeholder so parsers accept the document. *(shipped v0.14.0 as `--fix-empty-body` appending `&nbsp;`; opt-in since v0.17.0)*
+- [x] **Missing `<title>` in `<head>`:** Inject a placeholder `<title>` tag in XHTML documents where it is entirely omitted. *(shipped v0.14.0 as `--fix-missing-title`; opt-in since v0.17.0)*
+- [x] **Block-in-Inline Nesting (`<span><div></div></span>`):** Develop a strategy to unwrap or restructure inline elements that improperly contain block-level children. *(shipped v0.14.0 as `--unwrap-block-in-inline`; opt-in since v0.17.0)*
+- [x] **NCX Duplicate `playOrder`:** Re-sequence `playOrder` integers in the `toc.ncx` file to ensure they are strictly sequential without gaps or duplicates. *(shipped v0.14.0 as `fix_ncx_playorder`, part of the always-on NCX pipeline — NCX-internal attribute normalization)*
+- [x] **Invalid Attributes (`value` in lists):** Strip invalid `value` attributes from tags where they don't belong according to EPUB schemas (such as arbitrary `<li>` markers). *(shipped v0.14.0 as `--strip-invalid-value`; opt-in since v0.17.0)*
 
 ## Phase 4: cquarry Integration (Upcoming)
 
@@ -344,15 +344,15 @@ With the transition to the `cquarry` shared library (v0.16.0), Bindery inherits 
 *Context: Fixing severe data loss and platform incompatibility issues found during sweep.*
 
 ### Bugs to Fix
-- [ ] **Critical Content Loss:** Fix `unwrap_block_in_inline` to preserve inner text blocks rather than replacing them with literal strings.
-- [ ] **Missing `--replace` Flag:** Update `calibredb_replace` to pass `--replace` so Calibre doesn't crash on existing formats.
-- [ ] **Non-Existent Method Call:** Fix `analyze_brokentags` in `audit.py` calling `iter_html_text` on `Book` (which doesn't exist).
-- [ ] **Hardcoded Java Version:** Remove `--release 25` from `EpubcheckDaemon` so it boots on standard Java 17/21 systems.
-- [ ] **Unbounded URL Mutation:** Fix `fix_id_colons` regex so it checks word boundaries and ignores non-id attributes and external fragment links.
-- [ ] **Trailing Whitespace Deletion:** Fix `strip_invalid_value` wiping consecutive spaces in valid attributes.
-- [ ] **Empty `<title>` Tag Failure:** Fix `fix_missing_title` failing to replace `<title></title>` with `<title>Unknown</title>`.
+- [x] **Critical Content Loss:** Fix `unwrap_block_in_inline` to preserve inner text blocks rather than replacing them with literal strings. *(fixed, v0.16.3)*
+- [x] **Missing `--replace` Flag:** Update `calibredb_replace` to pass `--replace` so Calibre doesn't crash on existing formats. *(fixed, v0.16.3)*
+- [x] **Non-Existent Method Call:** Fix `analyze_brokentags` in `audit.py` calling `iter_html_text` on `Book` (which doesn't exist). *(fixed, v0.16.3)*
+- [x] **Hardcoded Java Version:** Remove `--release 25` from `EpubcheckDaemon` so it boots on standard Java 17/21 systems. *(fixed, v0.16.3)*
+- [x] **Unbounded URL Mutation:** Fix `fix_id_colons` regex so it checks word boundaries and ignores non-id attributes and external fragment links. *(fixed, v0.16.3)*
+- [x] **Trailing Whitespace Deletion:** Fix `strip_invalid_value` wiping consecutive spaces in valid attributes. *(fixed, v0.16.3)*
+- [x] **Empty `<title>` Tag Failure:** Fix `fix_missing_title` failing to replace `<title></title>` with `<title>Unknown</title>`. *(fixed, v0.16.3)*
 
 ### Refactoring & Growth
-- [ ] **Decouple Opt-In Transforms:** Remove experimental/lossy transforms from the default `HTML_TRANSFORMS` block and gate them strictly behind their documented CLI flags.
+- [x] **Decouple Opt-In Transforms:** Remove experimental/lossy transforms from the default `HTML_TRANSFORMS` block and gate them strictly behind their documented CLI flags. *(done, v0.17.0: all six structural repairs behind real flags; the core pipeline is well-formedness only again)*
 - [ ] **cquarry Integration:** Use `cquarry` to accurately build Calibre file paths instead of guessing.
-- [ ] **True CSS-Aware Unwrapping:** Read EPUB CSS stylesheets to skip `unwrap_illegal_tags` on styled custom elements.
+- [x] **True CSS-Aware Unwrapping:** Read EPUB CSS stylesheets to skip `unwrap_illegal_tags` on styled custom elements. *(done, v0.17.0: `transforms.css_protected_tags` scans stylesheets and inline `<style>` blocks; protected names are skipped book-wide)*

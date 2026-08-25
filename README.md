@@ -10,30 +10,31 @@
 
 ## What it fixes
 
-Bindery makes accidentally broken markup well-formed again. It does not rewrite or reflow content; it only applies a small set of deterministic, semantics-preserving fixes that real-world EPUBs (especially Calibre conversions) trip over:
+Bindery makes accidentally broken markup well-formed again. It does not rewrite or reflow content. The **default pass** applies only a small set of deterministic, semantics-preserving well-formedness fixes that real-world EPUBs (especially Calibre conversions) trip over — nothing else changes without an explicit flag:
 
 - **Unclosed void elements** (`<link>`, `<br>`, `<img>`, ...) get self-closed.
 - **Undeclared named entities** (`&nbsp;`, `&deg;`, `&eacute;`, ...) become numeric character references that every XML parser understands.
 - **Bare `&`** (common in `toc.ncx`) is escaped to `&amp;`.
 - **Junk before the XML prolog** (BOM, stray bytes) is stripped.
 - **Duplicate `xmlns`** on the root `<html>` is collapsed to one.
-- **NCX-001**: `toc.ncx` `dtb:uid` is synced to the OPF unique identifier.
+- **NCX-001**: `toc.ncx` `dtb:uid` is synced to the OPF unique identifier; duplicated NCX `playOrder` values are resequenced whenever the NCX is processed (part of the always-on NCX pipeline, not a flag).
 - **mimetype** is rewritten first and stored, fixing the common ordering defect; a missing entry is added and wrong or whitespace-padded content is normalized to the OCF constant.
 
-Five opt-in fixes go further:
+### Opt-in repairs
 
-- **`--fix-ids`**: rewrite ids that are not valid XML names (start with a digit, contain a colon) in the OPF manifest, updating every reference to them (spine, fallback, media-overlay, the EPUB 2 cover meta), and in the NCX (where old conversions stamp navPoint ids from UUIDs, one error per id). Touches the OPF, so it is off by default; the dc: metadata is never altered.
-- **`--add-img-alt`**: add `alt=""` to `<img>` elements missing the required attribute. Renders identically, but it is the one fix that adds markup the author never wrote, and an empty alt tells a screen reader the image is decorative; hence opt-in.
+Everything below is off until its flag is passed (or all at once via `--all`). They go further than well-formedness — altering structure or adding minimal content — so they never run by default:
+
+- **`--fix-ids`**: rewrite ids that are not valid XML names (start with a digit, contain a colon) in the OPF manifest, updating every reference to them (spine, fallback, media-overlay, the EPUB 2 cover meta), and in the NCX (where old conversions stamp navPoint ids from UUIDs). Touches the OPF, so it is off by default; the dc: metadata is never altered.
+- **`--add-img-alt`**: add `alt=""` to `<img>` elements missing the required attribute. Renders identically, but it adds markup the author never wrote, and an empty alt tells a screen reader the image is decorative; hence opt-in.
 - **`--reserialize`**: rebuild content documents that are still malformed by re-parsing them with html5lib and re-emitting XHTML, closing unclosed `<p>`/`<div>`/`<span>`/`<blockquote>` that the regex transforms cannot. Runs only on documents that are not already well-formed, so good files are untouched.
 - **`--strip-bad-attrs`**: drop attributes that are invalid XML (a name starting with a digit, or a namespaced name whose prefix is never declared, like Office VML `v:shapes`). Surgical and a no-op on well-formed files.
-- **`--escape-unknown-entities`**: escape entity names that are not in the HTML5 table (`&foo;` becomes `&amp;foo;`), which renders exactly as browsers already render an unknown entity: the literal text. Documents whose DOCTYPE carries an internal subset are skipped wholesale, since a subset can declare custom entities.
-- **`--fix-ncx-playorder`**: safely rewrites duplicated `playOrder` attributes sequentially in the NCX table of contents.
+- **`--escape-unknown-entities`**: escape entity names that are not in the HTML5 table (`&foo;` becomes `&amp;foo;`), which renders exactly as browsers already render an unknown entity. Documents whose DOCTYPE carries an internal subset are skipped wholesale, since a subset can declare custom entities.
 - **`--fix-id-colons`**: translates illegal colons in `id="X:Y"` and their matching `#X:Y` fragment references to valid underscores.
 - **`--fix-empty-body`**: appends a non-breaking space `&nbsp;` to strictly empty body tags to satisfy parser requirements.
 - **`--fix-missing-title`**: injects a `<title>Unknown</title>` fallback in the `<head>` if missing, handling both empty `<title/>` self-closing tags and entirely absent tags.
 - **`--unwrap-block-in-inline`**: safely unwraps `<span>` tags that illegally contain a block-level element (e.g. `<div>` or `<p>`), leaving the block element intact.
 - **`--strip-invalid-value`**: systematically strips invalid `value="..."` attributes from elements like `<div>`, `<span>`, `<p>`, etc.
-- **`--unwrap-illegal-tags`**: strips completely invalid or deprecated HTML tags that break EPUB3 validation (like `<st>`, `<font>`, `<sentence>`, `<o>`, `<w>`, and `<pagebreak>`) while retaining their inner text. Automatically excludes tags if they are referenced by an EPUB CSS stylesheet to guarantee 100% format preservation.
+- **`--unwrap-illegal-tags`**: strips completely invalid or deprecated HTML tags that break EPUB3 validation (`<st>`, `<sentence>`, `<o>`, `<w>`, `<pagebreak>`) while retaining their inner text. Any of those names styled as an *element selector* by an EPUB stylesheet (`.css` entries and inline `<style>` blocks alike; class/id selectors like `.st`/`#w` don't count) is protected for the whole book, guaranteeing format preservation.
 
 
 Three opt-in fixes are **lossy** and stand apart from the semantics-preserving rest:
@@ -57,8 +58,7 @@ The lossy modes (`--strip-pagination`, `--strip-broken-tags`, and `--strip-water
 
 ## Install
 
-Python 3.14+, plus epubcheck on `PATH` for the gate. The core is minimal-dependency (`tqdm` is used for output formatting);
-`html5lib` is an optional extra, needed only for `--reserialize`.
+Python 3.14+, plus epubcheck on `PATH` for the gate. Dependencies: `tqdm` for progress output, plus the pinned VirInvictus libraries `vir-tui` (TUI rendering) and `cquarry` (read-only Calibre database access); `html5lib` remains an optional extra, needed only for `--reserialize`.
 
 ```sh
 uv tool install /path/to/Bindery                    # core tools

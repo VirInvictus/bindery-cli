@@ -1,4 +1,32 @@
-## 0.16.3
+# Bindery Patch Notes
+
+## v0.17.0 (2026-08-25)
+
+**The default repair pass is well-formedness only again.** v0.14.0 had promoted six structural
+repairs into the always-on `HTML_TRANSFORMS`, so a plain `bindery repair` could delete
+attributes, unwrap elements, and fabricate content on a book whose only defect was a stray
+ampersand — exactly what spec.md forbids. Each now requires its own flag (on both `repair` and
+`library`); `--all` still enables everything: `--fix-empty-body`, `--fix-missing-title`,
+`--fix-id-colons`, `--unwrap-block-in-inline`, `--strip-invalid-value`,
+`--unwrap-illegal-tags`.
+
+**The CSS precondition is real.** `--unwrap-illegal-tags` no longer trusts callers to scan
+stylesheets first. Every `.css` entry in the book plus each document's inline `<style>` blocks
+are scanned for illegal-tag names used as *element selectors* (`w { }`, `p st, x > w { }`,
+`pagebreak.new:after {}`; class/id selectors like `.st` and `#w` do not protect), and those
+names are protected for the whole book — styled formatting can never be silently destroyed.
+Nested at-rules work (`@media print { o > sentence {} }`). This ports
+`scripts/find_css_illegal_tags.py` into the library as `transforms.css_protected_tags`.
+
+**Housekeeping:** git dependencies pinned to exact commits (vir-tui `d13ad0ed` = 2.0.0,
+cquarry `4b771aa` = 1.0.2) instead of floating branches, so builds are reproducible;
+`__init__.py VERSION` resynced with pyproject.toml (drifted three releases behind at 0.15.0 vs
+0.16.3); first tags cut (`v0.16.3` backfilled on its release commit, `v0.17.0` now);
+spec.md / CLAUDE.md / README.md brought back in line with the code (audit subcommand, the pins,
+the restored opt-in contract); roadmap Phase 6 boxes closed; `run_epubcheck`'s docstring moved
+above the daemon call where it is an actual docstring. Suite: 183 -> 201 tests.
+
+## v0.16.3 (2026-08-24)
 - **Fix**: Resolved `test_audit.py` import path failure.
 - **Fix**: Fixed `unwrap_block_in_inline` data loss regex logic by capturing full text blocks.
 - **Fix**: Added `--replace` flag to `calibredb_replace` to prevent DB crash when file exists.
@@ -8,10 +36,8 @@
 - **Fix**: Corrected `strip_invalid_value` regex to safely strip whitespace.
 - **Fix**: Fixed empty tag replacement regex in `fix_missing_title`.
 
-## 0.16.2
+## v0.16.2 (2026-08-24)
 - Replaced local `ui.py` module with standardized `vir-tui` package.
-
-# Bindery Patch Notes
 
 ## v0.16.1 (2026-08-24)
 
