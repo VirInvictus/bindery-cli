@@ -1058,9 +1058,10 @@ def analyze_brokentags(book: Book) -> dict:
         r"(?<!<)(?<!&lt;)/[a-zA-Z]+&gt;|&lt;/(?:p|div|span|h[1-6]|i|em|b|strong)&gt;",
         re.IGNORECASE,
     )
-    for content in book.iter_html_text():
-        for match in pattern.finditer(content.text):
-            hits.append(f"{content.name}: {match.group(0)}")
+    for doc in book.spine:
+        text = book.docs.get(doc, "")
+        for match in pattern.finditer(text):
+            hits.append(f"{doc}: {match.group(0)}")
     if not hits:
         return {}
     return {"hits": hits, "summary": f"{len(hits)} broken tags found"}

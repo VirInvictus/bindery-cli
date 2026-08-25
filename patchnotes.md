@@ -1,3 +1,13 @@
+## 0.16.3
+- **Fix**: Resolved `test_audit.py` import path failure.
+- **Fix**: Fixed `unwrap_block_in_inline` data loss regex logic by capturing full text blocks.
+- **Fix**: Added `--replace` flag to `calibredb_replace` to prevent DB crash when file exists.
+- **Fix**: Corrected `analyze_brokentags` loop to properly analyze spines and docs instead of nonexistent iter method.
+- **Fix**: Removed hardcoded JVM release target in `EpubcheckDaemon`.
+- **Fix**: Added regex word boundaries in `fix_id_colons` to prevent URL corruption.
+- **Fix**: Corrected `strip_invalid_value` regex to safely strip whitespace.
+- **Fix**: Fixed empty tag replacement regex in `fix_missing_title`.
+
 ## 0.16.2
 - Replaced local `ui.py` module with standardized `vir-tui` package.
 

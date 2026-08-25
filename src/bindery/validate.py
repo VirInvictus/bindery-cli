@@ -133,7 +133,7 @@ class _EpubcheckDaemon:
                 f.write(_DAEMON_JAVA)
 
             subprocess.run(
-                ["javac", "--release", "25", "-cp", jar_path, java_file],
+                ["javac", "-cp", jar_path, java_file],
                 check=True,
                 capture_output=True,
             )

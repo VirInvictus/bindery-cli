@@ -5,7 +5,7 @@ import pathlib
 import tempfile
 import unittest
 
-from src.bindery import audit as audit
+from bindery import audit as audit
 
 pagenum = audit
 emptytext = audit

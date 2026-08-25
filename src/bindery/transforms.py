@@ -326,7 +326,7 @@ def unwrap_block_in_inline(s: str) -> tuple[str, int]:
     def repl(m: re.Match) -> str:
         nonlocal count
         count += 1
-        return m.group(2)
+        return m.group(1)
 
     s, n = re.subn(
         r"<span[^>]*>\s*(<(div|p|blockquote)[^>]*>.*?</\2>)\s*</span>",
@@ -347,10 +347,10 @@ def strip_invalid_value(s: str) -> tuple[str, int]:
         tag = m.group(1)
         before = m.group(2) or ""
         after = m.group(4) or ""
-        return f"<{tag} {before.strip()} {after.strip()}>".replace("  ", " ")
+        return f"<{tag} {before}{after}>"
 
     s, n = re.subn(
-        r'<(div|span|p|a|img|h[1-6]|ul|table|tr|td|th)\s+([^>]*\b)?value\s*=\s*(["\'][^"\']*["\'])([^>]*)>',
+        r'<(div|span|p|a|img|h[1-6]|ul|table|tr|td|th)(\s+[^>]*\b)?value\s*=\s*(["\'][^"\']*["\'])([^>]*)>',
         repl,
         s,
         flags=re.IGNORECASE,
@@ -396,7 +396,7 @@ def fix_missing_title(s: str) -> tuple[str, int]:
         count += 1
         return "<title>Unknown</title>"
 
-    s, n = re.subn(r"<title\b[^>]*/>", repl, s, flags=re.IGNORECASE)
+    s, n = re.subn(r"<title\b[^>]*>\s*</title>", repl, s, flags=re.IGNORECASE)
     if n > 0:
         return s, n
 
@@ -420,7 +420,7 @@ def fix_id_colons(s: str) -> tuple[str, int]:
         return m.group(1) + m.group(2).replace(":", "_") + m.group(3)
 
     s, n1 = re.subn(
-        r'(id\s*=\s*["\'])([^"\']+)(["\'])', repl_id, s, flags=re.IGNORECASE
+        r'\b(id\s*=\s*["\'])([^"\']+)(["\'])', repl_id, s, flags=re.IGNORECASE
     )
 
     def repl_href(m: re.Match) -> str:
@@ -437,7 +437,7 @@ def fix_id_colons(s: str) -> tuple[str, int]:
         return m.group(0)
 
     s, n2 = re.subn(
-        r'(href\s*=\s*["\'])([^"#]*?)#([^"\']+)(["\'])',
+        r'\b(href\s*=\s*["\'])([^"#]*?)#([^"\']+)(["\'])',
         repl_href,
         s,
         flags=re.IGNORECASE,
