@@ -1438,20 +1438,26 @@ def run_library(
         rc |= 1
 
     if audit_tag:
-        rc |= _apply_audit_tag(library_root, audit_tag, {
-            "content": [h[0] for h in nonlatin_hits]
-            + [h[0] for h in latin_foreign]
-            + [h[0] for h in signature_hits],
-            "pagenumbers": [h[0] for h in pagenum_found],
-            "emptytext": [
-                h[0] for h in empty_hits + partial_hits
-            ],  # THIN is advisory and stays untagged
-            "ocr": [h[0] for h in ocr_found],
-        })
+        rc |= _apply_audit_tag(
+            library_root,
+            audit_tag,
+            {
+                "content": [h[0] for h in nonlatin_hits]
+                + [h[0] for h in latin_foreign]
+                + [h[0] for h in signature_hits],
+                "pagenumbers": [h[0] for h in pagenum_found],
+                "emptytext": [
+                    h[0] for h in empty_hits + partial_hits
+                ],  # THIN is advisory and stays untagged
+                "ocr": [h[0] for h in ocr_found],
+            },
+        )
     return rc
 
 
-def _apply_audit_tag(library_root: Path, tag: str, flagged: dict[str, list[int]]) -> int:
+def _apply_audit_tag(
+    library_root: Path, tag: str, flagged: dict[str, list[int]]
+) -> int:
     """Apply ``tag`` to every flagged book via cquarry's opt-in write path.
 
     Only reached with the explicit --tag flag; the audit itself stays strictly
@@ -1630,9 +1636,7 @@ def main() -> int:
         return run_directory(
             Path(args.directory).expanduser(), selected, args.min_chars, args.thin_chars
         )
-    return run_library(
-        selected, args.min_chars, args.thin_chars, tag=args.tag
-    )
+    return run_library(selected, args.min_chars, args.thin_chars, tag=args.tag)
 
 
 if __name__ == "__main__":

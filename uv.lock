@@ -19,7 +19,7 @@ reserialize = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cquarry", git = "https://github.com/VirInvictus/cquarry.git?rev=4b771aa3e97390e163bab9d1464ad530de131d4e" },
+    { name = "cquarry", git = "https://github.com/VirInvictus/cquarry.git?rev=99f038b077f3266ccacc88f214c2181b1679d00b" },
     { name = "html5lib", marker = "extra == 'reserialize'", specifier = ">=1.1" },
     { name = "tqdm" },
     { name = "vir-tui", git = "https://github.com/VirInvictus/vir-tui.git?rev=d13ad0ed2c4afc05d0c052d14e644747f1e9e73f" },
@@ -37,8 +37,8 @@ wheels = [
 
 [[package]]
 name = "cquarry"
-version = "1.0.2"
-source = { git = "https://github.com/VirInvictus/cquarry.git?rev=4b771aa3e97390e163bab9d1464ad530de131d4e#4b771aa3e97390e163bab9d1464ad530de131d4e" }
+version = "1.1.0"
+source = { git = "https://github.com/VirInvictus/cquarry.git?rev=99f038b077f3266ccacc88f214c2181b1679d00b#99f038b077f3266ccacc88f214c2181b1679d00b" }
 
 [[package]]
 name = "html5lib"
