@@ -631,7 +631,7 @@ def run_audit_cmd(args: argparse.Namespace) -> int:
         return run_directory(
             Path(args.path).expanduser(), selected, args.min_chars, args.thin_chars
         )
-    return run_audit_library(selected, args.min_chars, args.thin_chars)
+    return run_audit_library(selected, args.min_chars, args.thin_chars, tag=args.tag)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -694,6 +694,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_THIN_CHARS,
         help="emptytext THIN advisory threshold",
+    )
+    audit.add_argument(
+        "--tag",
+        default=None,
+        metavar="TAG",
+        help="after a library-mode audit, tag every flagged book in metadata.db "
+        "via cquarry's write module (Calibre must be closed; books are queued "
+        "for OPF regeneration automatically)",
     )
     audit.set_defaults(func=run_audit_cmd)
 

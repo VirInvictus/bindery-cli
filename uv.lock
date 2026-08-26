@@ -4,7 +4,7 @@ requires-python = ">=3.14"
 
 [[package]]
 name = "bindery"
-version = "0.18.0"
+version = "0.18.1"
 source = { editable = "." }
 dependencies = [
     { name = "cquarry" },
@@ -19,7 +19,7 @@ reserialize = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cquarry", git = "https://github.com/VirInvictus/cquarry.git?rev=99f038b077f3266ccacc88f214c2181b1679d00b" },
+    { name = "cquarry", git = "https://github.com/VirInvictus/cquarry.git?rev=e19c24c8800c428f2b85c97472356668678b7634" },
     { name = "html5lib", marker = "extra == 'reserialize'", specifier = ">=1.1" },
     { name = "tqdm" },
     { name = "vir-tui", git = "https://github.com/VirInvictus/vir-tui.git?rev=d13ad0ed2c4afc05d0c052d14e644747f1e9e73f" },
@@ -37,8 +37,8 @@ wheels = [
 
 [[package]]
 name = "cquarry"
-version = "1.1.0"
-source = { git = "https://github.com/VirInvictus/cquarry.git?rev=99f038b077f3266ccacc88f214c2181b1679d00b#99f038b077f3266ccacc88f214c2181b1679d00b" }
+version = "1.2.0"
+source = { git = "https://github.com/VirInvictus/cquarry.git?rev=e19c24c8800c428f2b85c97472356668678b7634#e19c24c8800c428f2b85c97472356668678b7634" }
 
 [[package]]
 name = "html5lib"

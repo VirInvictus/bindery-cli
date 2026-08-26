@@ -110,7 +110,9 @@ cd ~/docs/Calibre\ Library && bindery audit content --tag "Audit Flagged"
 
 The audit itself stays read-only; only the final tagging pass writes, it skips books that already
 carry the tag, and THIN emptytext advisories are never tagged. Close Calibre first so the write
-does not fight its lock.
+does not fight its lock. Tagged books are recorded in Calibre's `metadata_dirtied` queue, so the
+desktop app regenerates their sidecar `.opf`s (and re-pushes metadata to wireless readers) on its
+next startup — no manual resync needed.
 
 
 Repair one book to a new file (gated; writes only if it is an improvement):

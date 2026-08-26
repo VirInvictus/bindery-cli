@@ -1,5 +1,22 @@
 # Bindery Patch Notes
 
+## v0.18.1 (2026-08-26)
+
+**cquarry 1.2 adoption: audit tagging now actually reaches the write path, and tagged books regenerate their OPFs.**
+
+- **Fixed: `audit --tag` was unreachable from the CLI.** v0.18.0 documented `--tag TAG` and shipped
+  `_apply_audit_tag()`, but the `audit` subparser never registered the flag and `run_audit_cmd`
+  never passed it — the write path existed only for Python callers. The flag now parses, defaults
+  off (read-only audits stay read-only), and reaches `run_audit_library(tag=...)`; regression tests
+  cover all three properties.
+- **Tagged books are queued for OPF regeneration.** The pinned cquarry bump (1.1 → 1.2) means every
+  `WritableCalibreDB.add_tag()` now records the book id in Calibre's `metadata_dirtied` queue —
+  the table upstream consumes to decide which sidecar `.opf`s to regenerate (and re-push to wireless
+  readers) at next startup. Previously a Bindery-applied tag would appear in the GUI but never reach
+  OPF/wireless sync. Verified end-to-end against a synthetic library: flagged book tagged,
+  `metadata_dirtied` gains exactly that id, clean books untouched.
+- **Requires `cquarry` @ e19c24c** (v1.2.0); pin bumped accordingly.
+
 ## v0.18.0 (2026-08-25)
 
 **cquarry 1.1 adoption: canonical format-path resolution and an opt-in tagging pass.**

@@ -405,5 +405,34 @@ class TestOptInFlagWiring(unittest.TestCase):
                 self.assertTrue(kwargs.get(kw), kw)
 
 
+class TestAuditTagWiring(unittest.TestCase):
+    """The audit --tag flag must exist on the subparser and reach
+    run_audit_library. v0.18.0 documented --tag and shipped _apply_audit_tag,
+    but the CLI never registered the flag, so the write path was unreachable
+    from the command line."""
+
+    def test_flag_parses_and_defaults_off(self):
+        parser = build_parser()
+        self.assertIsNone(parser.parse_args(["audit", "content"]).tag)
+        args = parser.parse_args(["audit", "content", "--tag", "Flagged"])
+        self.assertEqual(args.tag, "Flagged")
+
+    def test_tag_reaches_run_audit_library(self):
+        with mock.patch("bindery.cli.run_audit_library", return_value=0) as run:
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                main(["audit", "content", "--tag", "Flagged"])
+        self.assertEqual(run.call_args.kwargs.get("tag"), "Flagged")
+
+    def test_no_tag_keeps_write_path_dormant(self):
+        # Without --tag the audit stays strictly read-only: tag must be None,
+        # never an empty string that could sneak past `if audit_tag:`.
+        with mock.patch("bindery.cli.run_audit_library", return_value=0) as run:
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                main(["audit", "content"])
+        self.assertIsNone(run.call_args.kwargs.get("tag"))
+
+
 if __name__ == "__main__":
     unittest.main()
