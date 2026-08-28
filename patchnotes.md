@@ -1,5 +1,17 @@
 # Bindery Patch Notes
 
+## v0.19.1 (2026-08-28)
+
+- **Dependency bump (deliberate pin move).** The `vir-tui` pin moved from `d13ad0e` to `e53f17e`
+  (vir-tui 2.2.0), per the repo policy of pinning exact commits and bumping deliberately. 2.2.0 is
+  additive — `progress_box()`, `interactive_session()`, `prompt_float`/`prompt_path`/`confirm`,
+  `out_note`, `text_mode()`, and results-pager search — and every API Bindery uses (`ui.tqdm`,
+  `ui.info`, `ui.print_header`) is unchanged, so no behavior change is expected; `uv.lock`
+  regenerated to match the new pin.
+- **Version sync fix.** `src/bindery/__init__.py` still said `0.18.0` while `pyproject.toml` said
+  `0.19.0`; both now carry the release version (0.19.1) per the "pyproject must match VERSION
+  below" rule.
+
 ## v0.19.0 (2026-08-28)
 
 ### Phase 4 complete: full cquarry integration
