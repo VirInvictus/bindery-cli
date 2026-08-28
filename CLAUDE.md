@@ -5,8 +5,10 @@ Per-project guidance. Overrides the global file where they conflict.
 ## What this is
 
 A focused EPUB repair and diagnostic tool: deterministic well-formedness fixes, gated by epubcheck,
-with atomic in-place replacement in a Calibre library. Sibling to oceanstrip. Born from
-the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
+with atomic in-place replacement in a Calibre library. Absorbed the retired oceanstrip at
+v0.12.0 (2026-08-22) as the lossy `--strip-watermarks` flag; the standalone repo is gone from
+the workspace (2026-08-26), and any instruction that runs `python -m oceanstrip` is dead.
+Born from the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
 
 ## Hard constraints
 
@@ -55,10 +57,10 @@ the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
 - `src/bindery/pagination.py`: the opt-in lossy page-number strip (runhead detection, page-layer decision, block-centric removal/merge, safety nets).
 - `src/bindery/watermark.py`: the opt-in lossy watermark strip (anchored and anchorless signature removal).
 - `src/bindery/reserialize.py`: structural repair via `html5lib`.
-- `src/bindery/audit.py`: read-only body-text audits (`content`, `pagenumbers`, `emptytext`, `ocr`) behind the `audit` subcommand (v0.15.0). Since v0.18.0 library mode resolves EPUB paths through `cquarry.get_format_path()` and can apply a tag to flagged books via `cquarry.write.WritableCalibreDB` (only with explicit `--tag`; the only sanctioned write path). Hazard: the scan loop reuses `tag` as its per-book display column, so the `--tag` argument is captured as `audit_tag` at function entry — do not collapse them again.
+- `src/bindery/audit.py`: read-only body-text audits (`content`, `pagenumbers`, `emptytext`, `ocr`) behind the `audit` subcommand (v0.15.0). Since v0.18.0 library mode resolves EPUB paths through `cquarry.get_format_path()` and can apply a tag to flagged books via `cquarry.write.WritableCalibreDB` (only with explicit `--tag`; the only sanctioned write path). Since v0.19.0 `audit --id BOOK_ID` audits a single library book through cquarry's single-entity `get_book()` fetch (no library-wide cache; supports `--tag`; incompatible with the directory argument). Hazard: the scan loop reuses `tag` as its per-book display column, so the `--tag` argument is captured as `audit_tag` at function entry — do not collapse them again.
 - `src/bindery/epub.py`: archive rewrite, NCX uid sync, RepairReport, mismatch detection, and the opt-in structural-repair plumbing (including the CSS precondition scan).
 - `src/bindery/validate.py`: epubcheck wrapper, the `gate` (improvement) and `no_worse` (no-regression, for the lossy strips) acceptance bars.
-- `src/bindery/library.py`: Calibre walk, atomic replace, backups, and native Calibre replacement.
+- `src/bindery/library.py`: Calibre walk, atomic replace, backups, and native Calibre replacement. Since v0.19.0 `CalibreIdResolver` resolves the `calibredb` book id from `metadata.db` via cquarry's `get_format_path()` (one lazy path→id map per run) — the `(id)` directory-name regex is only the no-catalog fallback. Never reintroduce directory-name guessing as the primary source: renamed/mismatched directories would replace the wrong book.
 - `src/bindery/cli.py`: `repair` and `library` subcommands, including `--all` and `--install-to-calibre`.
 - `tests/`: transforms, end-to-end repair, atomic replace, pagination, watermarks.
 
