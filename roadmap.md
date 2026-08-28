@@ -441,7 +441,15 @@ by hand.*
 - [ ] **Skill sync**: phase-1-import's "ToC bloat" trap entry and phase-3-import's
   step 10 (both in `~/docs/Calibre Library/.claude/skills/`) should point at the
   spine-integrity classification and the `--id` scoping once shipped, replacing
-  the hand-run chapter-span comparison.
+  the hand-run chapter-span comparison. **Floor, not ceiling**: anything the
+  build surfaces that changes agent-facing behavior — thresholds, verdict
+  classes, output shapes — gets documented in the affected skills in the same
+  release.
+- [ ] **`audit --id` comma lists**: v0.19.0 took a single book id; support the
+  same comma-separated form as the new `library --id` so the two modes match.
+- [ ] **Concurrent validation workers (stretch)**: the 2026-08-27 full-library
+  walk measured ~4.4 s/book on a single daemon (5,070 EPUBs ≈ 6 h). Gate k
+  validation workers behind `--workers N`, default 1 (behavior unchanged).
 
 Non-goals: no auto-trim of bloated ToCs (semantics-preserving charter); no
 content-doc synthesis; no PDF equivalent.
