@@ -413,3 +413,35 @@ Landing note: v0.19.0 (`audit --id` single-book mode, `CalibreIdResolver` for
 `--install-to-calibre`, cquarry dep floated to `@main`) shipped in commit fdf5e7f on
 2026-08-27. Land this phase on top of that release, not beside it; do not rework its
 files.
+
+## Phase 8: batch-scoped sweeps + spine-integrity reporting (proposed 2026-08-28)
+
+*Context: the 2026-08-27 acquisition batch hit two tooling gaps. (1) Phase 3's
+repair step has no batch scoping: `bindery library` walks the whole library — a
+full sweep ran ~4.4 s/book cold (5,070 EPUBs ≈ 6 hours) and had to be killed,
+even though only 8 books were in scope. (2) The official Wandering Inn editions
+ship series-wide ToC manifests (~750 references vs 14-19 real content docs,
+~740 RSC-001s), which produced a wrong "fragment" quarantine during the phase-1
+run until a chapter-span comparison against the sibling volume reversed it —
+the tooling should classify that pattern instead of every agent re-deriving it
+by hand.*
+
+- [ ] **`library --id <ids>`**: comma-separated book-id scoping for the sweep,
+  mirroring `audit --id` (v0.19.0). Resolve EPUBs through cquarry's
+  `get_format_path()` via `CalibreIdResolver`; the gate, backups, and
+  `--install-to-calibre` behavior are unchanged.
+- [ ] **Spine-integrity reporting**: audit (and repair reports) gain a field
+  counting manifest/NCX references whose target files are absent from the
+  archive, with a classification: `convention` when the absent count ≈ navPoint
+  count and the present docs' chapter span is consecutive (the WI
+  official-build pattern), `fragment` when the span itself is broken. Encodes
+  the 2026-08-27 lesson so the near-miss cannot recur.
+- [ ] **Tests**: synthetic EPUBs — convention-shaped ToC bloat (reported, not
+  flagged), a true fragment (flagged), and a repaired-fatal composition.
+
+Non-goals: no auto-trim of bloated ToCs (semantics-preserving charter); no
+content-doc synthesis; no PDF equivalent.
+
+Landing note: lands on the v0.19.0+ lineage (fdf5e7f). Phase 7's monolithic
+analyzer and version pin are independent of this phase and may land in either
+order.
