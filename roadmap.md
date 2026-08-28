@@ -337,13 +337,13 @@ by default (missing `alt` was the sweep's #2 recurring error at 5x sample freque
 Rejected because `alt=""` asserts "decorative" to screen readers and adds markup the author
 never wrote — exactly the class of fix that must stay opt-in under the safety contract.
 
-## Phase 4: cquarry Integration (Upcoming)
+## Phase 4: cquarry Integration (complete 2026-08-28, v0.19.0)
 
 With the transition to the `cquarry` shared library (v0.16.0), Bindery inherits the ability to perform complex search and batch resolution natively. As the `cquarry` library adds new write capabilities, Bindery is slated to adopt the following upgrades:
 
-- **Format Path Resolution:** Transition to `cquarry.get_format_path()` to remove manual path concatenations during file discovery.
-- **Safe Tag Application:** When `cquarry` implements safe DB writes (`add_tag`), Bindery will gain the ability to automatically tag books in the Calibre UI as "Audited" or "Flagged" when issues are found, rather than relying strictly on console output.
-- **Single-Entity Fetching:** Utilize `get_book(book_id)` for faster isolated audits when analyzing a single book, avoiding the overhead of caching the entire library layout.
+- [x] **Format Path Resolution:** Transition to `cquarry.get_format_path()` to remove manual path concatenations during file discovery. *(done: v0.18.0 for library-mode audits; v0.19.0 finishes the job — `CalibreIdResolver` builds the id→EPUB-path map through `get_format_path()` so `--install-to-calibre` resolves the book id from `metadata.db` instead of the `(id)` directory fragment.)*
+- [x] **Safe Tag Application:** When `cquarry` implements safe DB writes (`add_tag`), Bindery will gain the ability to automatically tag books in the Calibre UI as "Audited" or "Flagged" when issues are found, rather than relying strictly on console output. *(done: v0.18.1 — `audit --tag` applies via `cquarry.write.WritableCalibreDB.add_tag`, OPF-resync queued through `metadata_dirtied`; v0.19.0 extends `--tag` to the new `--id` single-book mode.)*
+- [x] **Single-Entity Fetching:** Utilize `get_book(book_id)` for faster isolated audits when analyzing a single book, avoiding the overhead of caching the entire library layout. *(done: v0.19.0 — `audit --id BOOK_ID` fetches one row via `get_book()`, resolves the EPUB via `get_format_path()`, and reports the same verdicts as directory mode.)*
 
 ## Phase 6: Code Sweep & Fixes (2026-08-23)
 *Context: Fixing severe data loss and platform incompatibility issues found during sweep.*
@@ -359,5 +359,5 @@ With the transition to the `cquarry` shared library (v0.16.0), Bindery inherits 
 
 ### Refactoring & Growth
 - [x] **Decouple Opt-In Transforms:** Remove experimental/lossy transforms from the default `HTML_TRANSFORMS` block and gate them strictly behind their documented CLI flags. *(done, v0.17.0: all six structural repairs behind real flags; the core pipeline is well-formedness only again)*
-- [ ] **cquarry Integration:** Use `cquarry` to accurately build Calibre file paths instead of guessing.
+- [x] **cquarry Integration:** Use `cquarry` to accurately build Calibre file paths instead of guessing. *(done, v0.19.0: `CalibreIdResolver` maps EPUB paths to book ids through `cquarry.get_format_path()` — the `(id)` directory-name regex now only covers the no-catalog fallback.)*
 - [x] **True CSS-Aware Unwrapping:** Read EPUB CSS stylesheets to skip `unwrap_illegal_tags` on styled custom elements. *(done, v0.17.0: `transforms.css_protected_tags` scans stylesheets and inline `<style>` blocks; protected names are skipped book-wide)*

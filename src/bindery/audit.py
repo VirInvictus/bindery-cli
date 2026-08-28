@@ -1591,6 +1591,102 @@ def run_directory(
     return 1
 
 
+def run_single(
+    book_id: int,
+    selected: list[str],
+    min_chars: int,
+    thin_chars: int,
+    tag: str | None = None,
+) -> int:
+    """Audit one library book by id — cquarry's single-entity fetch.
+
+    Uses :meth:`CalibreDB.get_book` so only that book's row is read instead
+    of caching the entire library layout, then resolves the EPUB through
+    cquarry's ``get_format_path``. The audit itself stays strictly read-only;
+    ``--tag`` applies via cquarry's opt-in write path only when flagged.
+    """
+    library_root = resolve_library_root()
+    if library_root is None:
+        print(
+            "ERROR: no metadata.db next to this script or in the current "
+            "directory. Run from the library directory."
+        )
+        return 2
+
+    from cquarry.db import CalibreDB
+
+    try:
+        db = CalibreDB(str(library_root / "metadata.db"))
+    except Exception as e:
+        print(f"ERROR: cannot open {library_root / 'metadata.db'}: {e}")
+        return 2
+    try:
+        rec = db.get_book(book_id)
+        if rec is None:
+            print(f"ERROR: no book #{book_id} in {library_root}")
+            return 2
+        title = rec["title"]
+        tags = rec["tags"]
+        try:
+            path = Path(db.get_format_path(book_id, "EPUB", verify=True))
+        except (ValueError, FileNotFoundError) as e:
+            print(f"ERROR: book #{book_id} ({title}): {e}")
+            return 2
+    finally:
+        db.close()
+
+    try:
+        book = load_book(path)
+    except Exception as e:
+        print(f"ERROR reading {path.name}: {type(e).__name__}: {e}")
+        return 1
+
+    tag_display = tags[0] if tags else "?"
+    print(f"Auditing #{book_id} [{tag_display}] {title}\n  {path}\n")
+    problems = 0
+    multi = len(selected) > 1
+    verdicts = []
+    for key in ALL:
+        if key not in selected:
+            continue
+        if key == "content":
+            problem, status, lines = _content_dir(analyze_content(book))
+        elif key == "pagenumbers":
+            problem, status, lines = _pagenum_dir(analyze_pagenumbers(book))
+        elif key == "emptytext":
+            problem, status, lines = _empty_dir(
+                analyze_emptytext(book), min_chars, thin_chars
+            )
+        else:
+            problem, status, lines = _ocr_dir(analyze_ocr(book))
+        if problem:
+            problems += 1
+        verdicts.append((key, problem, status, lines))
+
+    for key, problem, status, lines in verdicts:
+        if multi:
+            print(f"  {key}")
+        color = RED if problem else (YELLOW if status != "OK" else GREEN)
+        prefix = "      " if multi else "  "
+        print(f"{prefix}{color}{status:<6}{RESET} {key}")
+        for ln in lines:
+            print(f"{prefix}    {ln}")
+
+    rc = 0
+    if problems:
+        rc = 1
+        print(f"\n{RED}{BOLD}FOUND{RESET}: {problems} problem(s) need review.")
+    else:
+        print(f"\n{GREEN}{BOLD}CLEAN{RESET}: book #{book_id} passed the audit.")
+    if tag and problems:
+        rc |= _apply_audit_tag(
+            library_root,
+            tag,
+            {key: [book_id] for key, problem, _s, _l in verdicts if problem},
+        )
+    return rc
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Audit EPUB body text for non-English content, baked-in page "
@@ -1619,6 +1715,14 @@ def main() -> int:
         help=f"emptytext THIN advisory threshold (default {DEFAULT_THIN_CHARS})",
     )
     parser.add_argument(
+        "--id",
+        type=int,
+        metavar="BOOK_ID",
+        default=None,
+        help="audit a single library book by Calibre id (fetched via cquarry's "
+        "single-entity get_book; cannot be combined with a directory)",
+    )
+    parser.add_argument(
         "--tag",
         metavar="TAG",
         default=None,
@@ -1632,6 +1736,13 @@ def main() -> int:
         else "bindery audit - Execution"
     )
     selected = list(ALL) if args.mode == "all" else [args.mode]
+    if args.id is not None:
+        if args.directory:
+            print("ERROR: --id audits a library book; drop the directory argument.")
+            return 2
+        return run_single(
+            args.id, selected, args.min_chars, args.thin_chars, tag=args.tag
+        )
     if args.directory:
         return run_directory(
             Path(args.directory).expanduser(), selected, args.min_chars, args.thin_chars

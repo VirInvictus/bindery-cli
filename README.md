@@ -98,6 +98,14 @@ Audits can also be run on a directory of loose `.epub` files by passing the path
 bindery audit pagenumbers /path/to/loose/epubs
 ```
 
+Or on a single library book by Calibre id — fetched through cquarry's single-entity
+`get_book()` (one row read, no library-wide scan), with the EPUB resolved via cquarry's
+own path logic:
+```sh
+cd ~/docs/Calibre\ Library && bindery audit all --id 1234
+```
+`--id` composes with `--tag`: the book is tagged only if the audit flags it.
+
 ### Tagging flagged books (opt-in)
 
 By default an audit writes nothing. With `--tag TAG` (library mode only), every book the audit
@@ -146,6 +154,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. Bindery launches a transparent, persistent Java daemon (`EpubcheckDaemon`) to evaluate candidates in the background, eliminating the JVM startup penalty. This reduces validation time from ~5 seconds per book down to ~0.05 seconds, allowing `--sweep` to scan a 5,000-book library in just 10 minutes. Combine with `--only fatals` for a self-contained, lightning-fast "find and fix the broken books" run.
 - `--json FILE` writes a machine-readable report of the whole run (per-book status, before/after counts, applied flag, summary totals). `--manual-list FILE` writes the paths of every book that was not auto-repaired, one per line, ready for manual follow-up.
 - `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file.
+- `--install-to-calibre` resolves the Calibre book id from `metadata.db` via cquarry (one read-only path→id map per run), so a hand-renamed `Author/Title (id)/` directory can never send the repaired file to the wrong book. The directory-name regex is only a no-catalog fallback; with neither, the file is saved atomically in place.
 - `--install-to-calibre` acts as a safer alternative to atomic replacement for Calibre libraries. It uses `calibredb add_format --replace` to natively swap the EPUB format without losing metadata or read progress. It falls back to atomic file replacement if the Calibre database ID cannot be parsed.
 - `--all` automatically turns on all opt-in non-fatal fixes and lossy strips (pagination, watermarks, bad attributes, unknown entities, image alt tags, etc.) in a single run.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.

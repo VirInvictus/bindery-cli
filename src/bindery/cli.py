@@ -26,7 +26,13 @@ from .audit import (
     run_library as run_audit_library,
 )
 from .epub import ncx_uid_mismatch, repair_epub
-from .library import atomic_replace, calibredb_replace, iter_epubs, make_backup
+from .library import (
+    CalibreIdResolver,
+    atomic_replace,
+    calibredb_replace,
+    iter_epubs,
+    make_backup,
+)
 from .validate import (
     CheckResult,
     epubcheck_available,
@@ -205,6 +211,9 @@ def _counts_dict(r: CheckResult | None) -> dict | None:
 
 def run_library(args) -> int:
     root = Path(args.path).expanduser()
+    # cquarry-backed id resolution for --install-to-calibre: one lazy map
+    # build per run, read-only against metadata.db.
+    id_resolver = CalibreIdResolver(root)
     if not root.is_dir():
         print(f"error: not a directory: {root}", file=sys.stderr)
         return 1
@@ -372,7 +381,9 @@ def run_library(args) -> int:
                 if backup_dir is not None or args.backup_inplace:
                     make_backup(epub, backup_dir)
                 if args.install_to_calibre:
-                    calibredb_replace(epub, work / "repaired.epub")
+                    # The id comes from cquarry's metadata.db view — accurate
+                    # even when the (id) directory was renamed.
+                    calibredb_replace(epub, work / "repaired.epub", id_resolver)
                 else:
                     atomic_replace(epub, work / "repaired.epub")
                 applied += 1

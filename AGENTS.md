@@ -1,10 +1,4 @@
-<!-- .clinerules for Bindery — converted from CLAUDE.md on 2026-08-25 during the Cline migration. -->
-<!-- The original CLAUDE.md is kept untouched alongside this file (provenance + deep reference). -->
-<!-- Claude Code machinery was neutralized: self-references point at this file; global rules are ~/.clinerules/. -->
-
-<!-- clinerules-update 2026-08-25: automated sweep found this file's leading version mention (0.16.0) differs from the repo's own version source (0.18.0). House rule applies: trust the repo's VERSION / package metadata over prose claims; historical version mentions below were deliberately left untouched. -->
-
-# .clinerules (Bindery)
+# AGENTS.md (Bindery)
 
 Per-project guidance. Overrides the global file where they conflict.
 

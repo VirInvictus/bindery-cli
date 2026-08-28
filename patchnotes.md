@@ -1,5 +1,33 @@
 # Bindery Patch Notes
 
+## v0.19.0 (2026-08-28)
+
+### Phase 4 complete: full cquarry integration
+
+- **Accurate Calibre id resolution (no more guessing).** `--install-to-calibre` previously
+  extracted the book id from the `(123)` directory-name fragment — a heuristic that replaces
+  the wrong book whenever a directory was hand-renamed or its number no longer matches the
+  catalog. New `library.CalibreIdResolver` builds a lazy, one-shot EPUB-path → id map through
+  cquarry's own layout logic (`CalibreDB.get_format_path()`), so the id comes from
+  `metadata.db` and renamed directories cannot misroute a replacement. The `(id)` regex
+  survives only as the no-catalog fallback; with neither source the repaired file is saved
+  atomically in place (previous behaviour).
+- **Single-entity audits: `bindery audit all --id 1234`.** New `--id` mode fetches exactly one
+  row through cquarry's `CalibreDB.get_book()` (no library-wide cache), resolves the EPUB via
+  `get_format_path()`, and reports the same verdicts as directory mode. Composes with
+  `--tag`: the book is tagged only if the audit flags it. Mutually exclusive with the
+  directory argument.
+- **Dependency unpinned.** `cquarry` moved from a frozen pre-1.1 commit to `@main`, matching
+  Hermitage and CalibreQuarry — CI now always exercises current cquarry (1.6.x) instead of a
+  year-old snapshot that lacked `get_book`/`add_tag`.
+- **Roadmap:** Phase 4 (Format Path Resolution, Safe Tag Application, Single-Entity Fetching)
+  and the Phase 6 "cquarry Integration" checkbox are closed.
+- **Tests:** 204 → 216 (12 new) — the resolver (catalogued hit, DB-truth-over-directory-name,
+  unknown file, missing catalog), the regex fallback, and the replace routing (resolver id
+  wins, regex fallback, atomic in-place fallback with `subprocess` mocked); `run_single`
+  (clean pass, unknown id, book without an EPUB) against a real minimal `metadata.db` +
+  synthetic EPUB.
+
 ## v0.18.1 (2026-08-26)
 
 **cquarry 1.2 adoption: audit tagging now actually reaches the write path, and tagged books regenerate their OPFs.**

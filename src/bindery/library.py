@@ -67,21 +67,95 @@ def atomic_replace(target: Path, new_file: Path) -> None:
         os.close(dfd)
 
 
-def calibredb_replace(target: Path, new_file: Path) -> None:
+class CalibreIdResolver:
+    """Resolve Calibre book ids from ``metadata.db`` via cquarry — no guessing.
+
+    Builds a lazy, one-shot map of EPUB path -> book id using cquarry's own
+    layout logic (:meth:`CalibreDB.get_format_path`), so the path truth lives
+    in exactly one place and a hand-renamed ``Author/Title (id)/`` directory
+    can never cause the wrong book to be replaced. Returns ``None`` (caller
+    falls back to the directory-name heuristic) when metadata.db is missing,
+    unreadable, or the file is not a catalogued EPUB.
+    """
+
+    def __init__(self, library_root: Path) -> None:
+        self._root = Path(library_root)
+        self._paths: dict[str, int] | None = None
+
+    def _load(self) -> None:
+        if self._paths is not None:
+            return
+        self._paths = {}
+        db_path = self._root / "metadata.db"
+        if not db_path.is_file():
+            return
+        try:
+            from cquarry.db import CalibreDB
+
+            db = CalibreDB(str(db_path))
+        except Exception:
+            return
+        try:
+            rows = db.conn.execute(
+                "SELECT b.id FROM books b JOIN data d ON d.book = b.id "
+                "WHERE upper(d.format) = 'EPUB' ORDER BY b.id"
+            ).fetchall()
+            for (bid,) in rows:
+                try:
+                    # get_format_path owns the layout logic (root / books.path
+                    # / name.epub); verify=False keeps this read-only cheap.
+                    p = Path(db.get_format_path(bid, "EPUB", verify=False))
+                except Exception:
+                    continue  # dangling data row; not ours to fix
+                self._paths[str(p.resolve()).lower()] = bid
+        finally:
+            db.close()
+
+    def id_for(self, epub: Path) -> int | None:
+        """The catalogued book id for `epub`, or None if not in metadata.db."""
+        self._load()
+        return self._paths.get(str(Path(epub).resolve()).lower())
+
+
+def guess_calibre_id(epub: Path) -> str | None:
+    """Legacy fallback: pull the id out of the ``(123)`` directory fragment.
+
+    Only used when cquarry cannot resolve the id (no metadata.db, or the file
+    is not catalogued) — the heuristic breaks on renamed directories, which is
+    exactly why the resolver above is preferred.
+    """
+    match = re.search(r"\((\d+)\)/[^/]+\.epub$", str(epub.absolute()))
+    return match.group(1) if match else None
+
+
+def calibredb_replace(
+    target: Path, new_file: Path, resolver: CalibreIdResolver | None = None
+) -> None:
     """Use calibredb to seamlessly replace the fixed EPUB in the library.
     This preserves all metadata, custom columns, and reading progress natively.
+
+    The book id comes from cquarry's metadata.db view when a resolver is given
+    (accurate even for hand-renamed directories); the legacy ``(id)``
+    directory-name guess is the fallback, and without any id the repaired
+    file is saved atomically in place instead.
     """
-    match = re.search(r"\((\d+)\)/[^/]+\.epub$", str(target.absolute()))
-    if not match:
+    calibre_id: str | None = None
+    if resolver is not None:
+        bid = resolver.id_for(target)
+        if bid is not None:
+            calibre_id = str(bid)
+    if calibre_id is None:
+        calibre_id = guess_calibre_id(target)
+    if calibre_id is None:
         import sys
 
         print(
-            f"WARNING: Could not extract Calibre ID from {target.name}. Saving in place instead.",
+            f"WARNING: Could not resolve the Calibre id for {target.name} "
+            "(not in metadata.db, no (id) directory). Saving in place instead.",
             file=sys.stderr,
         )
         atomic_replace(target, new_file)
         return
-    calibre_id = match.group(1)
 
     subprocess.run(
         ["calibredb", "add_format", calibre_id, str(new_file), "--replace"], check=True

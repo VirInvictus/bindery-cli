@@ -629,5 +629,118 @@ class TestLoadBookCorruptEntry(unittest.TestCase):
         self.assertEqual(book.docs["text.xhtml"], "")
 
 
+class TestRunSingle(unittest.TestCase):
+    """audit --id: one book, fetched via cquarry's single-entity get_book —
+    no library-wide scan, and the EPUB resolved through get_format_path."""
+
+    CONTAINER = (
+        '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        '<rootfiles><rootfile full-path="content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+    OPF = (
+        '<package xmlns="http://www.idpf.org/2007/opf">'
+        "<manifest>"
+        '<item id="c1" href="text.xhtml" media-type="application/xhtml+xml"/>'
+        "</manifest>"
+        '<spine><itemref idref="c1"/></spine></package>'
+    )
+
+    def _library(self, root, epub_formats=("EPUB",)):
+        import sqlite3
+        import zipfile
+
+        root.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(root / "metadata.db")
+        conn.executescript(
+            """
+            CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, sort TEXT,
+                author_sort TEXT, timestamp TEXT, pubdate TEXT, has_cover INT,
+                last_modified TEXT, series_index REAL DEFAULT 1.0, path TEXT, uuid TEXT);
+            CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+            CREATE TABLE books_authors_link (id INTEGER PRIMARY KEY, book INT, author INT);
+            CREATE TABLE series (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+            CREATE TABLE books_series_link (id INTEGER PRIMARY KEY, book INT, series INT);
+            CREATE TABLE publishers (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+            CREATE TABLE books_publishers_link (id INTEGER PRIMARY KEY, book INT, publisher INT);
+            CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT, link TEXT);
+            CREATE TABLE books_tags_link (id INTEGER PRIMARY KEY, book INT, tag INT);
+            CREATE TABLE languages (id INTEGER PRIMARY KEY, lang_code TEXT, link TEXT);
+            CREATE TABLE books_languages_link (id INTEGER PRIMARY KEY, book INT, lang_code INT);
+            CREATE TABLE ratings (id INTEGER PRIMARY KEY, rating INT, link TEXT DEFAULT '');
+            CREATE TABLE books_ratings_link (id INTEGER PRIMARY KEY, book INT, rating INT);
+            CREATE TABLE data (id INTEGER PRIMARY KEY, book INT, format TEXT,
+                name TEXT, uncompressed_size INT);
+            CREATE TABLE identifiers (book INT, type TEXT, val TEXT);
+            """
+        )
+        conn.execute(
+            "INSERT INTO books (id,title,sort,path) VALUES (1,'T','T','A/T (1)')"
+        )
+        conn.execute("INSERT INTO authors (id,name) VALUES (1,'Author')")
+        conn.execute("INSERT INTO books_authors_link (book,author) VALUES (1,1)")
+        for fmt in epub_formats:
+            conn.execute(
+                "INSERT INTO data (book,format,name) VALUES (1,?,'T - Author')", (fmt,)
+            )
+        conn.commit()
+        conn.close()
+        book_dir = root / "A" / "T (1)"
+        book_dir.mkdir(parents=True, exist_ok=True)
+        if "EPUB" in epub_formats:
+            with zipfile.ZipFile(book_dir / "T - Author.epub", "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", self.CONTAINER)
+                z.writestr("content.opf", self.OPF)
+                z.writestr(
+                    "text.xhtml",
+                    "<html><body><p>"
+                    + ("the quick brown fox jumped over the lazy dog. " * 60)
+                    + "</p></body></html>",
+                )
+        return root
+
+    @contextlib.contextmanager
+    def _cwd(self, path):
+        old = os.getcwd()
+        os.chdir(path)
+        try:
+            yield
+        finally:
+            os.chdir(old)
+
+    def test_clean_book_passes(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as td:
+            root = self._library(pathlib.Path(td))
+            with self._cwd(root):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = audit.run_single(1, ["content"], 2000, 20000)
+        self.assertEqual(rc, 0)
+        self.assertIn("CLEAN", out.getvalue())
+
+    def test_unknown_id_is_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._library(pathlib.Path(td))
+            with self._cwd(root):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = audit.run_single(999, ["content"], 2000, 20000)
+        self.assertEqual(rc, 2)
+        self.assertIn("no book #999", out.getvalue())
+
+    def test_book_without_epub_is_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._library(pathlib.Path(td), epub_formats=("PDF",))
+            with self._cwd(root):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = audit.run_single(1, ["content"], 2000, 20000)
+        self.assertEqual(rc, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
