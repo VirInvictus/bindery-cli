@@ -361,3 +361,55 @@ With the transition to the `cquarry` shared library (v0.16.0), Bindery inherits 
 - [x] **Decouple Opt-In Transforms:** Remove experimental/lossy transforms from the default `HTML_TRANSFORMS` block and gate them strictly behind their documented CLI flags. *(done, v0.17.0: all six structural repairs behind real flags; the core pipeline is well-formedness only again)*
 - [x] **cquarry Integration:** Use `cquarry` to accurately build Calibre file paths instead of guessing. *(done, v0.19.0: `CalibreIdResolver` maps EPUB paths to book ids through `cquarry.get_format_path()` — the `(id)` directory-name regex now only covers the no-catalog fallback.)*
 - [x] **True CSS-Aware Unwrapping:** Read EPUB CSS stylesheets to skip `unwrap_illegal_tags` on styled custom elements. *(done, v0.17.0: `transforms.css_protected_tags` scans stylesheets and inline `<style>` blocks; protected names are skipped book-wide)*
+
+## Phase 7: monolithic-document audit + version pin (proposed 2026-08-27)
+
+*Context: the one remaining defect class that is still caught by hand. Phase 1 of the
+acquisition pathway (`~/docs/Calibre Library/.claude/skills/phase-1-import/SKILL.md`,
+§ 2 "Chars per content document") must check characters-per-content-document on every
+EPUB and currently does it with an inline script because no analyzer covers it — the
+skill says so verbatim ("no tool; run inline"). The motivating incident: a "clean"
+Oxford Dictionary EPUB — ~30M chars across 21 content docs, epubcheck silent, all four
+audit analyzers silent — that would not render past a point on real readers.
+Monolithic documents are invisible to `emptytext` (whole-book volume, not per-doc
+shape) and to epubcheck (which never sees renderer memory limits). Every session that
+re-implements the inline check is a session that can silently skip it.*
+
+- [ ] **`monolithic` analyzer** in `src/bindery/audit.py`, joining the existing
+      `content|pagenumbers|emptytext|ocr|all` set:
+  - Count characters PER content document (spine items), not per book, inside the
+    existing single decompression pass — `emptytext` already walks every doc to get
+    book volume, so extend that loop rather than adding a second pass. Track the max
+    and keep the worst doc's href for the detail column.
+  - Flag when any single content doc is >= 300,000 chars. Default per the phase-1
+    skill's "roughly 300-500k" advisory floor; expose the threshold as a flag
+    following the existing `--min-chars`/`--thin-chars` naming style (propose
+    `--max-doc-chars N` — "flag any doc over N chars").
+  - Output mirrors the other analyzers: a `max_doc_chars:N` field on the book's line
+    plus the offending doc href, so `--tag` (v0.18.1 write path) and `--id`
+    (v0.19.0 single-book mode) compose unchanged. Only the >= threshold defect
+    flags/tags; high-but-under-threshold books stay silent (advisory, like THIN).
+  - Tests in `tests/test_audit.py` following the existing synthetic-EPUB pattern:
+    one 400k-char doc → flagged; 20 docs x 20k chars → clean; threshold override
+    respected; `--tag` applies only to flagged books; `--id` mode reports the same
+    verdict as directory mode.
+  - Same-release doc sync: `spec.md` audit section, the `.clinerules` layout line for
+    `audit.py`, `README.md` audit section — and then the phase-1 skill's "no tool;
+    run inline" paragraph should be updated to name the analyzer (that file lives in
+    the library directory, not this repo; flag it to Brandon in the release note).
+- [ ] **Version-sync pin.** `src/bindery/__init__.py` has shipped stale more than
+      once — the phase-1 skill literally warns "`bindery --version` may print one
+      release behind the real code (a stale constant in `__init__`)", and at this
+      writing (2026-08-27) pyproject reads 0.19.0 in-tree while `__init__.py` still
+      reads 0.18.0. Port CalibreQuarry's `tests/test_version.py` pattern: assert
+      pyproject.toml's `version` == `bindery.VERSION`, so AGENTS.md's "bump both"
+      rule is enforced by tests instead of memory.
+
+Non-goals: no auto-splitting of monolithic docs (content surgery is outside the
+charter — flag and re-source); no PDF equivalent (page-count sanity there stays a
+manual completeness spot-check per the skill).
+
+Landing note: v0.19.0 (`audit --id` single-book mode, `CalibreIdResolver` for
+`--install-to-calibre`, cquarry dep floated to `@main`) shipped in commit fdf5e7f on
+2026-08-27. Land this phase on top of that release, not beside it; do not rework its
+files.
