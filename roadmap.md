@@ -438,6 +438,10 @@ by hand.*
   the 2026-08-27 lesson so the near-miss cannot recur.
 - [ ] **Tests**: synthetic EPUBs — convention-shaped ToC bloat (reported, not
   flagged), a true fragment (flagged), and a repaired-fatal composition.
+- [ ] **Skill sync**: phase-1-import's "ToC bloat" trap entry and phase-3-import's
+  step 10 (both in `~/docs/Calibre Library/.claude/skills/`) should point at the
+  spine-integrity classification and the `--id` scoping once shipped, replacing
+  the hand-run chapter-span comparison.
 
 Non-goals: no auto-trim of bloated ToCs (semantics-preserving charter); no
 content-doc synthesis; no PDF equivalent.
