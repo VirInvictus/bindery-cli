@@ -21,6 +21,7 @@ from .audit import (
     DEFAULT_MIN_CHARS,
     DEFAULT_THIN_CHARS,
     run_directory,
+    run_single,
 )
 from .audit import (
     run_library as run_audit_library,
@@ -638,6 +639,13 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
 
 def run_audit_cmd(args: argparse.Namespace) -> int:
     selected = list(ALL) if args.mode == "all" else [args.mode]
+    if args.id is not None:
+        if args.path:
+            print("ERROR: --id audits a library book; drop the directory argument.")
+            return 2
+        return run_single(
+            args.id, selected, args.min_chars, args.thin_chars, tag=args.tag
+        )
     if args.path:
         return run_directory(
             Path(args.path).expanduser(), selected, args.min_chars, args.thin_chars
@@ -713,6 +721,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="after a library-mode audit, tag every flagged book in metadata.db "
         "via cquarry's write module (Calibre must be closed; books are queued "
         "for OPF regeneration automatically)",
+    )
+    audit.add_argument(
+        "--id",
+        type=int,
+        metavar="BOOK_ID",
+        default=None,
+        help="audit a single library book by Calibre id (fetched via cquarry's "
+        "single-entity get_book; cannot be combined with a directory)",
     )
     audit.set_defaults(func=run_audit_cmd)
 

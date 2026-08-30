@@ -70,6 +70,11 @@ PYTHONPATH=src uv run --with html5lib python3 -m bindery --help   # incl. --rese
 
 ## Usage
 
+Three verbs: `bindery repair` fixes a single EPUB epubcheck-gated, `bindery audit`
+reports content flaws without touching anything, and `bindery library` sweeps a Calibre
+library tree (dry run by default; `--apply` replaces accepted books atomically in place).
+The sections below take each in turn.
+
 ## Auditing
 
 Bindery includes a comprehensive auditing tool to inspect EPUB body text for non-schema flaws that epubcheck cannot catch. It extracts and analyzes the visible text to detect content issues, producing console reports that can be used to filter your library or feed into `bindery repair`.

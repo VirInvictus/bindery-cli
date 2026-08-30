@@ -434,5 +434,34 @@ class TestAuditTagWiring(unittest.TestCase):
         self.assertIsNone(run.call_args.kwargs.get("tag"))
 
 
+class TestAuditIdWiring(unittest.TestCase):
+    """The audit --id flag must exist on the console-script subparser and reach
+    run_single. v0.19.0 documented --id and shipped run_single, but only the
+    module's own argparse main (`python -m bindery.audit`) registered it; the
+    `bindery` entry point silently lacked the flag."""
+
+    def test_flag_parses_and_defaults_off(self):
+        parser = build_parser()
+        self.assertIsNone(parser.parse_args(["audit", "content"]).id)
+        args = parser.parse_args(["audit", "content", "--id", "1234"])
+        self.assertEqual(args.id, 1234)
+
+    def test_id_reaches_run_single(self):
+        with mock.patch("bindery.cli.run_single", return_value=0) as run:
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                main(["audit", "all", "--id", "1234"])
+        self.assertEqual(run.call_args.args[0], 1234)
+        self.assertIsNone(run.call_args.kwargs.get("tag"))
+
+    def test_id_rejects_a_directory_argument(self):
+        with mock.patch("bindery.cli.run_single", return_value=0) as run:
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = main(["audit", "content", "--id", "1234", "/tmp/epubs"])
+        self.assertEqual(rc, 2)
+        run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

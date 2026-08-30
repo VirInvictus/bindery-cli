@@ -12,10 +12,11 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
 
 ## Hard constraints
 
-- **Minimal Dependencies, pinned.** Runtime deps are exactly: `tqdm` (progress/output),
+- **Minimal Dependencies.** Runtime deps are exactly: `tqdm` (progress/output),
   `vir-tui` (shared TUI rendering) and `cquarry` (read-only Calibre `metadata.db` access,
-  adopted in v0.16.0) — the two git deps are PINNED to exact commit hashes in
-  pyproject.toml, never floated onto a branch. `html5lib` remains the one approved
+  adopted in v0.16.0). `vir-tui` is PINNED to an exact commit in pyproject.toml
+  (bump deliberately); `cquarry` deliberately tracks `@main` since v0.19.0 so CI always
+  exercises the current library. `html5lib` remains the one approved
   heavy-parsing exception (used only for the `--reserialize` fix, imported lazily so every
   other mode runs without it). Tests use the standard `unittest` framework. epubcheck is an
   external CLI dependency, and `calibredb` is required for the `--install-to-calibre`

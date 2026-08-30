@@ -1,5 +1,27 @@
 # Bindery Patch Notes
 
+## v0.19.2 (2026-08-30)
+
+- **Fixed: `bindery audit --id` was unreachable from the CLI.** v0.19.0 documented
+  `--id` and shipped `run_single`, but only the module's own argparse main
+  (`python -m bindery.audit`) registered the flag; the `bindery` console script's
+  audit subparser never did, so the documented invocation died with
+  "unrecognized arguments". The subparser now carries `--id BOOK_ID` and
+  `run_audit_cmd` routes it to `run_single` (rejecting a directory argument with
+  the module main's error text). Regression tests mirror the v0.18.1 `--tag`
+  wiring battery, which this bug duplicated: the earlier one shipped the write
+  path unwired, this one the read path.
+- **Removed a dead branch in audit's module main.** `main()` tested
+  `args.dry_run`, which no parser defines, so the "[DRY RUN]" header variant
+  could never fire.
+- **Version pin.** New `tests/test_version.py` fails the suite when
+  `pyproject.toml` and `src/bindery/__init__.py` disagree (the v0.19.1 drift
+  class); Phase 7's version-sync box.
+- **Docs.** pyproject's dependency comment and CLAUDE.md's hard constraint said
+  both git deps were hash-pinned; only `vir-tui` is (cquarry deliberately tracks
+  `@main` since v0.19.0), and both texts now say so. The README's empty
+  `## Usage` heading now introduces the three verbs.
+
 ## v0.19.1 (2026-08-28)
 
 - **Dependency bump (deliberate pin move).** The `vir-tui` pin moved from `d13ad0e` to `e53f17e`

@@ -397,13 +397,24 @@ re-implements the inline check is a session that can silently skip it.*
     `audit.py`, `README.md` audit section — and then the phase-1 skill's "no tool;
     run inline" paragraph should be updated to name the analyzer (that file lives in
     the library directory, not this repo; flag it to Brandon in the release note).
-- [ ] **Version-sync pin.** `src/bindery/__init__.py` has shipped stale more than
+- [x] **Version-sync pin.** `src/bindery/__init__.py` has shipped stale more than
       once — the phase-1 skill literally warns "`bindery --version` may print one
       release behind the real code (a stale constant in `__init__`)", and at this
       writing (2026-08-27) pyproject reads 0.19.0 in-tree while `__init__.py` still
       reads 0.18.0. Port CalibreQuarry's `tests/test_version.py` pattern: assert
       pyproject.toml's `version` == `bindery.VERSION`, so AGENTS.md's "bump both"
       rule is enforced by tests instead of memory.
+      *(Done in v0.19.2: `tests/test_version.py` asserts the pin.)*
+
+### v0.19.2 bugfix note (2026-08-30, from the ecosystem audit)
+
+- [x] **`audit --id` was unreachable from the console script.** v0.19.0 documented
+      `--id` and shipped `run_single`, but only the module's own argparse main
+      registered the flag; the `bindery` entry point died with "unrecognized
+      arguments". The subparser now carries `--id` and routes to `run_single`,
+      with wiring tests mirroring the v0.18.1 `--tag` battery (same bug class:
+      a shipped flag the CLI never registered). The dead `args.dry_run` branch
+      in the module main went with it (no parser defines that flag).
 
 Non-goals: no auto-splitting of monolithic docs (content surgery is outside the
 charter — flag and re-source); no PDF equivalent (page-count sanity there stays a

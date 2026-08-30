@@ -1730,11 +1730,7 @@ def main() -> int:
         "write path (Calibre must be closed; audit itself stays read-only)",
     )
     args = parser.parse_args()
-    ui.print_header(
-        "bindery audit - Execution [DRY RUN]"
-        if getattr(args, "dry_run", False)
-        else "bindery audit - Execution"
-    )
+    ui.print_header("bindery audit - Execution")
     selected = list(ALL) if args.mode == "all" else [args.mode]
     if args.id is not None:
         if args.directory:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bindery"
-version = "0.19.1"
+version = "0.19.2"
 description = "High-speed EPUB repair surgeon with a persistent Java validation daemon, safe HTML unwrapping, and native Calibre integration."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -15,8 +15,9 @@ authors = [
 ]
 # Core dependencies are minimal. html5lib is needed only for the opt-in --reserialize structural
 # repair; it is imported lazily, so every other mode works without it installed.
-# The git dependencies are PINNED to exact commit hashes (not branches) so builds are
-# reproducible; bump deliberately, never by re-floating onto a branch head.
+# vir-tui is PINNED to an exact commit so builds are reproducible; bump deliberately.
+# cquarry deliberately tracks @main (since v0.19.0): CI exercises current cquarry on
+# every run instead of a stale snapshot, matching CalibreQuarry's dependency policy.
 dependencies = [
   "tqdm",
   "vir-tui @ git+https://github.com/VirInvictus/vir-tui.git@e53f17efe233e0a03f003be7f6d15f7c097e868d",
