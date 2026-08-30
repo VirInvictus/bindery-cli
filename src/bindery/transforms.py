@@ -362,7 +362,7 @@ def strip_invalid_value(s: str) -> tuple[str, int]:
         return f"<{tag} {before}{after}>"
 
     s, n = re.subn(
-        r'<(div|span|p|a|img|h[1-6]|ul|table|tr|td|th)(\s+[^>]*\b)?value\s*=\s*(["\'][^"\']*["\'])([^>]*)>',
+        r'<(div|span|p|a|img|h[1-6]|ul|li|meta|table|tr|td|th)(\s+[^>]*\b)?value\s*=\s*(["\'][^"\']*["\'])([^>]*)>',
         repl,
         s,
         flags=re.IGNORECASE,
