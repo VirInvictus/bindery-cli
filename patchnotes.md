@@ -1,5 +1,24 @@
 # Bindery Patch Notes
 
+## v0.20.0 (2026-08-30)
+
+### cquarry 1.8 adoption (Phase 9 sync)
+
+- **`CalibreIdResolver._load` over `format_path_index()`.** The path→id map is
+  now cquarry's canonical index (one `data ⋈ books` query built exactly like
+  `get_format_path()`) instead of a per-book `get_format_path()` loop — same
+  construction, N queries collapsed to one. Keys are re-normalized the
+  resolver's historical way (`Path.resolve().lower()`) so symlinked library
+  directories and case-insensitive matching behave exactly as before. The
+  `(123)` directory-name regex remains the documented no-catalog fallback.
+  The `audit.py` raw-join swap was waived at the Phase 9 design session (its
+  three targeted joins are cheaper than whole-library hydration and Bindery
+  wants per-book maps, not row dicts); do not "improve" it into a regression.
+- **Dependency**: requires cquarry ≥ 1.8 (`format_path_index`). The `uv.lock`
+  still pins the pre-1.8 `@main` commit until cquarry's 1.8.0 commits are
+  pushed; after that, one `uv lock --upgrade-package cquarry` lands the lock
+  on current main. CI installs `@main` fresh and self-corrects the same way.
+
 ## v0.19.2 (2026-08-30)
 
 - **Fixed: `bindery audit --id` was unreachable from the CLI.** v0.19.0 documented

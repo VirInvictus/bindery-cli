@@ -96,18 +96,16 @@ class CalibreIdResolver:
         except Exception:
             return
         try:
-            rows = db.conn.execute(
-                "SELECT b.id FROM books b JOIN data d ON d.book = b.id "
-                "WHERE upper(d.format) = 'EPUB' ORDER BY b.id"
-            ).fetchall()
-            for (bid,) in rows:
-                try:
-                    # get_format_path owns the layout logic (root / books.path
-                    # / name.epub); verify=False keeps this read-only cheap.
-                    p = Path(db.get_format_path(bid, "EPUB", verify=False))
-                except Exception:
-                    continue  # dangling data row; not ours to fix
-                self._paths[str(p.resolve()).lower()] = bid
+            # cquarry 1.8's format_path_index() is this map, built canonically
+            # in one data⋈books query (the per-book get_format_path loop this
+            # used to run is the same construction, N queries over). Keys are
+            # re-normalized the resolver's historical way — resolve() for
+            # symlinked library dirs, .lower() for case-insensitive matching.
+            index = db.format_path_index()
+            for path, bid in index.items():
+                if not path.upper().endswith(".EPUB"):
+                    continue  # the resolver maps EPUBs only
+                self._paths[str(Path(path).resolve()).lower()] = bid
         finally:
             db.close()
 
