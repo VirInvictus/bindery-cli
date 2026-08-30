@@ -375,7 +375,7 @@ Monolithic documents are invisible to `emptytext` (whole-book volume, not per-do
 shape) and to epubcheck (which never sees renderer memory limits). Every session that
 re-implements the inline check is a session that can silently skip it.*
 
-- [ ] **`monolithic` analyzer** in `src/bindery/audit.py`, joining the existing
+- [x] **`monolithic` analyzer** in `src/bindery/audit.py`, joining the existing
       `content|pagenumbers|emptytext|ocr|all` set:
   - Count characters PER content document (spine items), not per book, inside the
     existing single decompression pass — `emptytext` already walks every doc to get
@@ -397,6 +397,9 @@ re-implements the inline check is a session that can silently skip it.*
     `audit.py`, `README.md` audit section — and then the phase-1 skill's "no tool;
     run inline" paragraph should be updated to name the analyzer (that file lives in
     the library directory, not this repo; flag it to Brandon in the release note).
+    *(Shipped in v0.21.0. Doc sync done — spec/README/phase-1 skill §2; the
+    `.clinerules` half is moot, the file was retired with the AGENTS.md symlink
+    taking over.)*
 - [x] **Version-sync pin.** `src/bindery/__init__.py` has shipped stale more than
       once — the phase-1 skill literally warns "`bindery --version` may print one
       release behind the real code (a stale constant in `__init__`)", and at this

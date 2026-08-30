@@ -795,6 +795,9 @@ def scan_pagenumbers(path: Path) -> dict:
 
 DEFAULT_MIN_CHARS = 2000  # at or below this: EMPTY (real defect)
 DEFAULT_THIN_CHARS = 20000  # below this: THIN (advisory review)
+# Monolithic-document floor (phase-1 skill: "roughly 300-500k" chars is where
+# readers start refusing). A single content doc at or above this flags.
+DEFAULT_MAX_DOC_CHARS = 300_000
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
 BOOKMATE_MARKERS = ("bookmate.css", "calibre_bookmarks.txt")
@@ -893,6 +896,38 @@ def _empty_detail(r: dict) -> str:
 
 def scan_emptytext(path: Path) -> dict:
     return analyze_emptytext(load_book(path))
+
+
+# ----------------------------------------------------------------------------
+# Analyzer: monolithic (one spine doc that is far too large)
+# ----------------------------------------------------------------------------
+
+def analyze_monolithic(book: Book) -> dict:
+    """Find the largest single content document, in characters.
+
+    Monolithic documents are invisible to emptytext (whole-book volume, not
+    per-doc shape) and to epubcheck (which never sees renderer memory limits):
+    a "clean" 30M-char dictionary that will not render past a point on real
+    readers. Reuses the shared visible_texts() cache, so this adds no second
+    decompression pass.
+    """
+    texts = book.visible_texts()
+    worst_i = max(range(len(texts)), key=lambda i: len(texts[i]), default=None)
+    return {
+        "max_doc_chars": len(texts[worst_i]) if worst_i is not None else 0,
+        "worst_doc": book.spine[worst_i] if worst_i is not None else "",
+        "spine_len": len(book.spine),
+    }
+
+
+def is_monolithic(r: dict, max_doc_chars: int) -> bool:
+    """Flag only at or above the threshold; high-but-under stays silent
+    (advisory silence, like THIN)."""
+    return r["max_doc_chars"] >= max_doc_chars
+
+
+def scan_monolithic(path: Path) -> dict:
+    return analyze_monolithic(load_book(path))
 
 
 # ----------------------------------------------------------------------------
@@ -1289,11 +1324,28 @@ def _ocr_sections(found) -> int:
     return 0
 
 
+def _monolithic_sections(hits) -> int:
+    if hits:
+        print(f"{RED}{BOLD}MONOLITHIC DOCUMENTS ({len(hits)}){RESET}")
+        for book_id, title, tag, r in sorted(hits, key=lambda x: -x[3]["max_doc_chars"]):
+            print(f"  {RED}#{book_id}{RESET} [{tag}] {title}")
+            print(f"    max doc {r['max_doc_chars']:,} chars ({r['worst_doc']});"
+                  f" spine {r['spine_len']}")
+        print()
+        print(
+            f"{RED}{BOLD}monolithic FOUND{RESET}: {len(hits)} file(s) need review "
+            f"(readers may refuse to render; re-source or split by hand)."
+        )
+        return 1
+    print(f"{GREEN}{BOLD}monolithic CLEAN{RESET}: no oversized single document.")
+    return 0
+
+
 # ----------------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------------
 
-ALL: tuple[str, ...] = ("content", "pagenumbers", "emptytext", "ocr")
+ALL: tuple[str, ...] = ("content", "pagenumbers", "emptytext", "ocr", "monolithic")
 
 
 def run_library(
@@ -1301,6 +1353,7 @@ def run_library(
     min_chars: int,
     thin_chars: int,
     tag: str | None = None,
+    max_doc_chars: int = DEFAULT_MAX_DOC_CHARS,
 ) -> int:
     # The scan loop below reuses `tag` for its per-book display column; keep
     # the --tag argument under a distinct name so it survives that shadowing.
@@ -1359,6 +1412,7 @@ def run_library(
     partial_hits: list[tuple] = []
     thin_hits: list[tuple] = []
     ocr_found: list[tuple] = []
+    mono_hits: list[tuple] = []
     errors: list[tuple] = []
     scanned = 0
 
@@ -1411,6 +1465,11 @@ def run_library(
             if is_ocr_damaged(r):
                 ocr_found.append((book_id, title, tag, r))
 
+        if "monolithic" in selected:
+            r = analyze_monolithic(book)
+            if is_monolithic(r, max_doc_chars):
+                mono_hits.append((book_id, title, tag, r))
+
     print(f"Scanned {scanned} EPUBs in {library_root}\n")
     rc = 0
     multi = len(selected) > 1
@@ -1425,6 +1484,8 @@ def run_library(
             rc |= _pagenum_sections(pagenum_found)
         elif key == "emptytext":
             rc |= _empty_sections(empty_hits, partial_hits, thin_hits)
+        elif key == "monolithic":
+            rc |= _monolithic_sections(mono_hits)
         else:
             rc |= _ocr_sections(ocr_found)
         if multi:
@@ -1450,6 +1511,7 @@ def run_library(
                     h[0] for h in empty_hits + partial_hits
                 ],  # THIN is advisory and stays untagged
                 "ocr": [h[0] for h in ocr_found],
+                "monolithic": [h[0] for h in mono_hits],
             },
         )
     return rc
@@ -1515,6 +1577,18 @@ def _empty_dir(r: dict, min_chars: int, thin_chars: int) -> tuple[bool, str, lis
     return verdict in ("EMPTY", "PARTIAL"), verdict, [_empty_detail(r)]
 
 
+def _monolithic_dir(
+    r: dict, max_doc_chars: int
+) -> tuple[bool, str, list[str]]:
+    if is_monolithic(r, max_doc_chars):
+        return (
+            True,
+            "FLAG",
+            [f"max doc {r['max_doc_chars']:,} chars ({r['worst_doc']})"],
+        )
+    return False, "OK", [f"max doc {r['max_doc_chars']:,} chars"]
+
+
 def _ocr_dir(r: dict) -> tuple[bool, str, list[str]]:
     if not is_ocr_damaged(r):
         return False, "OK", []
@@ -1524,7 +1598,11 @@ def _ocr_dir(r: dict) -> tuple[bool, str, list[str]]:
 
 
 def run_directory(
-    directory: Path, selected: list[str], min_chars: int, thin_chars: int
+    directory: Path,
+    selected: list[str],
+    min_chars: int,
+    thin_chars: int,
+    max_doc_chars: int = DEFAULT_MAX_DOC_CHARS,
 ) -> int:
     if not directory.is_dir():
         print(f"ERROR: {directory} is not a directory.")
@@ -1559,6 +1637,10 @@ def run_directory(
             elif key == "emptytext":
                 problem, status, lines = _empty_dir(
                     analyze_emptytext(book), min_chars, thin_chars
+                )
+            elif key == "monolithic":
+                problem, status, lines = _monolithic_dir(
+                    analyze_monolithic(book), max_doc_chars
                 )
             else:
                 problem, status, lines = _ocr_dir(analyze_ocr(book))
@@ -1597,6 +1679,7 @@ def run_single(
     min_chars: int,
     thin_chars: int,
     tag: str | None = None,
+    max_doc_chars: int = DEFAULT_MAX_DOC_CHARS,
 ) -> int:
     """Audit one library book by id — cquarry's single-entity fetch.
 
@@ -1657,6 +1740,10 @@ def run_single(
             problem, status, lines = _empty_dir(
                 analyze_emptytext(book), min_chars, thin_chars
             )
+        elif key == "monolithic":
+            problem, status, lines = _monolithic_dir(
+                analyze_monolithic(book), max_doc_chars
+            )
         else:
             problem, status, lines = _ocr_dir(analyze_ocr(book))
         if problem:
@@ -1694,8 +1781,8 @@ def main() -> int:
     )
     parser.add_argument(
         "mode",
-        choices=("content", "pagenumbers", "emptytext", "ocr", "all"),
-        help="which audit to run ('all' runs the four in one decompression pass)",
+        choices=("content", "pagenumbers", "emptytext", "ocr", "monolithic", "all"),
+        help="which audit to run ('all' runs the analyzers in one decompression pass)",
     )
     parser.add_argument(
         "directory",
@@ -1713,6 +1800,12 @@ def main() -> int:
         type=int,
         default=DEFAULT_THIN_CHARS,
         help=f"emptytext THIN advisory threshold (default {DEFAULT_THIN_CHARS})",
+    )
+    parser.add_argument(
+        "--max-doc-chars",
+        type=int,
+        default=DEFAULT_MAX_DOC_CHARS,
+        help=f"monolithic FLAG threshold (default {DEFAULT_MAX_DOC_CHARS})",
     )
     parser.add_argument(
         "--id",
@@ -1737,13 +1830,28 @@ def main() -> int:
             print("ERROR: --id audits a library book; drop the directory argument.")
             return 2
         return run_single(
-            args.id, selected, args.min_chars, args.thin_chars, tag=args.tag
+            args.id,
+            selected,
+            args.min_chars,
+            args.thin_chars,
+            tag=args.tag,
+            max_doc_chars=args.max_doc_chars,
         )
     if args.directory:
         return run_directory(
-            Path(args.directory).expanduser(), selected, args.min_chars, args.thin_chars
+            Path(args.directory).expanduser(),
+            selected,
+            args.min_chars,
+            args.thin_chars,
+            max_doc_chars=args.max_doc_chars,
         )
-    return run_library(selected, args.min_chars, args.thin_chars, tag=args.tag)
+    return run_library(
+        selected,
+        args.min_chars,
+        args.thin_chars,
+        tag=args.tag,
+        max_doc_chars=args.max_doc_chars,
+    )
 
 
 if __name__ == "__main__":

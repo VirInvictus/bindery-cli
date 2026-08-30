@@ -18,6 +18,7 @@ from tqdm import tqdm
 from . import __version__
 from .audit import (
     ALL,
+    DEFAULT_MAX_DOC_CHARS,
     DEFAULT_MIN_CHARS,
     DEFAULT_THIN_CHARS,
     run_directory,
@@ -639,18 +640,30 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
 
 def run_audit_cmd(args: argparse.Namespace) -> int:
     selected = list(ALL) if args.mode == "all" else [args.mode]
+    max_doc = args.max_doc_chars
     if args.id is not None:
         if args.path:
             print("ERROR: --id audits a library book; drop the directory argument.")
             return 2
         return run_single(
-            args.id, selected, args.min_chars, args.thin_chars, tag=args.tag
+            args.id,
+            selected,
+            args.min_chars,
+            args.thin_chars,
+            tag=args.tag,
+            max_doc_chars=max_doc,
         )
     if args.path:
         return run_directory(
-            Path(args.path).expanduser(), selected, args.min_chars, args.thin_chars
+            Path(args.path).expanduser(),
+            selected,
+            args.min_chars,
+            args.thin_chars,
+            max_doc_chars=max_doc,
         )
-    return run_audit_library(selected, args.min_chars, args.thin_chars, tag=args.tag)
+    return run_audit_library(
+        selected, args.min_chars, args.thin_chars, tag=args.tag, max_doc_chars=max_doc
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -694,7 +707,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     audit.add_argument(
         "mode",
-        choices=("content", "pagenumbers", "emptytext", "ocr", "all"),
+        choices=("content", "pagenumbers", "emptytext", "ocr", "monolithic", "all"),
         help="which audit to run",
     )
     audit.add_argument(
@@ -713,6 +726,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_THIN_CHARS,
         help="emptytext THIN advisory threshold",
+    )
+    audit.add_argument(
+        "--max-doc-chars",
+        type=int,
+        default=DEFAULT_MAX_DOC_CHARS,
+        help="monolithic FLAG threshold (chars in ONE content document)",
     )
     audit.add_argument(
         "--tag",

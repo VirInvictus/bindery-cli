@@ -744,3 +744,130 @@ class TestRunSingle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMonolithic(unittest.TestCase):
+    """The monolithic analyzer: per-doc character volume, flagged at or above
+    --max-doc-chars. Motivating case: a ~30M-char dictionary EPUB that
+    epubcheck and every other analyzer passed but that would not render past
+    a point on real readers."""
+
+    CONTAINER = (
+        '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        '<rootfiles><rootfile full-path="content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+
+    def _epub(self, tmp, docs):
+        import zipfile as zf
+
+        p = pathlib.Path(tmp) / "t.epub"
+        manifest = "".join(
+            f'<item id="d{i}" href="d{i}.xhtml" media-type="application/xhtml+xml"/>'
+            for i in range(len(docs))
+        )
+        spine = "".join(f'<itemref idref="d{i}"/>' for i in range(len(docs)))
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            f"<manifest>{manifest}</manifest>"
+            f"<spine>{spine}</spine></package>"
+        )
+        with zf.ZipFile(p, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", self.CONTAINER)
+            z.writestr("content.opf", opf)
+            for i, body in enumerate(docs):
+                z.writestr(f"d{i}.xhtml", f"<html><body>{body}</body></html>")
+        return p
+
+    def test_single_oversized_doc_flags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            big = "<p>" + ("the quick brown fox jumped over the lazy dog. " * 10_000) + "</p>"
+            r = audit.scan_monolithic(self._epub(tmp, [big]))
+        self.assertGreaterEqual(r["max_doc_chars"], 400_000)
+        self.assertTrue(audit.is_monolithic(r, audit.DEFAULT_MAX_DOC_CHARS))
+        problem, status, lines = audit._monolithic_dir(r, audit.DEFAULT_MAX_DOC_CHARS)
+        self.assertTrue(problem)
+        self.assertEqual(status, "FLAG")
+        self.assertIn("chars", lines[0])
+        self.assertIn(r["worst_doc"], lines[0])
+
+    def test_many_small_docs_clean(self):
+        # 20 docs x 20k chars = 400k total, but no single doc over the floor.
+        with tempfile.TemporaryDirectory() as tmp:
+            docs = ["<p>" + ("steady ordinary prose in every chapter. " * 500) + "</p>"] * 20
+            r = audit.scan_monolithic(self._epub(tmp, docs))
+        self.assertLess(r["max_doc_chars"], 30_000)
+        self.assertFalse(audit.is_monolithic(r, audit.DEFAULT_MAX_DOC_CHARS))
+
+    def test_threshold_override_respected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docs = ["<p>" + ("steady ordinary prose in every chapter. " * 500) + "</p>"] * 20
+            r = audit.scan_monolithic(self._epub(tmp, docs))
+        self.assertTrue(audit.is_monolithic(r, 10_000))
+        problem, status, _ = audit._monolithic_dir(r, 10_000)
+        self.assertTrue(problem)
+        self.assertEqual(status, "FLAG")
+
+    def test_advisory_silence_under_threshold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docs = ["<p>" + ("steady ordinary prose in every chapter. " * 500) + "</p>"] * 20
+            r = audit.scan_monolithic(self._epub(tmp, docs))
+        problem, status, _ = audit._monolithic_dir(r, audit.DEFAULT_MAX_DOC_CHARS)
+        self.assertFalse(problem)
+        self.assertEqual(status, "OK")
+
+
+class TestRunSingleMonolithicTag(unittest.TestCase):
+    """--id mode reports the monolithic verdict the same way directory mode
+    does, and --tag applies only to flagged books (phase 7 acceptance)."""
+
+    CONTAINER = TestRunSingle.CONTAINER
+    OPF = TestRunSingle.OPF
+
+    @contextlib.contextmanager
+    def _cwd(self, path):
+        old = os.getcwd()
+        os.chdir(path)
+        try:
+            yield
+        finally:
+            os.chdir(old)
+
+    def _tags(self, root):
+        import sqlite3
+
+        conn = sqlite3.connect(root / "metadata.db")
+        try:
+            return {
+                t
+                for (t,) in conn.execute(
+                    "SELECT t.name FROM books_tags_link bt JOIN tags t ON t.id = bt.tag"
+                )
+            }
+        finally:
+            conn.close()
+
+    def test_flagged_book_is_tagged_under_override(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = TestRunSingle._library(self, pathlib.Path(td))
+            with self._cwd(root):
+                rc = audit.run_single(
+                    1, ["monolithic"], 2000, 20000, tag="Flagged", max_doc_chars=1000
+                )
+                tags = self._tags(root)
+        self.assertEqual(rc, 1)
+        self.assertIn("Flagged", tags)
+
+    def test_unflagged_book_is_untagged(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = TestRunSingle._library(self, pathlib.Path(td))
+            with self._cwd(root):
+                rc = audit.run_single(1, ["monolithic"], 2000, 20000, tag="Flagged")
+                tags = self._tags(root)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("Flagged", tags)
+
+
+if __name__ == "__main__":
+    unittest.main()

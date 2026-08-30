@@ -233,10 +233,12 @@ Optionally, Bindery can replace the format natively inside Calibre using `calibr
 
 ## Audit subcommand (read-only)
 
-`bindery audit {content,pagenumbers,emptytext,ocr,all} [PATH] [--tag TAG]` (v0.15.0, `audit.py`;
-`--tag` since v0.18.0) inspects EPUB body text for flaws epubcheck cannot see: non-English script
-blocks, baked-in page-number layers (sliding-window density heuristics), empty or thin books, and
-systemic OCR damage. It operates on a Calibre library tree or loose directories and shares no code
+`bindery audit {content,pagenumbers,emptytext,ocr,monolithic,all} [PATH] [--max-doc-chars N]
+[--tag TAG]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0) inspects
+EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in page-number
+layers (sliding-window density heuristics), empty or thin books, systemic OCR damage, and
+single oversized content documents (one spine doc at or above 300k characters — readers refuse
+to render them even though the book totals normally). It operates on a Calibre library tree or loose directories and shares no code
 path with replacement; its `pagenumbers` findings bridge naturally into
 `bindery repair --strip-pagination`.
 

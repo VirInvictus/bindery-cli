@@ -1,5 +1,26 @@
 # Bindery Patch Notes
 
+## v0.21.0 (2026-08-30)
+
+### Phase 7: the monolithic analyzer
+
+- **`bindery audit monolithic`** joins the analyzer set (and `all`). One spine
+  document at or above 300,000 characters flags — a book epubcheck and every
+  other analyzer pass that still will not render on real readers (the
+  motivating case: a ~30M-char dictionary EPUB, invisible to emptytext because
+  it measures whole-book volume and to epubcheck because it never sees renderer
+  memory limits). `--max-doc-chars N` moves the floor; the report carries
+  `max_doc_chars` plus the offending document's href. Under-threshold books
+  stay silent, like THIN. Reuses the shared visible-texts cache — no second
+  decompression pass.
+- **Wiring**: `--id`, `--tag`, directory and library modes all compose
+  unchanged; flagged books tag like every other analyzer's. Phase 7's
+  version-pin half shipped in v0.19.2.
+- **Docs**: spec's audit section, README, and the phase-1 skill's
+  "Chars per content document" step (no tool; run inline → `bindery audit
+  monolithic`).
+
+## v0.20.0 (2026-08-30)
 ## v0.20.0 (2026-08-30)
 
 ### cquarry 1.8 adoption (Phase 9 sync)
