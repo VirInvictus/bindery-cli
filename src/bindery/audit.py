@@ -902,6 +902,7 @@ def scan_emptytext(path: Path) -> dict:
 # Analyzer: monolithic (one spine doc that is far too large)
 # ----------------------------------------------------------------------------
 
+
 def analyze_monolithic(book: Book) -> dict:
     """Find the largest single content document, in characters.
 
@@ -1327,10 +1328,14 @@ def _ocr_sections(found) -> int:
 def _monolithic_sections(hits) -> int:
     if hits:
         print(f"{RED}{BOLD}MONOLITHIC DOCUMENTS ({len(hits)}){RESET}")
-        for book_id, title, tag, r in sorted(hits, key=lambda x: -x[3]["max_doc_chars"]):
+        for book_id, title, tag, r in sorted(
+            hits, key=lambda x: -x[3]["max_doc_chars"]
+        ):
             print(f"  {RED}#{book_id}{RESET} [{tag}] {title}")
-            print(f"    max doc {r['max_doc_chars']:,} chars ({r['worst_doc']});"
-                  f" spine {r['spine_len']}")
+            print(
+                f"    max doc {r['max_doc_chars']:,} chars ({r['worst_doc']});"
+                f" spine {r['spine_len']}"
+            )
         print()
         print(
             f"{RED}{BOLD}monolithic FOUND{RESET}: {len(hits)} file(s) need review "
@@ -1577,9 +1582,7 @@ def _empty_dir(r: dict, min_chars: int, thin_chars: int) -> tuple[bool, str, lis
     return verdict in ("EMPTY", "PARTIAL"), verdict, [_empty_detail(r)]
 
 
-def _monolithic_dir(
-    r: dict, max_doc_chars: int
-) -> tuple[bool, str, list[str]]:
+def _monolithic_dir(r: dict, max_doc_chars: int) -> tuple[bool, str, list[str]]:
     if is_monolithic(r, max_doc_chars):
         return (
             True,

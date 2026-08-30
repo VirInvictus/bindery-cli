@@ -782,7 +782,11 @@ class TestMonolithic(unittest.TestCase):
 
     def test_single_oversized_doc_flags(self):
         with tempfile.TemporaryDirectory() as tmp:
-            big = "<p>" + ("the quick brown fox jumped over the lazy dog. " * 10_000) + "</p>"
+            big = (
+                "<p>"
+                + ("the quick brown fox jumped over the lazy dog. " * 10_000)
+                + "</p>"
+            )
             r = audit.scan_monolithic(self._epub(tmp, [big]))
         self.assertGreaterEqual(r["max_doc_chars"], 400_000)
         self.assertTrue(audit.is_monolithic(r, audit.DEFAULT_MAX_DOC_CHARS))
@@ -795,14 +799,18 @@ class TestMonolithic(unittest.TestCase):
     def test_many_small_docs_clean(self):
         # 20 docs x 20k chars = 400k total, but no single doc over the floor.
         with tempfile.TemporaryDirectory() as tmp:
-            docs = ["<p>" + ("steady ordinary prose in every chapter. " * 500) + "</p>"] * 20
+            docs = [
+                "<p>" + ("steady ordinary prose in every chapter. " * 500) + "</p>"
+            ] * 20
             r = audit.scan_monolithic(self._epub(tmp, docs))
         self.assertLess(r["max_doc_chars"], 30_000)
         self.assertFalse(audit.is_monolithic(r, audit.DEFAULT_MAX_DOC_CHARS))
 
     def test_threshold_override_respected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            docs = ["<p>" + ("steady ordinary prose in every chapter. " * 500) + "</p>"] * 20
+            docs = [
+                "<p>" + ("steady ordinary prose in every chapter. " * 500) + "</p>"
+            ] * 20
             r = audit.scan_monolithic(self._epub(tmp, docs))
         self.assertTrue(audit.is_monolithic(r, 10_000))
         problem, status, _ = audit._monolithic_dir(r, 10_000)
@@ -811,7 +819,9 @@ class TestMonolithic(unittest.TestCase):
 
     def test_advisory_silence_under_threshold(self):
         with tempfile.TemporaryDirectory() as tmp:
-            docs = ["<p>" + ("steady ordinary prose in every chapter. " * 500) + "</p>"] * 20
+            docs = [
+                "<p>" + ("steady ordinary prose in every chapter. " * 500) + "</p>"
+            ] * 20
             r = audit.scan_monolithic(self._epub(tmp, docs))
         problem, status, _ = audit._monolithic_dir(r, audit.DEFAULT_MAX_DOC_CHARS)
         self.assertFalse(problem)
