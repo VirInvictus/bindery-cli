@@ -529,3 +529,4 @@ hand-rolled zipfile sweep.
 ### Convert `<figure>` / HTML5 elements in EPUB2 (RSC-005)
 - **Target**: `The Cemetery of Untold Stories` throws 14 `RSC-005` errors for `element "figure" not allowed anywhere`.
 - **Implementation**: Write a repair flag that detects EPUB 2 documents containing EPUB 3/HTML5 `<figure>` or `<figcaption>` elements and cleanly downgrades them to `<div>` and `<p>` tags with classes.
+- **Target**: `Julie Chan Is Dead` throws `RSC-005` errors for `element "section" not allowed anywhere`. Same repair pattern: downgrade `<section>` to `<div>` with classes.
