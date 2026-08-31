@@ -211,6 +211,26 @@ def _counts_dict(r: CheckResult | None) -> dict | None:
     )
 
 
+def _unreadable_reason(e: Exception) -> str:
+    """Split the sweep's `unreadable` bucket by disease.
+
+    The bucket used to lump corruption together with not-a-zip/truncated/
+    encrypted; the sub-reason names the disease so a CRC-damaged download
+    (re-source) is distinguishable from a DRM'd or truncated one without
+    leaving the sweep. zipfile names the broken entry in its CRC message.
+    """
+    msg = str(e)
+    if isinstance(e, RuntimeError) and "encrypted" in msg:
+        return "encrypted"
+    if "CRC" in msg:
+        return "corrupt_entry"
+    if isinstance(e, EOFError) or "truncated" in msg.lower():
+        return "truncated"
+    if isinstance(e, zipfile.BadZipFile) and "not a zip file" in msg:
+        return "not_a_zip"
+    return "unreadable"
+
+
 def run_library(args) -> int:
     root = Path(args.path).expanduser()
     # cquarry-backed id resolution for --install-to-calibre: one lazy map
@@ -294,6 +314,7 @@ def run_library(args) -> int:
 
     accepted = applied = rejected = equal = nochange = unvalidated = partials = 0
     errors = unreadable = processed = 0
+    reasons: dict[str, int] = {}
     still_fatal = []
     records: list[Outcome] = []  # every processed book, for --json / --manual-list
     applied_paths: set[Path] = set()
@@ -338,10 +359,14 @@ def run_library(args) -> int:
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
                 # One corrupt (non-zip, truncated, encrypted) book must not abort a
-                # multi-hour sweep; report it and keep going.
+                # multi-hour sweep; report it under its sub-reason and keep going.
+                reason = _unreadable_reason(e)
                 unreadable += 1
-                records.append(Outcome(epub, "unreadable", None, None, str(e)))
-                tqdm.write(f"  ERROR   {rel}\n            unreadable: {e}")
+                reasons[reason] = reasons.get(reason, 0) + 1
+                records.append(
+                    Outcome(epub, "unreadable", None, None, f"{reason}: {e}")
+                )
+                tqdm.write(f"  ERROR   {rel}\n            unreadable ({reason}): {e}")
                 continue
             records.append(o)
             if o.status == "nochange":
@@ -413,6 +438,8 @@ def run_library(args) -> int:
     print(f"unvalidated:     {unvalidated}")
     print(f"epubcheck errors:{errors}")
     print(f"unreadable:      {unreadable}")
+    for reason in sorted(reasons):
+        print(f"  {reason}:      {reasons[reason]}")
     print(f"REJECTED:        {rejected}")
     if still_fatal:
         print(f"\nimproved but STILL FATAL ({len(still_fatal)}) -- manual follow-up:")

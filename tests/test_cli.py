@@ -15,6 +15,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from bindery import cli
 from bindery.cli import _load_audit, build_parser, main, process_book
 from bindery.epub import RepairReport
 from bindery.validate import CheckResult
@@ -465,3 +466,30 @@ class TestAuditIdWiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUnreadableReasons(unittest.TestCase):
+    """The sweep's `unreadable` bucket splits by disease: a CRC-broken
+    download (re-source) must be distinguishable from a DRM'd or truncated
+    one without leaving the sweep, and zipfile's message already names the
+    broken entry."""
+
+    def test_crc_damage_is_corrupt_entry(self):
+        e = zipfile.BadZipFile("Bad CRC-32 for file 'ch01.xhtml'")
+        self.assertEqual(cli._unreadable_reason(e), "corrupt_entry")
+
+    def test_not_a_zip(self):
+        e = zipfile.BadZipFile("File is not a zip file")
+        self.assertEqual(cli._unreadable_reason(e), "not_a_zip")
+
+    def test_truncated(self):
+        self.assertEqual(
+            cli._unreadable_reason(zipfile.BadZipFile("Truncated file")), "truncated"
+        )
+        self.assertEqual(
+            cli._unreadable_reason(EOFError("ran out of input")), "truncated"
+        )
+
+    def test_encrypted(self):
+        e = RuntimeError("File ch01.xhtml is encrypted, password required")
+        self.assertEqual(cli._unreadable_reason(e), "encrypted")

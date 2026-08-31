@@ -238,7 +238,10 @@ Optionally, Bindery can replace the format natively inside Calibre using `calibr
 EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in page-number
 layers (sliding-window density heuristics), empty or thin books, systemic OCR damage, and
 single oversized content documents (one spine doc at or above 300k characters — readers refuse
-to render them even though the book totals normally). It operates on a Calibre library tree or loose directories and shares no code
+to render them even though the book totals normally), and damaged archives: every archive entry
+is fully read (CRC + real decompression) in the audit's single pass, and a corrupt entry is
+reported as its own CORRUPT verdict — never mislabeled EMPTY, with emptytext stepping aside for
+that book (v0.22.0). It operates on a Calibre library tree or loose directories and shares no code
 path with replacement; its `pagenumbers` findings bridge naturally into
 `bindery repair --strip-pagination`.
 

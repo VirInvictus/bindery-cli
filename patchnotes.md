@@ -1,5 +1,30 @@
 # Bindery Patch Notes
 
+## v0.22.0 (2026-08-30)
+
+### Phase 9: archive-integrity reporting in audit
+
+- **`bindery audit` names the corruption.** The audit's single decompression
+  pass now fully reads EVERY archive entry (CRC + real decompression, not
+  just the central directory's word) before the text analysis runs, and a
+  corrupt entry is reported as its own CORRUPT verdict — `corrupt:N (first:
+  <entry>)` — in every mode, tagged like any other finding. A CRC-broken
+  entry decompresses to nothing, and emptytext calling that EMPTY was the
+  right alarm for the wrong disease: the re-source advice that follows from
+  EMPTY ("content-less stub") mislabels a file whose problem is a damaged
+  archive, not missing content. Emptytext now steps aside for corrupt books
+  (classify returns CORRUPT; its buckets exclude them).
+- **`library --sweep`'s `unreadable` bucket splits by disease**:
+  `not_a_zip` / `truncated` / `encrypted` / `corrupt_entry`, so a CRC-damaged
+  download is distinguishable from a DRM'd or truncated one without leaving
+  the sweep (zipfile's message already names the broken entry; the summary
+  prints per-reason counts).
+- **The phase-1 skill's hand-rolled `zipfile` corruption sweep is retired** —
+  §2 now names the built-in verdict. `test_bad_crc_entry_reads_empty` flipped
+  to assert the corruption verdict instead of pinning the old empty-text
+  reading.
+
+## v0.21.0 (2026-08-30)
 ## v0.21.0 (2026-08-30)
 
 ### Phase 7: the monolithic analyzer

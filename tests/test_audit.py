@@ -628,6 +628,66 @@ class TestLoadBookCorruptEntry(unittest.TestCase):
         self.assertEqual(book.spine, ["text.xhtml"])
         self.assertEqual(book.docs["text.xhtml"], "")
 
+    def test_bad_crc_is_reported_as_corrupt_not_empty(self):
+        # Phase 9 flip: the old pin asserted only the empty-text reading. The
+        # corruption is now named — its own verdict, never an EMPTY mislabel
+        # that would send a damaged archive down the content-less-stub path.
+        import struct
+        import zipfile as zf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            with zf.ZipFile(p, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", self.CONTAINER)
+                z.writestr("content.opf", self.OPF)
+                z.writestr("text.xhtml", "<html><body><p>real prose</p></body></html>")
+            with zf.ZipFile(p) as z:
+                offset = z.getinfo("text.xhtml").header_offset
+            with open(p, "r+b") as f:
+                f.seek(offset + 26)
+                nlen, elen = struct.unpack("<HH", f.read(4))
+                f.seek(offset + 30 + nlen + elen + 10)
+                byte = f.read(1)
+                f.seek(-1, os.SEEK_CUR)
+                f.write(bytes([byte[0] ^ 0xFF]))
+            book = audit.load_book(p)
+            r = audit.analyze_corrupt(book)
+        self.assertEqual(r["n"], 1)
+        self.assertEqual(r["first"], "text.xhtml")
+        problem, status, lines = audit._corrupt_verdict(r)
+        self.assertTrue(problem)
+        self.assertEqual(status, "CORRUPT")
+        self.assertIn("corrupt:1", lines[0])
+
+    def test_corrupt_book_skips_the_empty_verdict(self):
+        # The CRC break lands in the ONLY spine doc: the book measures zero
+        # chars, but emptytext must not call it EMPTY — the archive verdict
+        # already told the truth.
+        import struct
+        import zipfile as zf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            with zf.ZipFile(p, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", self.CONTAINER)
+                z.writestr("content.opf", self.OPF)
+                z.writestr("text.xhtml", "<html><body><p>real prose</p></body></html>")
+            with zf.ZipFile(p) as z:
+                offset = z.getinfo("text.xhtml").header_offset
+            with open(p, "r+b") as f:
+                f.seek(offset + 26)
+                nlen, elen = struct.unpack("<HH", f.read(4))
+                f.seek(offset + 30 + nlen + elen + 10)
+                byte = f.read(1)
+                f.seek(-1, os.SEEK_CUR)
+                f.write(bytes([byte[0] ^ 0xFF]))
+            book = audit.load_book(p)
+            r = audit.analyze_emptytext(book)
+            verdict = audit.classify(r, 2000, 20000)
+        self.assertEqual(verdict, "CORRUPT")
+
 
 class TestRunSingle(unittest.TestCase):
     """audit --id: one book, fetched via cquarry's single-entity get_book —

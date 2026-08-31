@@ -109,14 +109,15 @@ class Book:
     """A decompressed EPUB: spine documents read once and shared by every
     analyzer. The whole point of the single-pass design lives here."""
 
-    __slots__ = ("_visible", "docs", "lang", "names", "nav", "spine")
+    __slots__ = ("_visible", "corrupt", "docs", "lang", "names", "nav", "spine")
 
-    def __init__(self, spine, nav, lang, docs, names):
+    def __init__(self, spine, nav, lang, docs, names, corrupt):
         self.spine = spine  # resolved, in-order, in-archive spine doc paths
         self.nav = nav  # the nav document path, or None
         self.lang = lang  # declared dc:language (lowercased), or ""
         self.docs = docs  # {path: decoded html} for every spine doc
         self.names = names  # full archive namelist (for image / marker counts)
+        self.corrupt = corrupt  # entries whose full read failed (CRC/truncation)
         self._visible: list[str] | None = None
 
     def visible_texts(self) -> list[str]:
@@ -132,19 +133,40 @@ class Book:
 
 
 def load_book(path: Path) -> Book:
-    """Open an EPUB once: resolve spine + nav + declared language, and read
-    every spine document's HTML. Decoded utf-8 with replacement (never raises);
-    a corrupted archive entry (bad CRC, truncated stream) reads as empty text
-    rather than failing the whole book."""
+    """Open an EPUB once: fully read EVERY archive entry (the CRC sweep the
+    phase-1 skill used to do by hand), resolve spine + nav + declared
+    language, and read every spine document's HTML. Decoded utf-8 with
+    replacement (never raises); a corrupted archive entry (bad CRC, truncated
+    stream) is recorded in `Book.corrupt` and reads as empty text — the
+    corruption verdict, not emptytext, owns that story."""
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         nameset = set(names)
-        container = ET.fromstring(z.read("META-INF/container.xml"))
+        corrupt: list[str] = []
+        raw: dict[str, bytes] = {}
+
+        def _read(name: str) -> bytes | None:
+            """Fully read one entry (CRC + real decompression, not just the
+            central directory's word). A corrupt entry is recorded and its
+            content treated as absent — never silently swallowed."""
+            if name in raw:
+                return raw[name]
+            if name in corrupt:
+                return None
+            try:
+                blob = z.read(name)
+            except Exception:
+                corrupt.append(name)
+                return None
+            raw[name] = blob
+            return blob
+
+        container = ET.fromstring(_read("META-INF/container.xml"))
         rootfile = container.find(".//c:rootfile", CONTAINER_NS)
         opf_path = rootfile.get("full-path") if rootfile is not None else None
         if not opf_path:
             raise ValueError("container.xml has no rootfile")
-        opf = ET.fromstring(z.read(opf_path))
+        opf = ET.fromstring(_read(opf_path))
         base = os.path.dirname(opf_path)
 
         manifest: dict[str, str] = {}
@@ -181,15 +203,19 @@ def load_book(path: Path) -> Book:
                 spine.append(full(href))
         nav = full(nav_href) if nav_href else None
 
+        # The single full pass: every archive entry is fully read here (the
+        # CRC sweep), so the text analysis below runs on what actually
+        # decompressed. Corrupt entries are named, not averaged away.
+        for name in names:
+            if name.endswith("/"):
+                continue
+            _read(name)
+
         docs: dict[str, str] = {}
         for doc in spine:
-            try:
-                raw = z.read(doc)
-            except Exception:
-                docs[doc] = ""
-                continue
-            docs[doc] = raw.decode("utf-8", "replace")
-    return Book(spine, nav, lang, docs, names)
+            blob = raw.get(doc)
+            docs[doc] = blob.decode("utf-8", "replace") if blob is not None else ""
+    return Book(spine, nav, lang, docs, names, corrupt)
 
 
 # ----------------------------------------------------------------------------
@@ -867,10 +893,16 @@ def analyze_emptytext(book: Book) -> dict:
         "placeholder": bool(sig or repeated),
         "placeholder_sig": sig,
         "stub_docs": stub_n,
+        "corrupt_n": len(book.corrupt),
+        "corrupt_first": book.corrupt[0] if book.corrupt else "",
     }
 
 
 def classify(r: dict, min_chars: int, thin_chars: int) -> str:
+    # A corrupt archive entry reads as empty text; reporting EMPTY here would
+    # be the right alarm for the wrong disease. The corruption verdict owns it.
+    if r.get("corrupt_n"):
+        return "CORRUPT"
     if r["chars"] <= min_chars:
         return "EMPTY"
     if r.get("placeholder"):
@@ -882,6 +914,8 @@ def classify(r: dict, min_chars: int, thin_chars: int) -> str:
 
 def _empty_detail(r: dict) -> str:
     bits = [f"{r['chars']} chars", f"spine {r['spine_len']}", f"{r['images']} images"]
+    if r.get("corrupt_n"):
+        bits.append(f"corrupt:{r['corrupt_n']} (first: {r['corrupt_first']})")
     if r["bookmate"]:
         bits.append("bookmate")
     if r.get("placeholder"):
@@ -929,6 +963,30 @@ def is_monolithic(r: dict, max_doc_chars: int) -> bool:
 
 def scan_monolithic(path: Path) -> dict:
     return analyze_monolithic(load_book(path))
+
+
+# ----------------------------------------------------------------------------
+# Analyzer: archive corruption (always on; owns the "empty body" story)
+# ----------------------------------------------------------------------------
+
+
+def analyze_corrupt(book: Book) -> dict:
+    """Archive entries whose full read failed (bad CRC, truncated stream).
+
+    Reported as its own verdict in every mode — a corrupt entry decompresses
+    to nothing, and letting emptytext call that EMPTY mislabels a damaged
+    archive as a content-less stub (the phase-1 re-source advice that follows
+    from EMPTY would then aim at the wrong disease).
+    """
+    return {"n": len(book.corrupt), "first": book.corrupt[0] if book.corrupt else ""}
+
+
+def _corrupt_verdict(r: dict) -> tuple[bool, str, list[str]]:
+    return (
+        True,
+        "CORRUPT",
+        [f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source"],
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -1346,6 +1404,22 @@ def _monolithic_sections(hits) -> int:
     return 0
 
 
+def _corrupt_sections(hits) -> int:
+    if hits:
+        print(f"{RED}{BOLD}CORRUPT ARCHIVES ({len(hits)}){RESET}")
+        for book_id, title, tag, n, first in sorted(hits):
+            print(f"  {RED}#{book_id}{RESET} [{tag}] {title}")
+            print(f"    corrupt:{n} (first: {first}) — damaged archive; re-source")
+        print()
+        print(
+            f"{RED}{BOLD}archive FOUND{RESET}: {len(hits)} file(s) need re-sourcing "
+            f"(a damaged archive is not a content decision)."
+        )
+        return 1
+    print(f"{GREEN}{BOLD}archive CLEAN{RESET}: every entry fully readable.")
+    return 0
+
+
 # ----------------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------------
@@ -1418,6 +1492,7 @@ def run_library(
     thin_hits: list[tuple] = []
     ocr_found: list[tuple] = []
     mono_hits: list[tuple] = []
+    corrupt_hits: list[tuple] = []
     errors: list[tuple] = []
     scanned = 0
 
@@ -1430,6 +1505,11 @@ def run_library(
             errors.append((book_id, title, tag, f"{type(e).__name__}: {e}"))
             continue
         scanned += 1
+        corrupt_r = analyze_corrupt(book)
+        if corrupt_r["n"]:
+            corrupt_hits.append(
+                (book_id, title, tag, corrupt_r["n"], corrupt_r["first"])
+            )
 
         if "content" in selected:
             r = analyze_content(book)
@@ -1455,7 +1535,7 @@ def run_library(
             if is_defective(r):
                 pagenum_found.append((book_id, title, tag, r))
 
-        if "emptytext" in selected:
+        if "emptytext" in selected and not corrupt_r["n"]:
             r = analyze_emptytext(book)
             verdict = classify(r, min_chars, thin_chars)
             if verdict == "EMPTY":
@@ -1489,6 +1569,8 @@ def run_library(
             rc |= _pagenum_sections(pagenum_found)
         elif key == "emptytext":
             rc |= _empty_sections(empty_hits, partial_hits, thin_hits)
+        elif key == "archive":
+            rc |= _corrupt_sections(corrupt_hits)
         elif key == "monolithic":
             rc |= _monolithic_sections(mono_hits)
         else:
@@ -1517,6 +1599,7 @@ def run_library(
                 ],  # THIN is advisory and stays untagged
                 "ocr": [h[0] for h in ocr_found],
                 "monolithic": [h[0] for h in mono_hits],
+                "archive": [h[0] for h in corrupt_hits],
             },
         )
     return rc
@@ -1579,6 +1662,8 @@ def _empty_dir(r: dict, min_chars: int, thin_chars: int) -> tuple[bool, str, lis
     verdict = classify(r, min_chars, thin_chars)
     if verdict == "OK":
         return False, "OK", []
+    if verdict == "CORRUPT":
+        return True, "CORRUPT", [_empty_detail(r)]
     return verdict in ("EMPTY", "PARTIAL"), verdict, [_empty_detail(r)]
 
 
@@ -1630,9 +1715,12 @@ def run_directory(
             continue
 
         verdicts = []
+        corrupt_r = analyze_corrupt(book)
         for key in ALL:
             if key not in selected:
                 continue
+            if key == "emptytext" and corrupt_r["n"]:
+                continue  # the archive verdict owns this book's body-text story
             if key == "content":
                 problem, status, lines = _content_dir(analyze_content(book))
             elif key == "pagenumbers":
@@ -1650,6 +1738,11 @@ def run_directory(
             if problem:
                 problems += 1
             verdicts.append((key, problem, status, lines))
+
+        if corrupt_r["n"]:
+            problem, status, lines = _corrupt_verdict(corrupt_r)
+            problems += 1
+            verdicts.append(("archive", problem, status, lines))
 
         if multi:
             ui.tqdm.write(f"  {path.name}")
@@ -1732,8 +1825,13 @@ def run_single(
     problems = 0
     multi = len(selected) > 1
     verdicts = []
+    corrupt_r = analyze_corrupt(book)
     for key in ALL:
         if key not in selected:
+            continue
+        if key == "emptytext" and corrupt_r["n"]:
+            # Corruption owns the body-text story for this book; reporting
+            # EMPTY here would be the wrong disease.
             continue
         if key == "content":
             problem, status, lines = _content_dir(analyze_content(book))
@@ -1752,6 +1850,11 @@ def run_single(
         if problem:
             problems += 1
         verdicts.append((key, problem, status, lines))
+
+    if corrupt_r["n"]:
+        problem, status, lines = _corrupt_verdict(corrupt_r)
+        problems += 1
+        verdicts.append(("archive", problem, status, lines))
 
     for key, problem, status, lines in verdicts:
         if multi:

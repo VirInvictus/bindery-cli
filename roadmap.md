@@ -486,21 +486,21 @@ not-a-zip/truncated/encrypted and does not name the broken entry. Same shape as
 Phase 7: a check every session re-implements inline is a check a session can
 silently skip.*
 
-- [ ] **`audit` integrity check**: inside the existing single decompression
+- [x] **`audit` integrity check**: inside the existing single decompression
       pass, fully read every entry (CRC + decompression via a real read, not
       just the central directory's word) before the text analysis runs. A
       corrupt entry is reported as its own verdict (`corrupt:N` plus the first
       bad entry's name on the book's line), NOT fed to `emptytext` as empty
       body text. A corrupt book's re-source outcome is the same, but the batch
       report must name the right disease.
-- [ ] **`library` sweep sub-reasons**: split the `unreadable` bucket into
+- [x] **`library` sweep sub-reasons**: split the `unreadable` bucket into
       `not_a_zip` / `truncated` / `encrypted` / `corrupt_entry` so the two
       modes report consistently and a corrupt book is distinguishable from a
       DRM'd or truncated one without leaving audit mode.
-- [ ] **Tests** in the `tests/test_audit.py` synthetic-EPUB pattern: a
+- [x] **Tests** in the `tests/test_audit.py` synthetic-EPUB pattern: a
       flipped-CRC entry (reported CORRUPT, not EMPTY), a truncated archive, an
       encrypted entry, and a clean book (silent).
-- [ ] **Skill sync**: phase-1 § 2's inline "Corruption sweep FIRST" step names
+- [x] **Skill sync**: phase-1 § 2's inline "Corruption sweep FIRST" step names
       the analyzer once shipped and retires the hand-rolled sweep, exactly as
       Phase 7 retires the chars-per-document script. Floor, not ceiling: any
       behaviour-affecting discovery made while building gets documented in the
@@ -514,3 +514,11 @@ stays with `qpdf --check` / `djvused -e n` per the skill).
 
 - [ ] **Strip illegal `page-map` attributes from `content.opf`.** Older conversions (like HarperCollins / Anna's Archive files) include `<spine ... page-map="page-map">`, which fails epubcheck because the attribute is not standard.
 - [ ] **Inject a fallback `class` attribute into `<pageList>` in `toc.ncx`.** Older conversions often leave `<pageList>` without a class, causing RSC-005 `missing required attribute "class"` errors. Adding `class="pages"` to classless elements cleanly bypasses this without regression.
+
+### v0.22.0 ship note (2026-08-30)
+
+All four Phase 9 boxes shipped in one release: the audit's full-entry CRC
+sweep with the CORRUPT verdict (never mislabeled EMPTY; emptytext steps
+aside), the sweep's sub-reason split, the flipped CRC test plus
+`_unreadable_reason` unit coverage, and the phase-1 §2 sync retiring the
+hand-rolled zipfile sweep.
