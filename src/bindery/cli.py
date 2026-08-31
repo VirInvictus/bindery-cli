@@ -231,6 +231,47 @@ def _unreadable_reason(e: Exception) -> str:
     return "unreadable"
 
 
+def _epubs_for_ids(root: Path, id_csv: str) -> list[Path] | None:
+    """Resolve comma-separated Calibre book ids to EPUB paths via cquarry's
+    get_format_path (the audit --id contract, sweep-shaped). Unresolvable ids
+    warn and skip: one wrong id must not sink the batch."""
+    from cquarry.db import CalibreDB
+
+    db_path = root / "metadata.db"
+    if not db_path.is_file():
+        print("error: --id needs metadata.db in the library root", file=sys.stderr)
+        return None
+    try:
+        db = CalibreDB(str(db_path))
+    except Exception as e:
+        print(f"error: cannot open {db_path}: {e}", file=sys.stderr)
+        return None
+    epubs: list[Path] = []
+    seen: set[int] = set()
+    try:
+        for raw in id_csv.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                bid = int(raw)
+            except ValueError:
+                print(
+                    f"warning: --id {raw!r} is not a number; skipped", file=sys.stderr
+                )
+                continue
+            if bid in seen:
+                continue
+            seen.add(bid)
+            try:
+                epubs.append(Path(db.get_format_path(bid, "EPUB", verify=False)))
+            except (ValueError, FileNotFoundError) as e:
+                print(f"warning: book #{bid}: {e}; skipped", file=sys.stderr)
+    finally:
+        db.close()
+    return epubs
+
+
 def run_library(args) -> int:
     root = Path(args.path).expanduser()
     # cquarry-backed id resolution for --install-to-calibre: one lazy map
@@ -246,6 +287,9 @@ def run_library(args) -> int:
         return 1
     if args.sweep and args.audit:
         print("error: --sweep and --audit are mutually exclusive", file=sys.stderr)
+        return 1
+    if getattr(args, "id", "") and getattr(args, "audit", None):
+        print("error: --id and --audit are mutually exclusive", file=sys.stderr)
         return 1
     if args.sweep and args.no_validate:
         print(
@@ -287,9 +331,15 @@ def run_library(args) -> int:
             file=sys.stderr,
         )
 
+    if args.id:
+        scoped = _epubs_for_ids(root, args.id)
+        if scoped is None:
+            return 1
+        all_epubs = scoped
+    else:
+        all_epubs = list(iter_epubs(root))
     audit_hits: list[Path] = []
     checks: dict[Path, CheckResult] = {}
-    all_epubs = list(iter_epubs(root))
     if args.sweep:
         iterator = (
             all_epubs if args.quiet else tqdm(all_epubs, desc="Sweeping", unit="book")
@@ -672,14 +722,26 @@ def run_audit_cmd(args: argparse.Namespace) -> int:
         if args.path:
             print("ERROR: --id audits a library book; drop the directory argument.")
             return 2
-        return run_single(
-            args.id,
-            selected,
-            args.min_chars,
-            args.thin_chars,
-            tag=args.tag,
-            max_doc_chars=max_doc,
-        )
+        rc = 0
+        for raw in str(args.id).split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                bid = int(raw)
+            except ValueError:
+                print(f"ERROR: --id {raw!r} is not a book id.", file=sys.stderr)
+                rc |= 2
+                continue
+            rc |= run_single(
+                bid,
+                selected,
+                args.min_chars,
+                args.thin_chars,
+                tag=args.tag,
+                max_doc_chars=max_doc,
+            )
+        return rc
     if args.path:
         return run_directory(
             Path(args.path).expanduser(),
@@ -770,11 +832,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     audit.add_argument(
         "--id",
-        type=int,
-        metavar="BOOK_ID",
+        metavar="BOOK_IDS",
         default=None,
-        help="audit a single library book by Calibre id (fetched via cquarry's "
-        "single-entity get_book; cannot be combined with a directory)",
+        help="audit library book(s) by Calibre id — one id or a comma-separated "
+        "list (fetched via cquarry's single-entity get_book; cannot be "
+        "combined with a directory)",
     )
     audit.set_defaults(func=run_audit_cmd)
 
@@ -815,6 +877,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--install-to-calibre",
         action="store_true",
         help="with --apply, use calibredb to natively replace the format in the Calibre database instead of filesystem replace",
+    )
+    lib.add_argument(
+        "--id",
+        default="",
+        metavar="IDS",
+        help="comma-separated Calibre book ids to scope the sweep to "
+        "(resolved via cquarry's get_format_path; mutually exclusive with --audit)",
     )
     lib.add_argument("--backup", help="directory to mirror backups into before --apply")
     lib.add_argument(

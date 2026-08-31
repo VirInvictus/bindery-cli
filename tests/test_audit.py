@@ -941,3 +941,134 @@ class TestRunSingleMonolithicTag(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSpineIntegrity(unittest.TestCase):
+    """The WI official-build pattern (phase 8): series-wide ToC manifests
+    (~750 references vs 14-19 content docs) reported as CONVENTION, never
+    flagged; a book missing part of its own span is a FRAGMENT."""
+
+    CONTAINER = TestRunSingle.CONTAINER
+    OPF = TestRunSingle.OPF
+
+    def _epub_bytes(self, chapters, nav_hrefs, bodies=None) -> bytes:
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        manifest = "".join(
+            f'<item id="c{i}" href="{h}" media-type="application/xhtml+xml"/>'
+            for i, h in enumerate(chapters)
+        )
+        nav_item = (
+            '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
+            'properties="nav"/>'
+        )
+        spine = "".join(f'<itemref idref="c{i}"/>' for i in range(len(chapters)))
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            f"<manifest>{manifest}{nav_item}</manifest>"
+            f"<spine>{spine}</spine></package>"
+        )
+        anchors = "".join(f'<li><a href="{h}">Chapter</a></li>' for h in nav_hrefs)
+        nav_html = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><body><nav epub:type="toc">'
+            f"<ol>{anchors}</ol></nav></body></html>"
+        )
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr(
+                "META-INF/container.xml",
+                '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                '<rootfiles><rootfile full-path="content.opf" '
+                'media-type="application/oebps-package+xml"/></rootfiles></container>',
+            )
+            z.writestr("content.opf", opf)
+            for h in chapters:
+                body = (bodies or {}).get(
+                    h, f"<html><body><p>chapter {h}</p></body></html>"
+                )
+                z.writestr(h, body)
+            z.writestr("nav.xhtml", nav_html)
+        return buf.getvalue()
+
+    def _epub(self, tmp, chapters, nav_hrefs, bodies=None):
+        p = pathlib.Path(tmp) / "t.epub"
+        p.write_bytes(self._epub_bytes(chapters, nav_hrefs, bodies))
+        return audit.load_book(p)
+
+    def test_series_wide_manifest_is_convention_not_fragment(self):
+        # 19 real chapters (consecutive span); the nav references 750 targets
+        # of which 731 are other volumes' files. Reported, never flagged.
+        chapters = [f"ch{n:03d}.xhtml" for n in range(1, 20)]
+        nav = [f"ch{n:03d}.xhtml" for n in range(1, 20)] + [
+            f"v08/ch{n:03d}.xhtml" for n in range(20, 752)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            book = self._epub(tmp, chapters, nav)
+            r = audit.spine_integrity(book)
+        self.assertEqual(r["class"], "convention")
+        self.assertEqual(r["refs"], 751)
+        self.assertEqual(r["absent"], 732)
+        problem, status, lines = audit._spine_verdict(r)
+        self.assertFalse(problem)
+        self.assertEqual(status, "ADVISORY")
+
+    def test_broken_span_is_a_fragment(self):
+        # Ten chapters present with holes in the numbering, and nav targets
+        # missing beyond them: the book is a fragment of itself.
+        chapters = [f"ch{n:03d}.xhtml" for n in (1, 2, 3, 4, 5, 7, 9, 11, 13, 15)]
+        nav = [f"ch{n:03d}.xhtml" for n in range(1, 31)]
+        with tempfile.TemporaryDirectory() as tmp:
+            book = self._epub(tmp, chapters, nav)
+            r = audit.spine_integrity(book)
+        self.assertEqual(r["class"], "fragment")
+        problem, status, _ = audit._spine_verdict(r)
+        self.assertTrue(problem)
+        self.assertEqual(status, "FRAGMENT")
+
+    def test_all_targets_present_is_silent(self):
+        chapters = [f"ch{n:03d}.xhtml" for n in range(1, 6)]
+        nav = [f"ch{n:03d}.xhtml" for n in range(1, 6)]
+        with tempfile.TemporaryDirectory() as tmp:
+            book = self._epub(tmp, chapters, nav)
+            r = audit.spine_integrity(book)
+        self.assertEqual(r["class"], "ok")
+
+    def test_fragment_and_monolithic_compose_in_one_report(self):
+        # The verdict surfaces are independent: a library book can be a
+        # fragment AND monolithic, and one report counts both.
+        import contextlib
+        import io
+
+        big = (
+            "<p>" + ("the quick brown fox jumped over the lazy dog. " * 10_000) + "</p>"
+        )
+        chapters = [f"ch{n:03d}.xhtml" for n in (1, 2, 3, 4, 5, 7, 9, 11, 13, 15)]
+        nav = [f"ch{n:03d}.xhtml" for n in range(1, 31)]
+        with tempfile.TemporaryDirectory() as td:
+            root = TestRunSingle._library(self, pathlib.Path(td))
+            epub = root / "A" / "T (1)" / "T - Author.epub"
+            epub.write_bytes(
+                self._epub_bytes(
+                    chapters,
+                    nav,
+                    bodies={"ch003.xhtml": f"<html><body>{big}</body></html>"},
+                )
+            )
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = audit.run_single(1, list(audit.ALL), 2000, 20000)
+            finally:
+                os.chdir(old)
+        self.assertEqual(rc, 1)
+        import re
+        text = re.sub(r'\x1b\[[0-9;]*m', '', out.getvalue())
+        # The single-book renderer prints verdict labels: FLAG for the
+        # monolithic hit, FRAGMENT for the spine, both in one report.
+        self.assertIn("FLAG   monolithic", text)
+        self.assertIn("max doc", text)
+        self.assertIn("FRAGMENT spine", text)

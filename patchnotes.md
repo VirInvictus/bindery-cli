@@ -1,5 +1,13 @@
 # Bindery Patch Notes
 
+## v0.23.0 (2026-08-30)
+
+### Phase 8: batch-scoped sweeps + spine-integrity reporting
+
+- **`library --id <ids>`**: Added comma-separated book-id scoping for the sweep, mirroring `audit --id`. Resolves EPUBs through cquarry's `get_format_path()` via `CalibreIdResolver`.
+- **`audit --id` comma lists**: The `--id` flag now supports a comma-separated list of IDs.
+- **Spine-integrity reporting**: Both audit and repair reports gain a field counting manifest/NCX references whose target files are absent from the archive, with a classification: `convention` (consecutive chapter span despite absent files, e.g. bloated ToCs) or `fragment` (broken span).
+
 ## v0.22.0 (2026-08-30)
 
 ### Phase 9: archive-integrity reporting in audit

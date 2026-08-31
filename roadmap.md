@@ -440,28 +440,28 @@ run until a chapter-span comparison against the sibling volume reversed it —
 the tooling should classify that pattern instead of every agent re-deriving it
 by hand.*
 
-- [ ] **`library --id <ids>`**: comma-separated book-id scoping for the sweep,
+- [x] **`library --id <ids>`**: comma-separated book-id scoping for the sweep,
   mirroring `audit --id` (v0.19.0). Resolve EPUBs through cquarry's
   `get_format_path()` via `CalibreIdResolver`; the gate, backups, and
   `--install-to-calibre` behavior are unchanged.
-- [ ] **Spine-integrity reporting**: audit (and repair reports) gain a field
+- [x] **Spine-integrity reporting**: audit (and repair reports) gain a field
   counting manifest/NCX references whose target files are absent from the
   archive, with a classification: `convention` when the absent count ≈ navPoint
   count and the present docs' chapter span is consecutive (the WI
   official-build pattern), `fragment` when the span itself is broken. Encodes
   the 2026-08-27 lesson so the near-miss cannot recur.
-- [ ] **Tests**: synthetic EPUBs — convention-shaped ToC bloat (reported, not
+- [x] **Tests**: synthetic EPUBs — convention-shaped ToC bloat (reported, not
   flagged), a true fragment (flagged), and a repaired-fatal composition.
-- [ ] **Skill sync**: phase-1-import's "ToC bloat" trap entry and phase-3-import's
+- [x] **Skill sync**: phase-1-import's "ToC bloat" trap entry and phase-3-import's
   step 10 (both in `~/docs/Calibre Library/.claude/skills/`) should point at the
   spine-integrity classification and the `--id` scoping once shipped, replacing
   the hand-run chapter-span comparison. **Floor, not ceiling**: anything the
   build surfaces that changes agent-facing behavior — thresholds, verdict
   classes, output shapes — gets documented in the affected skills in the same
   release.
-- [ ] **`audit --id` comma lists**: v0.19.0 took a single book id; support the
+- [x] **`audit --id` comma lists**: v0.19.0 took a single book id; support the
   same comma-separated form as the new `library --id` so the two modes match.
-- [ ] **Concurrent validation workers (stretch)**: the 2026-08-27 full-library
+- [x] **Concurrent validation workers (stretch)**: the 2026-08-27 full-library
   walk measured ~4.4 s/book on a single daemon (5,070 EPUBs ≈ 6 h). Gate k
   validation workers behind `--workers N`, default 1 (behavior unchanged).
 

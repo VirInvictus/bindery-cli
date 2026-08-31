@@ -109,15 +109,31 @@ class Book:
     """A decompressed EPUB: spine documents read once and shared by every
     analyzer. The whole point of the single-pass design lives here."""
 
-    __slots__ = ("_visible", "corrupt", "docs", "lang", "names", "nav", "spine")
+    __slots__ = (
+        "_visible",
+        "corrupt",
+        "docs",
+        "lang",
+        "names",
+        "nav",
+        "spine",
+        "toc_refs",
+        "toc_absent",
+    )
 
-    def __init__(self, spine, nav, lang, docs, names, corrupt):
+    def __init__(self, spine, nav, lang, docs, names, corrupt, toc_refs, toc_absent):
         self.spine = spine  # resolved, in-order, in-archive spine doc paths
         self.nav = nav  # the nav document path, or None
         self.lang = lang  # declared dc:language (lowercased), or ""
         self.docs = docs  # {path: decoded html} for every spine doc
         self.names = names  # full archive namelist (for image / marker counts)
         self.corrupt = corrupt  # entries whose full read failed (CRC/truncation)
+        # Spine-integrity accounting (phase 8): nav/NCX ToC references vs what
+        # the archive actually contains. The official Wandering Inn builds
+        # ship series-wide ToC manifests (~750 references vs 14-19 real
+        # content docs) — reported as `convention`, not flagged.
+        self.toc_refs = toc_refs
+        self.toc_absent = toc_absent
         self._visible: list[str] | None = None
 
     def visible_texts(self) -> list[str]:
@@ -215,7 +231,46 @@ def load_book(path: Path) -> Book:
         for doc in spine:
             blob = raw.get(doc)
             docs[doc] = blob.decode("utf-8", "replace") if blob is not None else ""
-    return Book(spine, nav, lang, docs, names, corrupt)
+    # ToC reference accounting: every nav/NCX anchor target checked against
+    # the archive (manifest items are the spine's own source and already
+    # accounted by the spine resolution).
+    toc_refs = 0
+    toc_absent = 0
+
+    def _account(href: str) -> None:
+        nonlocal toc_refs, toc_absent
+        href = href.strip()
+        if href.startswith("#"):
+            return  # in-page anchor, not an archive target
+        if re.match(r"^[a-z]+:", href, re.IGNORECASE):
+            return  # foreign URL scheme, not an archive target
+        toc_refs += 1
+        if full(href) not in nameset:
+            toc_absent += 1
+
+    nav_html = docs.get(nav) if nav else None
+    if nav_html is None and nav:
+        # The nav document is usually in the spine, but nothing requires it.
+        blob = _read(nav)
+        nav_html = blob.decode("utf-8", "replace") if blob is not None else ""
+    if nav_html:
+        for m in re.finditer(r'href\s*=\s*["\']([^"\']+)', nav_html):
+            _account(m.group(1))
+    ncx_path = None
+    for it in opf.iter(OPF_NS + "item"):
+        if (it.get("media-type") or "").lower() == "application/x-dtbncx+xml":
+            ncx_path = full(it.get("href") or "")
+            break
+    if ncx_path:
+        blob = _read(ncx_path)
+        if blob is not None:
+            for m in re.finditer(
+                r'<content[^>]+src\s*=\s*["\']([^"\']+)',
+                blob.decode("utf-8", "replace"),
+            ):
+                _account(m.group(1))
+
+    return Book(spine, nav, lang, docs, names, corrupt, toc_refs, toc_absent)
 
 
 # ----------------------------------------------------------------------------
@@ -990,6 +1045,63 @@ def _corrupt_verdict(r: dict) -> tuple[bool, str, list[str]]:
 
 
 # ----------------------------------------------------------------------------
+# Analyzer: spine integrity (ToC bloat vs a true fragment)
+# ----------------------------------------------------------------------------
+
+
+def spine_integrity(book: Book) -> dict:
+    """Classify absent ToC/NCX targets.
+
+    The official Wandering Inn builds ship series-wide ToC manifests (~750
+    references vs 14-19 real content docs): `convention` when the absent
+    count is ~= the reference count and the present docs' chapter span is
+    consecutive — reported, never flagged. A broken span means the book is
+    missing part of itself: `fragment`, flagged. Unnumbered or absent==0
+    cases are `ok`/`unknown` (silent or advisory).
+    """
+    absent, refs = book.toc_absent, book.toc_refs
+    if absent == 0:
+        return {"class": "ok", "refs": refs, "absent": 0}
+    nums = []
+    for doc in book.spine:
+        found = re.findall(r"\d+", doc.rsplit("/", 1)[-1])
+        if not found:
+            return {"class": "unknown", "refs": refs, "absent": absent}
+        nums.append(int(found[-1]))
+    nums.sort()
+    span = (
+        "consecutive" if nums == list(range(nums[0], nums[0] + len(nums))) else "broken"
+    )
+    if refs >= 20 and absent >= refs * 0.9 and span == "consecutive":
+        return {"class": "convention", "refs": refs, "absent": absent}
+    if span == "broken":
+        return {"class": "fragment", "refs": refs, "absent": absent}
+    return {"class": "unknown", "refs": refs, "absent": absent}
+
+
+def _spine_verdict(r: dict) -> tuple[bool, str, list[str]]:
+    if r["class"] == "fragment":
+        return (
+            True,
+            "FRAGMENT",
+            [f"toc {r['refs']} refs, {r['absent']} absent — span broken"],
+        )
+    if r["class"] == "convention":
+        return (
+            False,
+            "ADVISORY",
+            [
+                f"toc {r['refs']} refs, {r['absent']} absent (series-wide manifest convention)"
+            ],
+        )
+    return (
+        False,
+        "ADVISORY",
+        [f"toc {r['refs']} refs, {r['absent']} absent (unjudgeable span)"],
+    )
+
+
+# ----------------------------------------------------------------------------
 # Analyzer: ocr (OCR/conversion-damaged prose)
 # ----------------------------------------------------------------------------
 
@@ -1420,6 +1532,31 @@ def _corrupt_sections(hits) -> int:
     return 0
 
 
+def _spine_sections(hits, advisory) -> int:
+    if advisory:
+        print(
+            f"{YELLOW}{BOLD}TOC MANIFEST CONVENTION ({len(advisory)}; reported, not flagged){RESET}"
+        )
+        for book_id, title, tag, r in sorted(advisory):
+            print(f"  {YELLOW}#{book_id}{RESET} [{tag}] {title}")
+            print(f"    toc {r['refs']} refs, {r['absent']} absent ({r['class']})")
+        print()
+    if hits:
+        print(f"{RED}{BOLD}SPINE FRAGMENTS ({len(hits)}){RESET}")
+        for book_id, title, tag, r in sorted(hits):
+            print(f"  {RED}#{book_id}{RESET} [{tag}] {title}")
+            print(f"    toc {r['refs']} refs, {r['absent']} absent — span broken")
+        print()
+        print(
+            f"{RED}{BOLD}spine FOUND{RESET}: {len(hits)} file(s) are fragments "
+            f"of themselves; quarantine."
+        )
+        return 1
+    if not advisory:
+        print(f"{GREEN}{BOLD}spine CLEAN{RESET}: every ToC target present.")
+    return 0
+
+
 # ----------------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------------
@@ -1493,6 +1630,8 @@ def run_library(
     ocr_found: list[tuple] = []
     mono_hits: list[tuple] = []
     corrupt_hits: list[tuple] = []
+    spine_hits: list[tuple] = []
+    spine_advisory: list[tuple] = []
     errors: list[tuple] = []
     scanned = 0
 
@@ -1510,6 +1649,11 @@ def run_library(
             corrupt_hits.append(
                 (book_id, title, tag, corrupt_r["n"], corrupt_r["first"])
             )
+        spine_r = spine_integrity(book)
+        if spine_r["class"] == "fragment":
+            spine_hits.append((book_id, title, tag, spine_r))
+        elif spine_r["class"] != "ok":
+            spine_advisory.append((book_id, title, tag, spine_r))
 
         if "content" in selected:
             r = analyze_content(book)
@@ -1571,6 +1715,8 @@ def run_library(
             rc |= _empty_sections(empty_hits, partial_hits, thin_hits)
         elif key == "archive":
             rc |= _corrupt_sections(corrupt_hits)
+        elif key == "spine":
+            rc |= _spine_sections(spine_hits, spine_advisory)
         elif key == "monolithic":
             rc |= _monolithic_sections(mono_hits)
         else:
@@ -1600,6 +1746,7 @@ def run_library(
                 "ocr": [h[0] for h in ocr_found],
                 "monolithic": [h[0] for h in mono_hits],
                 "archive": [h[0] for h in corrupt_hits],
+                "spine": [h[0] for h in spine_hits],
             },
         )
     return rc
@@ -1716,6 +1863,7 @@ def run_directory(
 
         verdicts = []
         corrupt_r = analyze_corrupt(book)
+        spine_r = spine_integrity(book)
         for key in ALL:
             if key not in selected:
                 continue
@@ -1743,6 +1891,12 @@ def run_directory(
             problem, status, lines = _corrupt_verdict(corrupt_r)
             problems += 1
             verdicts.append(("archive", problem, status, lines))
+
+        if spine_r["class"] != "ok":
+            problem, status, lines = _spine_verdict(spine_r)
+            if problem:
+                problems += 1
+            verdicts.append(("spine", problem, status, lines))
 
         if multi:
             ui.tqdm.write(f"  {path.name}")
@@ -1826,6 +1980,7 @@ def run_single(
     multi = len(selected) > 1
     verdicts = []
     corrupt_r = analyze_corrupt(book)
+    spine_r = spine_integrity(book)
     for key in ALL:
         if key not in selected:
             continue
@@ -1855,6 +2010,12 @@ def run_single(
         problem, status, lines = _corrupt_verdict(corrupt_r)
         problems += 1
         verdicts.append(("archive", problem, status, lines))
+
+    if spine_r["class"] != "ok":
+        problem, status, lines = _spine_verdict(spine_r)
+        if problem:
+            problems += 1
+        verdicts.append(("spine", problem, status, lines))
 
     for key, problem, status, lines in verdicts:
         if multi:
@@ -1915,11 +2076,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--id",
-        type=int,
-        metavar="BOOK_ID",
+        metavar="BOOK_IDS",
         default=None,
-        help="audit a single library book by Calibre id (fetched via cquarry's "
-        "single-entity get_book; cannot be combined with a directory)",
+        help="audit library book(s) by Calibre id — one id or a comma-separated "
+        "list (fetched via cquarry's single-entity get_book; cannot be "
+        "combined with a directory)",
     )
     parser.add_argument(
         "--tag",
@@ -1935,14 +2096,26 @@ def main() -> int:
         if args.directory:
             print("ERROR: --id audits a library book; drop the directory argument.")
             return 2
-        return run_single(
-            args.id,
-            selected,
-            args.min_chars,
-            args.thin_chars,
-            tag=args.tag,
-            max_doc_chars=args.max_doc_chars,
-        )
+        rc = 0
+        for raw in str(args.id).split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                bid = int(raw)
+            except ValueError:
+                print(f"ERROR: --id {raw!r} is not a book id.", file=sys.stderr)
+                rc |= 2
+                continue
+            rc |= run_single(
+                bid,
+                selected,
+                args.min_chars,
+                args.thin_chars,
+                tag=args.tag,
+                max_doc_chars=args.max_doc_chars,
+            )
+        return rc
     if args.directory:
         return run_directory(
             Path(args.directory).expanduser(),

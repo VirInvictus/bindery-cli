@@ -103,13 +103,13 @@ Audits can also be run on a directory of loose `.epub` files by passing the path
 bindery audit pagenumbers /path/to/loose/epubs
 ```
 
-Or on a single library book by Calibre id — fetched through cquarry's single-entity
-`get_book()` (one row read, no library-wide scan), with the EPUB resolved via cquarry's
-own path logic:
+Or on one or more library books by Calibre id (comma-separated) — fetched through cquarry's single-entity `get_book()` (no library-wide scan), with the EPUB resolved via cquarry's own path logic:
 ```sh
-cd ~/docs/Calibre\ Library && bindery audit all --id 1234
+cd ~/docs/Calibre\ Library && bindery audit all --id 1234,1235
 ```
 `--id` composes with `--tag`: the book is tagged only if the audit flags it.
+
+**Spine-integrity reporting:** Both `audit` and `library` reports now classify manifest/NCX references that point to absent files. A `convention` verdict means the ToC is bloated but the present documents form a consecutive chapter span (e.g., the Wandering Inn official-build pattern, safe). A `fragment` verdict means the span itself is broken.
 
 ### Tagging flagged books (opt-in)
 
@@ -155,6 +155,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 ```
 
 - `--only {fatals,ncx,all}` restricts the candidate set. `ncx` targets NCX-001 mismatches (detected without epubcheck); `fatals` needs `--audit`.
+- `--id <ids>` limits the sweep to a comma-separated list of Calibre book IDs, skipping the full library walk.
 - `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast. Paths are resolved on both sides, and a CSV that matches nothing triggers a loud warning instead of silently selecting zero books.
 - `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. Bindery launches a transparent, persistent Java daemon (`EpubcheckDaemon`) to evaluate candidates in the background, eliminating the JVM startup penalty. This reduces validation time from ~5 seconds per book down to ~0.05 seconds, allowing `--sweep` to scan a 5,000-book library in just 10 minutes. Combine with `--only fatals` for a self-contained, lightning-fast "find and fix the broken books" run.
 - `--json FILE` writes a machine-readable report of the whole run (per-book status, before/after counts, applied flag, summary totals). `--manual-list FILE` writes the paths of every book that was not auto-repaired, one per line, ready for manual follow-up.

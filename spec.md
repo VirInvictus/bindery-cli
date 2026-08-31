@@ -234,16 +234,14 @@ Optionally, Bindery can replace the format natively inside Calibre using `calibr
 ## Audit subcommand (read-only)
 
 `bindery audit {content,pagenumbers,emptytext,ocr,monolithic,all} [PATH] [--max-doc-chars N]
-[--tag TAG]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0) inspects
+[--tag TAG] [--id IDs]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0; `--id` since v0.19.0, comma-lists in v0.23.0) inspects
 EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in page-number
 layers (sliding-window density heuristics), empty or thin books, systemic OCR damage, and
 single oversized content documents (one spine doc at or above 300k characters — readers refuse
-to render them even though the book totals normally), and damaged archives: every archive entry
-is fully read (CRC + real decompression) in the audit's single pass, and a corrupt entry is
-reported as its own CORRUPT verdict — never mislabeled EMPTY, with emptytext stepping aside for
-that book (v0.22.0). It operates on a Calibre library tree or loose directories and shares no code
-path with replacement; its `pagenumbers` findings bridge naturally into
-`bindery repair --strip-pagination`.
+to render them even though the book totals normally), damaged archives (every archive entry
+is fully read for CRC + decompression, reporting CORRUPT rather than EMPTY), and spine integrity
+issues. Manifest/NCX references to absent files are classified as either `convention` (ToC is bloated but
+present documents form a consecutive chapter span) or `fragment` (the span itself is broken).
 
 In library mode, EPUB files are resolved through `cquarry.db.CalibreDB.get_format_path()` — the
 storage-layout logic is not duplicated here. The scan itself still writes nothing. The opt-in

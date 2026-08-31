@@ -4,9 +4,11 @@ the single-file repair must write the exact bytes the gate accepted (flags inclu
 and label partial output honestly, and candidate selection must refuse --only fatals
 without an audit."""
 
+import contextlib
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -445,7 +447,7 @@ class TestAuditIdWiring(unittest.TestCase):
         parser = build_parser()
         self.assertIsNone(parser.parse_args(["audit", "content"]).id)
         args = parser.parse_args(["audit", "content", "--id", "1234"])
-        self.assertEqual(args.id, 1234)
+        self.assertEqual(args.id, "1234")
 
     def test_id_reaches_run_single(self):
         with mock.patch("bindery.cli.run_single", return_value=0) as run:
@@ -493,3 +495,208 @@ class TestUnreadableReasons(unittest.TestCase):
     def test_encrypted(self):
         e = RuntimeError("File ch01.xhtml is encrypted, password required")
         self.assertEqual(cli._unreadable_reason(e), "encrypted")
+
+
+class TestLibraryIdScoping(unittest.TestCase):
+    """library --id: comma-separated book-id scoping (phase 8). The sweep
+    processes only the resolved EPUBs, one wrong id warns without sinking
+    the batch."""
+
+    def _library(self, root):
+        import sqlite3
+        import zipfile
+
+        root.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(root / "metadata.db")
+        conn.executescript(
+            """
+            CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, sort TEXT,
+                author_sort TEXT, timestamp TEXT, pubdate TEXT, has_cover INT,
+                last_modified TEXT, series_index REAL DEFAULT 1.0, path TEXT, uuid TEXT);
+            CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+            CREATE TABLE books_authors_link (id INTEGER PRIMARY KEY, book INT, author INT);
+            CREATE TABLE series (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+            CREATE TABLE books_series_link (id INTEGER PRIMARY KEY, book INT, series INT);
+            CREATE TABLE publishers (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+            CREATE TABLE books_publishers_link (id INTEGER PRIMARY KEY, book INT, publisher INT);
+            CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT, link TEXT);
+            CREATE TABLE books_tags_link (id INTEGER PRIMARY KEY, book INT, tag INT);
+            CREATE TABLE languages (id INTEGER PRIMARY KEY, lang_code TEXT, link TEXT);
+            CREATE TABLE books_languages_link (id INTEGER PRIMARY KEY, book INT, lang_code INT);
+            CREATE TABLE ratings (id INTEGER PRIMARY KEY, rating INT, link TEXT DEFAULT '');
+            CREATE TABLE books_ratings_link (id INTEGER PRIMARY KEY, book INT, rating INT);
+            CREATE TABLE data (id INTEGER PRIMARY KEY, book INT, format TEXT,
+                name TEXT, uncompressed_size INT);
+            CREATE TABLE identifiers (book INT, type TEXT, val TEXT);
+            """
+        )
+        container = (
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<rootfiles><rootfile full-path="content.opf" '
+            'media-type="application/oebps-package+xml"/></rootfiles></container>'
+        )
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            '<manifest><item id="c1" href="t.xhtml" media-type="application/xhtml+xml"/></manifest>'
+            '<spine><itemref idref="c1"/></spine></package>'
+        )
+        for bid, title in [(1, "One"), (2, "Two")]:
+            conn.execute(
+                "INSERT INTO books (id,title,sort,path) VALUES (?,?,?,?)",
+                (bid, title, title, f"A/{title} ({bid})"),
+            )
+            conn.execute("INSERT INTO authors (id,name) VALUES (?,?)", (bid, "Author"))
+            conn.execute(
+                "INSERT INTO books_authors_link (book,author) VALUES (?,1)", (bid,)
+            )
+            conn.execute(
+                "INSERT INTO data (book,format,name) VALUES (?, 'EPUB', ?)",
+                (bid, f"{title} - Author"),
+            )
+            book_dir = root / "A" / f"{title} ({bid})"
+            book_dir.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(book_dir / f"{title} - Author.epub", "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", container)
+                z.writestr("content.opf", opf)
+                z.writestr(
+                    "t.xhtml", "<html><body><p>prose prose prose</p></body></html>"
+                )
+        conn.commit()
+        conn.close()
+        return root
+
+    def test_id_scopes_the_sweep(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as td:
+            root = self._library(Path(td))
+            buf, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "bindery",
+                        "library",
+                        str(root),
+                        "--id",
+                        "1",
+                        "--no-validate",
+                    ],
+                ),
+                contextlib.redirect_stdout(buf),
+                contextlib.redirect_stderr(err),
+            ):
+                cli.run_library(
+                    build_parser().parse_args(
+                        [
+                            "library",
+                            str(root),
+                            "--id",
+                            "1",
+                            "--no-validate",
+                        ]
+                    )
+                )
+            out = buf.getvalue()
+            everything = out + err.getvalue()
+            # Without --id this tree yields 2 candidates; scoped, exactly 1 —
+            # and the other book's files were never opened.
+            self.assertIn("candidates:      1", out)
+            self.assertIn("no change:       1", out)
+            self.assertNotIn("Two - Author", everything)
+
+    def test_unknown_id_warns_and_skips(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._library(Path(td))
+            build_parser().parse_args(
+                [
+                    "library",
+                    str(root),
+                    "--id",
+                    "1,99",
+                    "--no-validate",
+                ]
+            )
+            scoped = cli._epubs_for_ids(root, "1,99")
+        self.assertEqual(len(scoped), 1)
+
+    def test_id_and_audit_are_mutually_exclusive(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._library(Path(td))
+            err = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "bindery",
+                        "library",
+                        str(root),
+                        "--id",
+                        "1",
+                        "--audit",
+                        "x.csv",
+                        "--no-validate",
+                    ],
+                ),
+                contextlib.redirect_stderr(err),
+            ):
+                rc = cli.run_library(
+                    build_parser().parse_args(
+                        [
+                            "library",
+                            str(root),
+                            "--id",
+                            "1",
+                            "--audit",
+                            "x.csv",
+                            "--no-validate",
+                        ]
+                    )
+                )
+        self.assertEqual(rc, 1)
+
+
+class TestAuditIdCommaLists(unittest.TestCase):
+    """audit --id 1,2 audits both books (phase 8: the audit and library
+    modes share the comma-separated form)."""
+
+    def _library(self, root):
+        return TestLibraryIdScoping._library(self, root)
+
+    def test_comma_list_audits_both(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as td:
+            root = self._library(Path(td))
+            buf = io.StringIO()
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                with (
+                    mock.patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "bindery",
+                            "audit",
+                            "all",
+                            "--id",
+                            "1,2",
+                            "--no-validate",
+                        ],
+                    ),
+                    contextlib.redirect_stdout(buf),
+                    contextlib.redirect_stderr(buf),
+                ):
+                    rc = main(["audit", "content", "--id", "1,2"])
+            finally:
+                os.chdir(old)
+            out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("#1", out)
+        self.assertIn("#2", out)
