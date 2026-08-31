@@ -1066,7 +1066,8 @@ class TestSpineIntegrity(unittest.TestCase):
                 os.chdir(old)
         self.assertEqual(rc, 1)
         import re
-        text = re.sub(r'\x1b\[[0-9;]*m', '', out.getvalue())
+
+        text = re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue())
         # The single-book renderer prints verdict labels: FLAG for the
         # monolithic hit, FRAGMENT for the spine, both in one report.
         self.assertIn("FLAG   monolithic", text)
