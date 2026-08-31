@@ -6,3 +6,7 @@ dist/
 .venv/
 .ruff_cache/
 .pytest_cache/
+
+# Ignore actual books used for testing to prevent IP leaks
+testing_facility/books_to_fix/*
+!testing_facility/books_to_fix/.gitkeep
