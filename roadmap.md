@@ -522,3 +522,10 @@ sweep with the CORRUPT verdict (never mislabeled EMPTY; emptytext steps
 aside), the sweep's sub-reason split, the flipped CRC test plus
 `_unreadable_reason` unit coverage, and the phase-1 §2 sync retiring the
 hand-rolled zipfile sweep.
+
+### Pending Repair Implementations
+- **Strip Invalid/Deprecated Attributes (RSC-005):** `testing_facility/books_to_fix/Lost Lambs (Madeline Cash) (z-library.sk, 1lib.sk, z-lib.sk).epub` throws `RSC-005` errors for `page-progression-direction` on `<package>`, `epub:type` on `<body>`, `aria-label` outside of allowed namespaces, and unwrapping illegal `<span>` tags. Bindery currently intercepts `<li value="..">` via `--strip-invalid-value`, but needs a broader pass to scrub these specific deprecated HTML5/EPUB3 attributes when targeting EPUB2 compliance, or just to silence strict validation errors.
+
+### Convert `<figure>` / HTML5 elements in EPUB2 (RSC-005)
+- **Target**: `The Cemetery of Untold Stories` throws 14 `RSC-005` errors for `element "figure" not allowed anywhere`.
+- **Implementation**: Write a repair flag that detects EPUB 2 documents containing EPUB 3/HTML5 `<figure>` or `<figcaption>` elements and cleanly downgrades them to `<div>` and `<p>` tags with classes.
