@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/epub-bindery
+      url: https://pypi.org/p/bindery-cli
     permissions:
       id-token: write # Required for OIDC authentication with PyPI
 
