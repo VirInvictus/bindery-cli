@@ -530,3 +530,15 @@ hand-rolled zipfile sweep.
 - **Target**: `The Cemetery of Untold Stories` throws 14 `RSC-005` errors for `element "figure" not allowed anywhere`.
 - **Implementation**: Write a repair flag that detects EPUB 2 documents containing EPUB 3/HTML5 `<figure>` or `<figcaption>` elements and cleanly downgrades them to `<div>` and `<p>` tags with classes.
 - **Target**: `Julie Chan Is Dead` throws `RSC-005` errors for `element "section" not allowed anywhere`. Same repair pattern: downgrade `<section>` to `<div>` with classes.
+
+## Bug Reports
+
+### calibredb add_format --replace crash (2026-08-31)
+**Bug in `bindery library --install-to-calibre`:** `calibredb add_format` does not have a `--replace` flag (replacement is its default behavior when an existing format is found unless `--dont-replace` is used). This causes `bindery library ... --install-to-calibre` to crash with `calibredb: error: no such option: --replace` when attempting to swap repaired files back into the library, leading to `subprocess.CalledProcessError` on exit status 2.
+**Fix:** Remove `--replace` from the subprocess call in `bindery/library.py` line 158.
+
+## Phase 11: Migrate install-to-calibre to native cquarry API (proposed 2026-08-31)
+
+*Context: `bindery library --install-to-calibre` currently shells out to the external `calibredb add_format` CLI binary. This is fragile (it crashed on 2026-08-31 due to a non-existent `--replace` flag) and bypasses the transaction and trigger-safety guarantees built into the `cquarry` library. Since Bindery already imports `cquarry` for path resolution, it should adopt the native write module.*
+
+- [ ] **Adopt `WritableCalibreDB` for format installation:** Replace the `subprocess.run(["calibredb", ...])` call in `bindery/library.py` with `cquarry.write.WritableCalibreDB.add_format()`. This keeps all database writes safely centralized in `cquarry` and eliminates the dependency on the external Calibre CLI for structural sweeps.
