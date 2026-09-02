@@ -461,9 +461,12 @@ by hand.*
   release.
 - [x] **`audit --id` comma lists**: v0.19.0 took a single book id; support the
   same comma-separated form as the new `library --id` so the two modes match.
-- [x] **Concurrent validation workers (stretch)**: the 2026-08-27 full-library
+- [ ] **Concurrent validation workers (stretch; not shipped)**: the 2026-08-27 full-library
   walk measured ~4.4 s/book on a single daemon (5,070 EPUBs ≈ 6 h). Gate k
   validation workers behind `--workers N`, default 1 (behavior unchanged).
+  *(Un-ticked in the 2026-09-02 docs re-read (NEW-AUDIT.md Stage 0): the box was
+  ticked at the v0.23.0 ship, but no `--workers` code, test, or doc line ever
+  landed. Still open as a stretch goal.)*
 
 Non-goals: no auto-trim of bloated ToCs (semantics-preserving charter); no
 content-doc synthesis; no PDF equivalent.

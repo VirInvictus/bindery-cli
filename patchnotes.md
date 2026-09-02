@@ -47,7 +47,6 @@
   reading.
 
 ## v0.21.0 (2026-08-30)
-## v0.21.0 (2026-08-30)
 
 ### Phase 7: the monolithic analyzer
 
@@ -67,7 +66,6 @@
   "Chars per content document" step (no tool; run inline → `bindery audit
   monolithic`).
 
-## v0.20.0 (2026-08-30)
 ## v0.20.0 (2026-08-30)
 
 ### cquarry 1.8 adoption (Phase 9 sync)

@@ -94,6 +94,9 @@ bindery audit emptytext ~/docs/Calibre\ Library
 # Find books with severe OCR damage (garbage characters, excessive hyphenation)
 bindery audit ocr ~/docs/Calibre\ Library
 
+# Flag books where a single content document is too large for readers to render
+bindery audit monolithic ~/docs/Calibre\ Library
+
 # Run all audits and generate a comprehensive CSV
 cd ~/docs/Calibre\ Library && bindery audit all
 ```
@@ -110,6 +113,8 @@ cd ~/docs/Calibre\ Library && bindery audit all --id 1234,1235
 `--id` composes with `--tag`: the book is tagged only if the audit flags it.
 
 **Spine-integrity reporting:** Both `audit` and `library` reports now classify manifest/NCX references that point to absent files. A `convention` verdict means the ToC is bloated but the present documents form a consecutive chapter span (e.g., the Wandering Inn official-build pattern, safe). A `fragment` verdict means the span itself is broken.
+
+**Archive integrity:** every audit fully reads each archive entry (CRC + decompression), so a damaged download is reported CORRUPT — with the first broken entry named — instead of being mislabeled EMPTY by `emptytext`. `library --sweep` splits its `unreadable` bucket into `not_a_zip` / `truncated` / `encrypted` / `corrupt_entry`, so the right disease is visible without leaving the sweep.
 
 ### Tagging flagged books (opt-in)
 
