@@ -527,7 +527,11 @@ aside), the sweep's sub-reason split, the flipped CRC test plus
 hand-rolled zipfile sweep.
 
 ### Pending Repair Implementations
-- **Strip Invalid/Deprecated Attributes (RSC-005):** `testing_facility/books_to_fix/Lost Lambs (Madeline Cash) (z-library.sk, 1lib.sk, z-lib.sk).epub` throws `RSC-005` errors for `page-progression-direction` on `<package>`, `epub:type` on `<body>`, `aria-label` outside of allowed namespaces, and unwrapping illegal `<span>` tags. Bindery currently intercepts `<li value="..">` via `--strip-invalid-value`, but needs a broader pass to scrub these specific deprecated HTML5/EPUB3 attributes when targeting EPUB2 compliance, or just to silence strict validation errors.
+- **Strip Invalid/Deprecated Attributes (RSC-005):** `testing_facility/books_to_fix/Lost Lambs (Madeline Cash) (z-library.sk, 1lib.sk, z-lib.sk).epub` throws `RSC-005` errors for `page-progression-direction` on `<package>`, `epub:type` on `<body>`, `aria-label` outside of allowed namespaces, and unwrapping illegal `<span>` tags. Bindery currently intercepts `<li value="..">` via `--strip-invalid-value`, but needs a broader pass to scrub these specific deprecated HTML5/EPUB3 attributes when targeting EPUB2 compliance, or just to silence strict validation errors. **DECISION 2026-09-02 (Brandon, on the NEW-AUDIT brief): Option B — the attribute scrub ships as its own opt-in flag (v0.26.0), and the element downgrade ships separately with the CSS-protection work (v0.27.0); no per-book flags, no silent tolerance.**
+  *(Attribute scrub shipped in v0.26.0 as `--strip-epub3-attrs` (counter
+  `epub3_attrs_stripped`): the three named attributes, fixed documented set,
+  content docs and the OPF both, lookalikes survive. The illegal `<span>`
+  unwrapping half stays with the element-downgrade flag below.)*
 
 ### Convert `<figure>` / HTML5 elements in EPUB2 (RSC-005)
 - **Target**: `The Cemetery of Untold Stories` throws 14 `RSC-005` errors for `element "figure" not allowed anywhere`.

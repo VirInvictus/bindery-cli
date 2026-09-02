@@ -1,4 +1,24 @@
 # Bindery Patch Notes
+## v0.26.0 (2026-09-02)
+
+### RSC-005 verdict, part one: --strip-epub3-attrs
+
+- **The attribute scrub.** Brandon picked option B on the NEW-AUDIT brief:
+  the low-risk attribute half ships first, the element downgrade separately
+  with its CSS-protection work. `--strip-epub3-attrs` removes the three
+  EPUB3-only attributes epubcheck rejects on an EPUB2 package —
+  `page-progression-direction`, `epub:type`, `aria-label` (counter
+  `epub3_attrs_stripped`), in content documents and the OPF alike.
+- **Fixed set, documented.** The transform matches exactly those three names
+  and nothing else: `type="text"` and the wider aria family survive, so a
+  reader-legitimate attribute can never be swept up by accident. Extending
+  the set requires a named epubcheck finding, per the roadmap note.
+- The structural-repair set is eight now; `--all` includes the flag; the
+  epubcheck gate applies as with every fix.
+- Tests 250 → 254: the three attributes in both quote styles, the
+  lookalike-survival guarantee, and the off-by-default / on / end-to-end run
+  over an OPF and a content document.
+
 ## v0.25.0 (2026-09-02)
 
 ### Phase 10: OPF/NCX edge cases (--fix-page-map)

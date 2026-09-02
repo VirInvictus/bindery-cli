@@ -237,6 +237,24 @@ def fix_pagelist_class(ncx_text: str) -> tuple[str, int]:
     return _PAGELIST_OPEN_RE.sub(_add, ncx_text), count
 
 
+_EPUB3_ATTR_RE = re.compile(
+    r"\s+(?:page-progression-direction|epub:type|aria-label)"
+    r'=(?:"[^"]*"|\'[^\']*\')'
+)
+
+
+def strip_epub3_attributes(text: str) -> tuple[str, int]:
+    """Scrub the EPUB3-only attributes older conversions sprinkle onto EPUB2
+    documents: ``page-progression-direction``, ``epub:type`` and
+    ``aria-label`` — epubcheck answers RSC-005 for each on an EPUB2 package
+    (the 2026-09-02 verdict: scrub, not tolerate). Rendering is unchanged;
+    none of them carries visible content. The set is fixed and documented:
+    extend it only with a named epubcheck finding, never speculatively, so a
+    reader-legitimate attribute can never be swept up by accident.
+    """
+    return _EPUB3_ATTR_RE.subn("", text)
+
+
 def opf_unique_id(opf_text: str) -> str | None:
     """The dc:identifier value referenced by the OPF unique-identifier attribute."""
     attr = _UID_ATTR_RE.search(opf_text)
@@ -305,6 +323,7 @@ def repair_epub(
     invalid_value: bool = False,
     illegal_tags: bool = False,
     page_map: bool = False,
+    strip_epub3_attrs: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -334,6 +353,8 @@ def repair_epub(
     attribute from the OPF spine and add the required class="pages" to classless
     <pageList> elements in the NCX (older HarperCollins / Anna's Archive conversions
     fail epubcheck on both).
+    With `strip_epub3_attrs`, scrub the EPUB3-only attributes epubcheck rejects on an
+    EPUB2 package (page-progression-direction, epub:type, aria-label; fixed set).
     """
     report = RepairReport()
 
@@ -428,7 +449,7 @@ def repair_epub(
                     report.add(counts)
                     report.files_changed += 1
                     data = text.encode("utf-8")
-            elif low.endswith(".opf") and (fix_ids or page_map):
+            elif low.endswith(".opf") and (fix_ids or page_map or strip_epub3_attrs):
                 text = data.decode("utf-8", "replace")
                 opf_changed = False
                 if fix_ids:
@@ -440,6 +461,11 @@ def repair_epub(
                     text, n = strip_page_map(text)
                     if n:
                         report.add({"page_map_stripped": n})
+                        opf_changed = True
+                if strip_epub3_attrs:
+                    text, n = strip_epub3_attributes(text)
+                    if n:
+                        report.add({"epub3_attrs_stripped": n})
                         opf_changed = True
                 if opf_changed:
                     report.files_changed += 1
@@ -463,6 +489,10 @@ def repair_epub(
                     text, n = reserialize_if_broken(text)
                     if n:
                         counts["reserialized"] = n
+                if strip_epub3_attrs:
+                    text, n = strip_epub3_attributes(text)
+                    if n:
+                        counts["epub3_attrs_stripped"] = n
                 if empty_body:
                     text, n = fix_empty_body(text)
                     if n:

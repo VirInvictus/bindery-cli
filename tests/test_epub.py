@@ -14,6 +14,7 @@ from bindery.epub import (
     ncx_uid_mismatch,
     opf_unique_id,
     repair_epub,
+    strip_epub3_attributes,
     strip_page_map,
     sync_ncx_uid,
 )
@@ -243,6 +244,65 @@ class TestPageMap(unittest.TestCase):
                 ncx_out = z.read("OEBPS/toc.ncx").decode()
         self.assertNotIn("page-map", opf_out)
         self.assertIn('<pageList class="pages">', ncx_out)
+
+
+class TestStripEpub3Attrs(unittest.TestCase):
+    """The attribute half of the 2026-09-02 RSC-005 verdict: scrub the
+    EPUB3-only attributes epubcheck rejects on an EPUB2 package."""
+
+    def test_the_three_named_attributes_go(self):
+        text = (
+            '<package page-progression-direction="ltr"/>'
+            '<body epub:type="chapter" aria-label="chapter">'
+            "<p>text</p></body>"
+        )
+        out, n = strip_epub3_attributes(text)
+        self.assertEqual(n, 3)
+        self.assertEqual(out, "<package/><body><p>text</p></body>")
+
+    def test_single_quoted_values(self):
+        out, n = strip_epub3_attributes("<body epub:type='chapter'>x</body>")
+        self.assertEqual((out, n), ("<body>x</body>", 1))
+
+    def test_reader_legitimate_attributes_survive(self):
+        # The fixed set must never sweep up lookalikes: bare `type`, the
+        # wider aria family, and a spine's own (EPUB3-valid) direction attr
+        # name only matched in full.
+        text = (
+            '<input type="text" aria-hidden="true">'
+            '<section aria-labelledby="t">x</section>'
+        )
+        out, n = strip_epub3_attributes(text)
+        self.assertEqual((out, n), (text, 0))
+
+    def test_opt_in_via_repair_epub(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'unique-identifier="bookid" page-progression-direction="ltr">'
+            "<metadata/><spine/></package>"
+        )
+        content = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml">'
+            '<body epub:type="chapter" aria-label="c"><p>x</p></body></html>'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", content)
+            report = repair_epub(src, dst)  # off by default
+            self.assertNotIn("epub3_attrs_stripped", report.fixes)
+            report = repair_epub(src, dst, strip_epub3_attrs=True)
+            self.assertEqual(report.fixes.get("epub3_attrs_stripped"), 3)
+            with zipfile.ZipFile(dst) as z:
+                opf_out = z.read("OEBPS/content.opf").decode()
+                c_out = z.read("OEBPS/c1.xhtml").decode()
+        self.assertNotIn("page-progression-direction", opf_out)
+        self.assertNotIn("epub:type", c_out)
+        self.assertIn("<p>x</p>", c_out)
 
 
 class TestMimetypeRepair(unittest.TestCase):

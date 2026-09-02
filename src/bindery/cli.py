@@ -73,6 +73,7 @@ def process_book(
     invalid_value: bool = False,
     illegal_tags: bool = False,
     page_map: bool = False,
+    strip_epub3_attrs: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -98,6 +99,7 @@ def process_book(
         invalid_value=invalid_value,
         illegal_tags=illegal_tags,
         page_map=page_map,
+        strip_epub3_attrs=strip_epub3_attrs,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -408,6 +410,8 @@ def run_library(args) -> int:
                     illegal_tags=args.unwrap_illegal_tags
                     or getattr(args, "all", False),
                     page_map=args.fix_page_map or getattr(args, "all", False),
+                    strip_epub3_attrs=args.strip_epub3_attrs
+                    or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -593,6 +597,7 @@ def run_repair(args) -> int:
                 invalid_value=args.strip_invalid_value or getattr(args, "all", False),
                 illegal_tags=args.unwrap_illegal_tags or getattr(args, "all", False),
                 page_map=args.fix_page_map or getattr(args, "all", False),
+                strip_epub3_attrs=args.strip_epub3_attrs or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -700,6 +705,13 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         help="normalize legacy page-map markup: drop the non-standard page-map "
         'attribute from the OPF spine and add class="pages" to classless NCX '
         "<pageList> elements (epubcheck rejects both)",
+    )
+    p.add_argument(
+        "--strip-epub3-attrs",
+        dest="strip_epub3_attrs",
+        action="store_true",
+        help="scrub the EPUB3-only attributes epubcheck rejects on an EPUB2 "
+        "package (page-progression-direction, epub:type, aria-label; fixed set)",
     )
     p.add_argument(
         "--strip-pagination",

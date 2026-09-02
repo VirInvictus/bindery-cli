@@ -14,8 +14,8 @@ schema (RSC-005) violations, which are usually harmless to readers and not safel
 mechanizable.
 
 The deliberate exceptions to "semantics-preserving" come in two kinds, both strictly
-opt-in. The seven **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
-`--fix-id-colons`, `--fix-page-map`, `--unwrap-block-in-inline`,
+opt-in. The eight **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
+`--fix-id-colons`, `--fix-page-map`, `--strip-epub3-attrs`, `--unwrap-block-in-inline`,
 `--strip-invalid-value`, `--unwrap-illegal-tags`) alter markup structure or fabricate
 minimal content; the three
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
@@ -101,6 +101,10 @@ part of the default pipeline:
   classless NCX `<pageList>` elements (epubcheck rejects both; older HarperCollins /
   Anna's Archive conversions carry them). A pageList that already carries a class is
   untouched.
+- **`--strip-epub3-attrs`**: scrub the EPUB3-only attributes epubcheck rejects on an
+  EPUB2 package — `page-progression-direction`, `epub:type`, `aria-label` (a fixed,
+  documented set; extend only with a named epubcheck finding). Rendering is unchanged,
+  and reader-legitimate lookalikes (`type`, the wider aria family) survive.
 - **`--unwrap-illegal-tags`**: delete `<st> <sentence> <o> <w> <pagebreak>` tags outright,
   inner text preserved. Its CSS precondition is enforced by the library itself:
   `transforms.css_protected_tags` scans every stylesheet entry in the book (nested at-rules

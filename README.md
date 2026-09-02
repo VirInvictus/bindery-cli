@@ -35,6 +35,7 @@ Everything below is off until its flag is passed (or all at once via `--all`). T
 - **`--unwrap-block-in-inline`**: safely unwraps `<span>` tags that illegally contain a block-level element (e.g. `<div>` or `<p>`), leaving the block element intact.
 - **`--strip-invalid-value`**: systematically strips invalid `value="..."` attributes from elements like `<div>`, `<span>`, `<p>`, etc.
 - **`--fix-page-map`**: normalizes legacy page-map markup — drops the non-standard `page-map="..."` attribute from the OPF `<spine>` and adds `class="pages"` to classless NCX `<pageList>` elements (epubcheck rejects both on older HarperCollins / Anna's Archive conversions).
+- **`--strip-epub3-attrs`**: scrubs the EPUB3-only attributes epubcheck rejects on an EPUB2 package — `page-progression-direction`, `epub:type`, `aria-label` (a fixed, documented set; rendering is unchanged, and lookalikes like `type` or the wider aria family survive).
 - **`--unwrap-illegal-tags`**: strips completely invalid or deprecated HTML tags that break EPUB3 validation (`<st>`, `<sentence>`, `<o>`, `<w>`, `<pagebreak>`) while retaining their inner text. Any of those names styled as an *element selector* by an EPUB stylesheet (`.css` entries and inline `<style>` blocks alike; class/id selectors like `.st`/`#w` don't count) is protected for the whole book, guaranteeing format preservation.
 
 
