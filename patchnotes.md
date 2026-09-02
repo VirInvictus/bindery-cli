@@ -1,5 +1,19 @@
 # Bindery Patch Notes
 
+## v0.23.1 (2026-09-02)
+
+- **Fixed: `bindery library --install-to-calibre` crashed swapping repaired
+  files back into the library.** The `calibredb_replace` call passed
+  `--replace` to `calibredb add_format`, but that flag does not exist —
+  replacement is add_format's default behavior (`--dont-replace` opts out) —
+  so every install died with `calibredb: error: no such option: --replace`
+  and a `CalledProcessError` (hit on a real repair pass, 2026-08-31). The
+  subprocess call is now the plain four-argument form. The routing test that
+  pinned the bad flag flips to reject it, and a dedicated regression test
+  pins the exact command shape. spec.md and README no longer advertise the
+  nonexistent flag. Phase 11 (roadmap) later retires the calibredb subprocess
+  entirely in favor of `cquarry.write.WritableCalibreDB.add_format`.
+
 ## v0.23.0 (2026-08-30)
 
 ### Phase 8: batch-scoped sweeps + spine-integrity reporting

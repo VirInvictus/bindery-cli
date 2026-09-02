@@ -229,7 +229,7 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
   book was rejected, unreadable, or failed epubcheck, so scripts can detect trouble.
 
 ### calibredb replacement (`--install-to-calibre`)
-Optionally, Bindery can replace the format natively inside Calibre using `calibredb add_format --replace`. This natively manages the database change (updating sizes, retaining metadata, keeping custom columns intact). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted from the candidate's filesystem path.
+Optionally, Bindery can replace the format natively inside Calibre using `calibredb add_format` (replacement is add_format's default behavior; the flag does not exist). This natively manages the database change (updating sizes, retaining metadata, keeping custom columns intact). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted from the candidate's filesystem path.
 
 ## Audit subcommand (read-only)
 

@@ -536,6 +536,9 @@ hand-rolled zipfile sweep.
 ### calibredb add_format --replace crash (2026-08-31)
 **Bug in `bindery library --install-to-calibre`:** `calibredb add_format` does not have a `--replace` flag (replacement is its default behavior when an existing format is found unless `--dont-replace` is used). This causes `bindery library ... --install-to-calibre` to crash with `calibredb: error: no such option: --replace` when attempting to swap repaired files back into the library, leading to `subprocess.CalledProcessError` on exit status 2.
 **Fix:** Remove `--replace` from the subprocess call in `bindery/library.py` line 158.
+*(Fixed in v0.23.1: the call is the plain four-argument form now; the routing test
+flips and a dedicated test pins the exact command shape. spec/README wording updated.
+Phase 11 below still retires the subprocess path entirely.)*
 
 ## Phase 11: Migrate install-to-calibre to native cquarry API (proposed 2026-08-31)
 

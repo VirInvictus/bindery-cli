@@ -155,6 +155,7 @@ def calibredb_replace(
         atomic_replace(target, new_file)
         return
 
-    subprocess.run(
-        ["calibredb", "add_format", calibre_id, str(new_file), "--replace"], check=True
-    )
+    # add_format has no --replace flag: replacement is its default behavior
+    # (--dont-replace opts out), and passing the flag dies with a usage error
+    # (the 2026-08-31 --install-to-calibre crash).
+    subprocess.run(["calibredb", "add_format", calibre_id, str(new_file)], check=True)

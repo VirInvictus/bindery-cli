@@ -180,8 +180,19 @@ class TestCalibredbReplaceRouting(unittest.TestCase):
         run.assert_called_once()
         # the DB says book 1 even though the directory screams (9)
         self.assertEqual(run.call_args.args[0][2], "1")
-        self.assertIn("--replace", run.call_args.args[0])
+        self.assertNotIn("--replace", run.call_args.args[0])
         self.assertEqual(self.epub.read_bytes(), b"EPUB")  # untouched in place
+
+    def test_add_format_gets_no_replace_flag(self):
+        # calibredb add_format has no --replace flag (replacement is its
+        # default; --dont-replace opts out). Passing it crashed
+        # --install-to-calibre with a usage error on 2026-08-31; the command
+        # stays exactly this four-argument form.
+        with mock.patch("bindery.library.subprocess.run") as run:
+            calibredb_replace(self.epub, self.new, CalibreIdResolver(self.root))
+        self.assertEqual(
+            run.call_args.args[0], ["calibredb", "add_format", "1", str(self.new)]
+        )
 
     def test_regex_fallback_when_no_resolver(self):
         with mock.patch("bindery.library.subprocess.run") as run:
