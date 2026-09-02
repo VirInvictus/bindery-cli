@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "bindery"
+name = "epub-bindery"
 version = "0.27.0"
 description = "High-speed EPUB repair surgeon with a persistent Java validation daemon, safe HTML unwrapping, and native Calibre integration."
 readme = "README.md"
@@ -20,8 +20,9 @@ authors = [
 # every run instead of a stale snapshot, matching CalibreQuarry's dependency policy.
 dependencies = [
   "tqdm",
-  "vir-tui @ git+https://github.com/VirInvictus/vir-tui.git@e53f17efe233e0a03f003be7f6d15f7c097e868d",
-  "cquarry @ git+https://github.com/VirInvictus/cquarry.git@main",]
+  "vir-tui>=2.2.0",
+  "cquarry>=1.9.0",
+]
 
 [project.optional-dependencies]
 reserialize = ["html5lib>=1.1"]
@@ -44,5 +45,3 @@ packages = ["src/bindery"]
 # negated expression.
 select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
 
-[tool.hatch.metadata]
-allow-direct-references = true
