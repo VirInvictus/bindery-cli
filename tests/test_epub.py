@@ -345,7 +345,6 @@ class TestDowngradeEpub3Tags(unittest.TestCase):
             '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
             "<body><figure>cap</figure></body></html>"
         )
-        styled = content.replace("<head>", "<head><style>figure { margin: 0 }</style>")
         for sheet, expect_downgraded in ((None, True), ("figure { margin: 0 }", False)):
             with tempfile.TemporaryDirectory() as td:
                 src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
