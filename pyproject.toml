@@ -45,3 +45,12 @@ packages = ["src/bindery"]
 # negated expression.
 select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
 
+
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Utilities",
+]
