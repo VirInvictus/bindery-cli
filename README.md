@@ -64,11 +64,8 @@ The lossy modes (`--strip-pagination`, `--strip-broken-tags`, and `--strip-water
 Python 3.14+, plus epubcheck on `PATH` for the gate. Dependencies: `tqdm` for progress output, plus the pinned VirInvictus libraries `vir-tui` (TUI rendering) and `cquarry` (read-only Calibre database access); `html5lib` remains an optional extra, needed only for `--reserialize`.
 
 ```sh
-uv tool install /path/to/Bindery                    # core tools
-uv tool install "bindery[reserialize] @ /path/to/Bindery"   # incl. --reserialize
-# or from a checkout:
-PYTHONPATH=src python3 -m bindery --help          # all modes except --reserialize
-PYTHONPATH=src uv run --with html5lib python3 -m bindery --help   # incl. --reserialize
+uv tool install epub-bindery                            # core tools
+uv tool install "epub-bindery[reserialize]"             # incl. --reserialize
 ```
 
 ## Usage
