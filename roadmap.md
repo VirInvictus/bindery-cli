@@ -515,8 +515,8 @@ stays with `qpdf --check` / `djvused -e n` per the skill).
 
 ## Phase 10: OPF/NCX edge cases (proposed 2026-08-30)
 
-- [ ] **Strip illegal `page-map` attributes from `content.opf`.** Older conversions (like HarperCollins / Anna's Archive files) include `<spine ... page-map="page-map">`, which fails epubcheck because the attribute is not standard.
-- [ ] **Inject a fallback `class` attribute into `<pageList>` in `toc.ncx`.** Older conversions often leave `<pageList>` without a class, causing RSC-005 `missing required attribute "class"` errors. Adding `class="pages"` to classless elements cleanly bypasses this without regression.
+- [x] **Strip illegal `page-map` attributes from `content.opf`.** Older conversions (like HarperCollins / Anna's Archive files) include `<spine ... page-map="page-map">`, which fails epubcheck because the attribute is not standard. *(Shipped in v0.25.0 under the opt-in `--fix-page-map` flag (counter `page_map_stripped`), following the structural-repair gating: epubcheck-validity fixes are opt-in, never part of the well-formedness-only core.)*
+- [x] **Inject a fallback `class` attribute into `<pageList>` in `toc.ncx`.** Older conversions often leave `<pageList>` without a class, causing RSC-005 `missing required attribute "class"` errors. Adding `class="pages"` to classless elements cleanly bypasses this without regression. *(Shipped in v0.25.0 under the same flag (counter `pagelist_class_added`); a pageList already carrying a class is untouched, and `--all` includes both.)*
 
 ### v0.22.0 ship note (2026-08-30)
 

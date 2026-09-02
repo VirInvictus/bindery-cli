@@ -72,6 +72,7 @@ def process_book(
     block_in_inline: bool = False,
     invalid_value: bool = False,
     illegal_tags: bool = False,
+    page_map: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -96,6 +97,7 @@ def process_book(
         block_in_inline=block_in_inline,
         invalid_value=invalid_value,
         illegal_tags=illegal_tags,
+        page_map=page_map,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -405,6 +407,7 @@ def run_library(args) -> int:
                     or getattr(args, "all", False),
                     illegal_tags=args.unwrap_illegal_tags
                     or getattr(args, "all", False),
+                    page_map=args.fix_page_map or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -589,6 +592,7 @@ def run_repair(args) -> int:
                 or getattr(args, "all", False),
                 invalid_value=args.strip_invalid_value or getattr(args, "all", False),
                 illegal_tags=args.unwrap_illegal_tags or getattr(args, "all", False),
+                page_map=args.fix_page_map or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -688,6 +692,14 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         help="delete illegal/deprecated tags (<st>, <sentence>, <o>, <w>, "
         "<pagebreak>) keeping inner text; any tag a stylesheet styles as an "
         "element selector is protected book-wide",
+    )
+    p.add_argument(
+        "--fix-page-map",
+        dest="fix_page_map",
+        action="store_true",
+        help="normalize legacy page-map markup: drop the non-standard page-map "
+        'attribute from the OPF spine and add class="pages" to classless NCX '
+        "<pageList> elements (epubcheck rejects both)",
     )
     p.add_argument(
         "--strip-pagination",

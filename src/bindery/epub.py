@@ -199,6 +199,44 @@ class RepairReport:
         return self.total > 0
 
 
+_SPINE_PAGE_MAP_RE = re.compile(r"(<spine\b[^>]*?)\s+page-map=(?:\"[^\"]*\"|'[^']*')")
+
+
+def strip_page_map(opf_text: str) -> tuple[str, int]:
+    """Remove the non-standard ``page-map`` attribute from ``<spine>``.
+
+    Older conversion pipelines (HarperCollins / Anna's Archive output) stamp
+    ``<spine ... page-map="page-map">``; the attribute is not part of the OPF
+    schema and epubcheck rejects the package over it. The page-map file itself
+    (if any) is left alone — this only drops the dangling reference.
+    """
+    return _SPINE_PAGE_MAP_RE.subn(r"\1", opf_text)
+
+
+_PAGELIST_OPEN_RE = re.compile(r"<pageList(?=[\s/>])([^>]*)")
+
+
+def fix_pagelist_class(ncx_text: str) -> tuple[str, int]:
+    """Add ``class="pages"`` to ``<pageList>`` elements missing the attribute.
+
+    NCX 2.x requires ``class`` on ``<pageList>``; older conversions leave it
+    out and epubcheck answers RSC-005 'missing required attribute "class"'.
+    ``class="pages"`` is the value upstream's own tooling emits, and a
+    pageList that already carries a class is left untouched.
+    """
+    count = 0
+
+    def _add(m: re.Match) -> str:
+        nonlocal count
+        attrs = m.group(1)
+        if re.search(r"\bclass\s*=", attrs, re.IGNORECASE):
+            return m.group(0)
+        count += 1
+        return f'<pageList class="pages"{attrs}'
+
+    return _PAGELIST_OPEN_RE.sub(_add, ncx_text), count
+
+
 def opf_unique_id(opf_text: str) -> str | None:
     """The dc:identifier value referenced by the OPF unique-identifier attribute."""
     attr = _UID_ATTR_RE.search(opf_text)
@@ -266,6 +304,7 @@ def repair_epub(
     block_in_inline: bool = False,
     invalid_value: bool = False,
     illegal_tags: bool = False,
+    page_map: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -291,6 +330,10 @@ def repair_epub(
     tags (<st>, <sentence>, <o>, <w>, <pagebreak>) keeping their inner text — any tag
     name an EPUB stylesheet styles as an element selector is protected for the whole
     book, so styled formatting can never be silently destroyed.
+    With `page_map`, normalize legacy page-map markup: drop the non-standard page-map
+    attribute from the OPF spine and add the required class="pages" to classless
+    <pageList> elements in the NCX (older HarperCollins / Anna's Archive conversions
+    fail epubcheck on both).
     """
     report = RepairReport()
 
@@ -372,6 +415,10 @@ def repair_epub(
                     text, n = fix_ncx_ids(text)
                     if n:
                         counts["fix_ncx_ids"] = n
+                if page_map:
+                    text, n = fix_pagelist_class(text)
+                    if n:
+                        counts["pagelist_class_added"] = n
                 synced = False
                 if uid:
                     text, synced = sync_ncx_uid(text, uid)
@@ -381,11 +428,20 @@ def repair_epub(
                     report.add(counts)
                     report.files_changed += 1
                     data = text.encode("utf-8")
-            elif fix_ids and low.endswith(".opf"):
+            elif low.endswith(".opf") and (fix_ids or page_map):
                 text = data.decode("utf-8", "replace")
-                text, n = fix_manifest_ids(text)
-                if n:
-                    report.add({"fix_manifest_ids": n})
+                opf_changed = False
+                if fix_ids:
+                    text, n = fix_manifest_ids(text)
+                    if n:
+                        report.add({"fix_manifest_ids": n})
+                        opf_changed = True
+                if page_map:
+                    text, n = strip_page_map(text)
+                    if n:
+                        report.add({"page_map_stripped": n})
+                        opf_changed = True
+                if opf_changed:
                     report.files_changed += 1
                     data = text.encode("utf-8")
             elif low.endswith(CONTENT_SUFFIXES):

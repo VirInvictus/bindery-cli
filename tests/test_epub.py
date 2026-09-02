@@ -10,9 +10,11 @@ from pathlib import Path
 from bindery.epub import (
     fix_manifest_ids,
     fix_ncx_ids,
+    fix_pagelist_class,
     ncx_uid_mismatch,
     opf_unique_id,
     repair_epub,
+    strip_page_map,
     sync_ncx_uid,
 )
 
@@ -174,6 +176,73 @@ class TestNcxIds(unittest.TestCase):
             self.assertEqual(report.fixes.get("fix_ncx_ids"), 1)
             with zipfile.ZipFile(dst) as z:
                 self.assertIn('id="id_620a6fe8"', z.read("OEBPS/toc.ncx").decode())
+
+
+class TestPageMap(unittest.TestCase):
+    """Phase 10's OPF/NCX edge cases: the non-standard spine page-map
+    attribute and the classless NCX <pageList> (both epubcheck rejects on
+    older HarperCollins / Anna's Archive conversions)."""
+
+    def test_spine_page_map_stripped_both_quote_styles(self):
+        opf = '<spine toc="ncx" page-map="page-map"><itemref idref="a"/></spine>'
+        out, n = strip_page_map(opf)
+        self.assertEqual(n, 1)
+        self.assertEqual(out, '<spine toc="ncx"><itemref idref="a"/></spine>')
+        out, n = strip_page_map("<spine page-map='page-map'/>")
+        self.assertEqual((out, n), ("<spine/>", 1))
+
+    def test_spine_without_page_map_is_untouched(self):
+        opf = '<spine toc="ncx"><itemref idref="a"/></spine>'
+        out, n = strip_page_map(opf)
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_pagelist_class_injected(self):
+        ncx = "<pageList><pageTarget/></pageList>"
+        out, n = fix_pagelist_class(ncx)
+        self.assertEqual(n, 1)
+        self.assertEqual(out, '<pageList class="pages"><pageTarget/></pageList>')
+
+    def test_pagelist_with_existing_class_untouched(self):
+        ncx = '<pageList class="pages" id="pl"><pageTarget/></pageList>'
+        out, n = fix_pagelist_class(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_self_closing_pagelist(self):
+        out, n = fix_pagelist_class("<pageList/>")
+        self.assertEqual((out, n), ('<pageList class="pages"/>', 1))
+
+    def test_opt_in_via_repair_epub(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:THE-RIGHT-ID</dc:identifier>'
+            "</metadata>"
+            '<spine page-map="page-map"><itemref idref="a"/></spine></package>'
+        )
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
+            '<meta name="dtb:uid" content="urn:uuid:THE-RIGHT-ID"/>'
+            "</head><pageList><pageTarget/></pageList></ncx>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/toc.ncx", ncx)
+            report = repair_epub(src, dst)  # off by default
+            self.assertNotIn("page_map_stripped", report.fixes)
+            self.assertNotIn("pagelist_class_added", report.fixes)
+            report = repair_epub(src, dst, page_map=True)
+            self.assertEqual(report.fixes.get("page_map_stripped"), 1)
+            self.assertEqual(report.fixes.get("pagelist_class_added"), 1)
+            with zipfile.ZipFile(dst) as z:
+                opf_out = z.read("OEBPS/content.opf").decode()
+                ncx_out = z.read("OEBPS/toc.ncx").decode()
+        self.assertNotIn("page-map", opf_out)
+        self.assertIn('<pageList class="pages">', ncx_out)
 
 
 class TestMimetypeRepair(unittest.TestCase):

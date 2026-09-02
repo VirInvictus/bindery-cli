@@ -1,4 +1,23 @@
 # Bindery Patch Notes
+## v0.25.0 (2026-09-02)
+
+### Phase 10: OPF/NCX edge cases (--fix-page-map)
+
+- **`--fix-page-map`** normalizes the two page-map defects epubcheck rejects
+  on older HarperCollins / Anna's Archive conversions: the non-standard
+  `page-map="page-map"` attribute on the OPF `<spine>` (counter
+  `page_map_stripped`), and the classless NCX `<pageList>` that trips
+  RSC-005 'missing required attribute "class"' (`class="pages"` injected,
+  counter `pagelist_class_added`; a pageList that already carries a class is
+  untouched).
+- Gated as a structural repair: opt-in, never part of the well-formedness
+  core, included by `--all`, and epubcheck-gated like every other fix. The
+  structural-repair set is seven now.
+- Tests 244 → 250: both quote styles for the spine attribute, a spine
+  without the attribute, injected/self-closing/already-classed pageList
+  forms, and the off-by-default / on / end-to-end zip render through
+  `repair_epub`.
+
 ## v0.24.0 (2026-09-02)
 
 ### Phase 11: native format installation (the calibredb subprocess is gone)

@@ -14,9 +14,10 @@ schema (RSC-005) violations, which are usually harmless to readers and not safel
 mechanizable.
 
 The deliberate exceptions to "semantics-preserving" come in two kinds, both strictly
-opt-in. The six **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
-`--fix-id-colons`, `--unwrap-block-in-inline`, `--strip-invalid-value`,
-`--unwrap-illegal-tags`) alter markup structure or fabricate minimal content; the three
+opt-in. The seven **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
+`--fix-id-colons`, `--fix-page-map`, `--unwrap-block-in-inline`,
+`--strip-invalid-value`, `--unwrap-illegal-tags`) alter markup structure or fabricate
+minimal content; the three
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
 content a converter injected rather than content the author wrote. The default pass runs
 ONLY the transforms listed above and the NCX pipeline — nothing else. (v0.14–v0.16 briefly
@@ -95,6 +96,11 @@ part of the default pipeline:
   `<div>/<p>/<blockquote>`, keeping the block element and its text.
 - **`--strip-invalid-value`**: remove misplaced `value="..."` attributes from non-form
   elements.
+- **`--fix-page-map`**: normalize legacy page-map markup — drop the non-standard
+  `page-map="..."` attribute from the OPF `<spine>` and add `class="pages"` to
+  classless NCX `<pageList>` elements (epubcheck rejects both; older HarperCollins /
+  Anna's Archive conversions carry them). A pageList that already carries a class is
+  untouched.
 - **`--unwrap-illegal-tags`**: delete `<st> <sentence> <o> <w> <pagebreak>` tags outright,
   inner text preserved. Its CSS precondition is enforced by the library itself:
   `transforms.css_protected_tags` scans every stylesheet entry in the book (nested at-rules
