@@ -255,6 +255,67 @@ def strip_epub3_attributes(text: str) -> tuple[str, int]:
     return _EPUB3_ATTR_RE.subn("", text)
 
 
+# The EPUB3/HTML5 semantic elements an EPUB2 (XHTML 1.1) document cannot
+# carry, and the element each downgrades to. figcaption becomes a paragraph
+# (its content is phrasing text); figure and section become divs.
+EPUB3_DOWNGRADE_TAGS = {"figure": "div", "figcaption": "p", "section": "div"}
+
+
+def _append_class(attrs: str, name: str) -> str:
+    """Add `name` to the class attribute in `attrs` (existing classes kept)."""
+    class_re = re.compile(r"class=(?:\"([^\"]*)\"|'([^']*)')")
+    m = class_re.search(attrs)
+    if m:
+        existing = m.group(1) if m.group(1) is not None else m.group(2)
+        quote = '"' if m.group(1) is not None else "'"
+        merged = f"{existing} {name}".strip()
+        return class_re.sub(
+            lambda _: f"class={quote}{merged}{quote}",
+            attrs,
+            count=1,
+        )
+    return f'{attrs} class="{name}"'
+
+
+def downgrade_epub3_tags(
+    text: str, protected_tags: frozenset[str] = frozenset()
+) -> tuple[str, int]:
+    """Downgrade EPUB3/HTML5 semantic elements to their EPUB2 equivalents.
+
+    `<figure>` becomes a `<div class="figure ...">`, `<figcaption>` a
+    `<p class="figcaption ...">`, `<section>` a `<div class="section ...">`;
+    existing classes are kept so class-selector stylesheets keep working, and
+    the semantic name is appended as the styling hook. Names in
+    `protected_tags` (element-selector references in the book's stylesheets,
+    see transforms.css_protected_tags with tags=EPUB3_DOWNGRADE_TAGS) are left
+    untouched: if a book styles `figure { ... }`, downgrading it would change
+    how the text renders, so preservation wins — and the book keeps its
+    RSC-005 findings, which is the honest outcome.
+    """
+    count = 0
+    for tag, new in EPUB3_DOWNGRADE_TAGS.items():
+        if tag in protected_tags:
+            continue
+
+        def repl_open(m: re.Match, tag: str = tag, new: str = new) -> str:
+            nonlocal count
+            attrs = m.group(1)
+            self_close = attrs.rstrip().endswith("/")
+            if self_close:
+                attrs = attrs.rstrip()[:-1]
+            count += 1
+            return f"<{new}{_append_class(attrs, tag)}{'/' if self_close else ''}>"
+
+        def repl_end(m: re.Match, new: str = new) -> str:
+            nonlocal count
+            count += 1
+            return f"</{new}>"
+
+        text = re.sub(rf"<{tag}\b([^>]*)>", repl_open, text, flags=re.IGNORECASE)
+        text = re.sub(rf"</{tag}\s*>", repl_end, text, flags=re.IGNORECASE)
+    return text, count
+
+
 def opf_unique_id(opf_text: str) -> str | None:
     """The dc:identifier value referenced by the OPF unique-identifier attribute."""
     attr = _UID_ATTR_RE.search(opf_text)
@@ -324,6 +385,7 @@ def repair_epub(
     illegal_tags: bool = False,
     page_map: bool = False,
     strip_epub3_attrs: bool = False,
+    downgrade_epub3: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -355,6 +417,9 @@ def repair_epub(
     fail epubcheck on both).
     With `strip_epub3_attrs`, scrub the EPUB3-only attributes epubcheck rejects on an
     EPUB2 package (page-progression-direction, epub:type, aria-label; fixed set).
+    With `downgrade_epub3`, downgrade EPUB3/HTML5 semantic elements (figure, figcaption,
+    section) to their EPUB2 equivalents with the semantic name kept as a class; names a
+    stylesheet styles as an element selector are protected for the whole book.
     """
     report = RepairReport()
 
@@ -381,13 +446,19 @@ def repair_epub(
         # once up front and protect those tag names everywhere (inline <style> blocks
         # are added per document below).
         book_css_tags: frozenset[str] = frozenset()
-        if illegal_tags:
+        downgrade_css_tags: frozenset[str] = frozenset()
+        if illegal_tags or downgrade_epub3:
             css_texts = [
                 zin.read(i).decode("utf-8", "replace")
                 for i in zin.infolist()
                 if i.filename.lower().endswith(".css")
             ]
-            book_css_tags = css_protected_tags(*css_texts)
+            if illegal_tags:
+                book_css_tags = css_protected_tags(*css_texts)
+            if downgrade_epub3:
+                downgrade_css_tags = css_protected_tags(
+                    *css_texts, tags=tuple(EPUB3_DOWNGRADE_TAGS)
+                )
 
         # The mimetype content is an OCF constant, so adding a missing entry and
         # normalizing wrong or whitespace-padded content is deterministic and
@@ -493,6 +564,13 @@ def repair_epub(
                     text, n = strip_epub3_attributes(text)
                     if n:
                         counts["epub3_attrs_stripped"] = n
+                if downgrade_epub3:
+                    protected = downgrade_css_tags | style_block_tags(
+                        text, tags=tuple(EPUB3_DOWNGRADE_TAGS)
+                    )
+                    text, n = downgrade_epub3_tags(text, protected_tags=protected)
+                    if n:
+                        counts["epub3_tags_downgraded"] = n
                 if empty_body:
                     text, n = fix_empty_body(text)
                     if n:

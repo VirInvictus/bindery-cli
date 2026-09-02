@@ -1,4 +1,26 @@
 # Bindery Patch Notes
+## v0.27.0 (2026-09-02)
+
+### RSC-005 verdict, part two: --downgrade-epub3-tags
+
+- **The element downgrade.** The second half of the option-B verdict:
+  `--downgrade-epub3-tags` rewrites EPUB3/HTML5 semantic elements to their
+  EPUB2 equivalents — `figure` and `section` become `div`, `figcaption`
+  becomes `p` (counter `epub3_tags_downgraded`). Existing classes are kept
+  and the semantic name is appended (`<figure class="photo">` becomes
+  `<div class="photo figure">`), so class-selector stylesheets keep working.
+- **CSS protection, generalized.** `css_protected_tags`/`style_block_tags`
+  take the tag set as a parameter now; a book whose stylesheet styles
+  `figure { ... }` (element selector) has that name protected book-wide and
+  the tags left untouched — preservation wins over compliance, and the book
+  keeps its RSC-005 findings. The illegal-tags flow is behaviorally
+  unchanged (same helpers, same defaults).
+- The structural-repair set is nine; `--all` includes the flag; the
+  epubcheck gate applies as with every fix.
+- Tests 254 → 260: the three mappings, class preservation (both quote
+  styles), the self-closing form, the protected-name path, and the
+  end-to-end run with and without a styling stylesheet.
+
 ## v0.26.0 (2026-09-02)
 
 ### RSC-005 verdict, part one: --strip-epub3-attrs

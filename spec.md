@@ -14,10 +14,10 @@ schema (RSC-005) violations, which are usually harmless to readers and not safel
 mechanizable.
 
 The deliberate exceptions to "semantics-preserving" come in two kinds, both strictly
-opt-in. The eight **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
-`--fix-id-colons`, `--fix-page-map`, `--strip-epub3-attrs`, `--unwrap-block-in-inline`,
-`--strip-invalid-value`, `--unwrap-illegal-tags`) alter markup structure or fabricate
-minimal content; the three
+opt-in. The nine **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
+`--fix-id-colons`, `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
+`--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`) alter
+markup structure or fabricate minimal content; the three
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
 content a converter injected rather than content the author wrote. The default pass runs
 ONLY the transforms listed above and the NCX pipeline — nothing else. (v0.14–v0.16 briefly
@@ -105,6 +105,13 @@ part of the default pipeline:
   EPUB2 package — `page-progression-direction`, `epub:type`, `aria-label` (a fixed,
   documented set; extend only with a named epubcheck finding). Rendering is unchanged,
   and reader-legitimate lookalikes (`type`, the wider aria family) survive.
+- **`--downgrade-epub3-tags`**: downgrade EPUB3/HTML5 semantic elements to their EPUB2
+  equivalents — `figure`/`section` to `div`, `figcaption` to `p` — keeping existing
+  classes and appending the semantic name (`class="figure"`) as the styling hook.
+  Names a stylesheet styles as an element selector are protected book-wide
+  (`css_protected_tags`/`style_block_tags` are parameterized over the tag set), so
+  styled formatting can never be silently destroyed; a protected book keeps its
+  RSC-005 findings, which is the honest outcome.
 - **`--unwrap-illegal-tags`**: delete `<st> <sentence> <o> <w> <pagebreak>` tags outright,
   inner text preserved. Its CSS precondition is enforced by the library itself:
   `transforms.css_protected_tags` scans every stylesheet entry in the book (nested at-rules

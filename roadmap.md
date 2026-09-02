@@ -531,7 +531,14 @@ hand-rolled zipfile sweep.
   *(Attribute scrub shipped in v0.26.0 as `--strip-epub3-attrs` (counter
   `epub3_attrs_stripped`): the three named attributes, fixed documented set,
   content docs and the OPF both, lookalikes survive. The illegal `<span>`
-  unwrapping half stays with the element-downgrade flag below.)*
+  unwrapping half ships with the element-downgrade flag below.)*
+- **Element downgrade shipped in v0.27.0 as `--downgrade-epub3-tags`**
+  (counter `epub3_tags_downgraded`): `figure`/`section` to `div`,
+  `figcaption` to `p`, existing classes kept and the semantic name appended
+  (`class="figure"`); `css_protected_tags`/`style_block_tags` are
+  parameterized over the tag set, so a book styling `figure { ... }` keeps
+  its markup and its RSC-005 findings (preservation wins). Both flags are
+  included by `--all` and epubcheck-gated.
 
 ### Convert `<figure>` / HTML5 elements in EPUB2 (RSC-005)
 - **Target**: `The Cemetery of Untold Stories` throws 14 `RSC-005` errors for `element "figure" not allowed anywhere`.

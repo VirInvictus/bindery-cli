@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 from bindery.epub import (
+    downgrade_epub3_tags,
     fix_manifest_ids,
     fix_ncx_ids,
     fix_pagelist_class,
@@ -303,6 +304,67 @@ class TestStripEpub3Attrs(unittest.TestCase):
         self.assertNotIn("page-progression-direction", opf_out)
         self.assertNotIn("epub:type", c_out)
         self.assertIn("<p>x</p>", c_out)
+
+
+class TestDowngradeEpub3Tags(unittest.TestCase):
+    """The element half of the RSC-005 verdict: EPUB3 semantic elements
+    downgrade to their EPUB2 equivalents, classes kept, CSS-protected names
+    untouched."""
+
+    def test_figure_and_section_become_divs(self):
+        text = "<figure>x</figure><section>y</section>"
+        out, n = downgrade_epub3_tags(text)
+        self.assertEqual(n, 4)
+        self.assertEqual(out, '<div class="figure">x</div><div class="section">y</div>')
+
+    def test_figcaption_becomes_a_paragraph(self):
+        out, n = downgrade_epub3_tags("<figcaption>cap</figcaption>")
+        self.assertEqual((out, n), ('<p class="figcaption">cap</p>', 2))
+
+    def test_existing_classes_are_kept_and_extended(self):
+        text = '<figure class="photo wide" id="f1">x</figure>'
+        out, _ = downgrade_epub3_tags(text)
+        self.assertEqual(out, '<div class="photo wide figure" id="f1">x</div>')
+        out, _ = downgrade_epub3_tags("<figure class='one'>x</figure>")
+        self.assertEqual(out, "<div class='one figure'>x</div>")
+
+    def test_self_closing_form(self):
+        out, n = downgrade_epub3_tags("<figure/>")
+        self.assertEqual((out, n), ('<div class="figure"/>', 1))
+
+    def test_css_protected_names_untouched(self):
+        text = "<figure>x</figure><section>y</section>"
+        out, n = downgrade_epub3_tags(text, protected_tags=frozenset({"figure"}))
+        self.assertEqual(n, 2)
+        self.assertIn("<figure>x</figure>", out)
+        self.assertIn('<div class="section">y</div>', out)
+
+    def test_integration_with_and_without_css_protection(self):
+        content = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+            "<body><figure>cap</figure></body></html>"
+        )
+        styled = content.replace("<head>", "<head><style>figure { margin: 0 }</style>")
+        for sheet, expect_downgraded in ((None, True), ("figure { margin: 0 }", False)):
+            with tempfile.TemporaryDirectory() as td:
+                src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+                with zipfile.ZipFile(src, "w") as z:
+                    z.writestr("mimetype", "application/epub+zip")
+                    z.writestr("OEBPS/c1.xhtml", content)
+                    if sheet:
+                        z.writestr("OEBPS/s.css", sheet)
+                report = repair_epub(src, dst, downgrade_epub3=True)
+                with zipfile.ZipFile(dst) as z:
+                    out = z.read("OEBPS/c1.xhtml").decode()
+            if expect_downgraded:
+                self.assertEqual(report.fixes.get("epub3_tags_downgraded"), 2)
+                self.assertIn('<div class="figure">', out)
+            else:
+                # the book styles `figure` as an element selector: preservation
+                # wins and the RSC-005 findings stay, which is the honest outcome
+                self.assertNotIn("epub3_tags_downgraded", report.fixes)
+                self.assertIn("<figure>cap</figure>", out)
 
 
 class TestMimetypeRepair(unittest.TestCase):

@@ -380,8 +380,11 @@ _CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _STYLE_BLOCK_RE = re.compile(r"<style\b[^>]*>(.*?)</style>", re.IGNORECASE | re.DOTALL)
 
 
-def css_protected_tags(*sheets: str) -> frozenset[str]:
-    """Illegal-tag names referenced as element selectors in the given CSS text(s).
+def css_protected_tags(
+    *sheets: str, tags: tuple[str, ...] = ILLEGAL_TAGS
+) -> frozenset[str]:
+    """Element-selector-referenced tag names in the given CSS text(s),
+    from `tags` (default: the illegal-tag set).
 
     Selector-aware, so `.st { ... }` (a class) or `#w { ... }` (an id) does NOT
     protect anything while `st { ... }` or `p st, x > w { ... }` does. Comments are
@@ -389,7 +392,7 @@ def css_protected_tags(*sheets: str) -> frozenset[str]:
     ports scripts/find_css_illegal_tags.py into the library so the transform can
     enforce its own precondition instead of trusting callers to scan.
     """
-    tags: set[str] = set()
+    found: set[str] = set()
     for css in sheets:
         stripped = _CSS_COMMENT_RE.sub("", css)
         # Candidate selector lists are whatever precedes a '{'. Scanning this way
@@ -399,20 +402,20 @@ def css_protected_tags(*sheets: str) -> frozenset[str]:
         # precede a '{'.
         for m in re.finditer(r"([^{}]*)\{", stripped):
             selectors = m.group(1)
-            for tag in ILLEGAL_TAGS:
+            for tag in tags:
                 # The trailing boundary includes . and #: `pagebreak.new:after`
                 # styles pagebreak ELEMENTS, so it must protect the name, while a
                 # LEADING . or # stays unprotected (`div.st` styles a class).
                 if re.search(
                     rf"(^|[\s,>+~]){tag}([\s,>+~:\[.#]|$)", selectors, re.IGNORECASE
                 ):
-                    tags.add(tag)
-    return frozenset(tags)
+                    found.add(tag)
+    return frozenset(found)
 
 
-def style_block_tags(doc: str) -> frozenset[str]:
+def style_block_tags(doc: str, tags: tuple[str, ...] = ILLEGAL_TAGS) -> frozenset[str]:
     """css_protected_tags over every inline `<style>` block in a content document."""
-    return css_protected_tags(*_STYLE_BLOCK_RE.findall(doc))
+    return css_protected_tags(*_STYLE_BLOCK_RE.findall(doc), tags=tags)
 
 
 def unwrap_illegal_tags(

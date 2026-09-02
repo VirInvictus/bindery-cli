@@ -74,6 +74,7 @@ def process_book(
     illegal_tags: bool = False,
     page_map: bool = False,
     strip_epub3_attrs: bool = False,
+    downgrade_epub3: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -100,6 +101,7 @@ def process_book(
         illegal_tags=illegal_tags,
         page_map=page_map,
         strip_epub3_attrs=strip_epub3_attrs,
+        downgrade_epub3=downgrade_epub3,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -412,6 +414,8 @@ def run_library(args) -> int:
                     page_map=args.fix_page_map or getattr(args, "all", False),
                     strip_epub3_attrs=args.strip_epub3_attrs
                     or getattr(args, "all", False),
+                    downgrade_epub3=args.downgrade_epub3_tags
+                    or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -598,6 +602,8 @@ def run_repair(args) -> int:
                 illegal_tags=args.unwrap_illegal_tags or getattr(args, "all", False),
                 page_map=args.fix_page_map or getattr(args, "all", False),
                 strip_epub3_attrs=args.strip_epub3_attrs or getattr(args, "all", False),
+                downgrade_epub3=args.downgrade_epub3_tags
+                or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -712,6 +718,15 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="scrub the EPUB3-only attributes epubcheck rejects on an EPUB2 "
         "package (page-progression-direction, epub:type, aria-label; fixed set)",
+    )
+    p.add_argument(
+        "--downgrade-epub3-tags",
+        dest="downgrade_epub3_tags",
+        action="store_true",
+        help="downgrade EPUB3/HTML5 semantic elements to EPUB2 equivalents "
+        "(figure/section to div, figcaption to p; semantic name kept as a "
+        "class; names a stylesheet styles as an element selector are "
+        "protected book-wide)",
     )
     p.add_argument(
         "--strip-pagination",
