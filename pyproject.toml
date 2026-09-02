@@ -7,6 +7,14 @@ name = "bindery-cli"
 version = "0.27.0"
 description = "High-speed EPUB repair surgeon with a persistent Java validation daemon, safe HTML unwrapping, and native Calibre integration."
 readme = "README.md"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Utilities",
+]
 requires-python = ">=3.14"
 keywords = ["epub", "epubcheck", "calibre", "repair", "ebook", "html-repair", "watermarks"]
 license = { text = "MIT" }
@@ -46,11 +54,3 @@ packages = ["src/bindery"]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
 
 
-classifiers = [
-    "Development Status :: 5 - Production/Stable",
-    "Environment :: Console",
-    "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.14",
-    "Topic :: Utilities",
-]
