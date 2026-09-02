@@ -539,12 +539,23 @@ hand-rolled zipfile sweep.
 ### calibredb add_format --replace crash (2026-08-31)
 **Bug in `bindery library --install-to-calibre`:** `calibredb add_format` does not have a `--replace` flag (replacement is its default behavior when an existing format is found unless `--dont-replace` is used). This causes `bindery library ... --install-to-calibre` to crash with `calibredb: error: no such option: --replace` when attempting to swap repaired files back into the library, leading to `subprocess.CalledProcessError` on exit status 2.
 **Fix:** Remove `--replace` from the subprocess call in `bindery/library.py` line 158.
-*(Fixed in v0.23.1: the call is the plain four-argument form now; the routing test
-flips and a dedicated test pins the exact command shape. spec/README wording updated.
-Phase 11 below still retires the subprocess path entirely.)*
+*(Fixed in v0.23.1; RETIRED entirely by Phase 11 in v0.24.0 — the calibredb
+subprocess is gone, so the crash class no longer exists.)*
 
 ## Phase 11: Migrate install-to-calibre to native cquarry API (proposed 2026-08-31)
 
 *Context: `bindery library --install-to-calibre` currently shells out to the external `calibredb add_format` CLI binary. This is fragile (it crashed on 2026-08-31 due to a non-existent `--replace` flag) and bypasses the transaction and trigger-safety guarantees built into the `cquarry` library. Since Bindery already imports `cquarry` for path resolution, it should adopt the native write module.*
 
-- [ ] **Adopt `WritableCalibreDB` for format installation:** Replace the `subprocess.run(["calibredb", ...])` call in `bindery/library.py` with `cquarry.write.WritableCalibreDB.add_format()`. This keeps all database writes safely centralized in `cquarry` and eliminates the dependency on the external Calibre CLI for structural sweeps.
+- [x] **Adopt `WritableCalibreDB` for format installation:** Replace the `subprocess.run(["calibredb", ...])` call in `bindery/library.py` with `cquarry.write.WritableCalibreDB.add_format()`. This keeps all database writes safely centralized in `cquarry` and eliminates the dependency on the external Calibre CLI for structural sweeps.
+  *(Shipped in v0.24.0 as `install_format()`: the file is placed atomically
+  first — an in-place replace over the catalogued file (same path, same
+  `data.name`) or a fresh placement under the repaired file's stem when no
+  EPUB row exists — then the row is re-registered via `remove_format` +
+  `add_format` in one `batch()` (`add_format` refuses duplicates), so the
+  stored size stays truthful and the book lands in `metadata_dirtied`
+  (neither happened under the old raw-CLI flow). The guess-only fallback
+  honors `CALIBRE_DBPATH` (the old calibredb library contract) and degrades
+  to the in-place save when no library can be located; a database failure
+  degrades the same way rather than losing the repair. `uv.lock` moved to
+  cquarry 1.9.0 in the same release, closing NEW-AUDIT Stage 1's pending
+  note. Tests 240 → 244.)*

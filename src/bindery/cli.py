@@ -31,7 +31,7 @@ from .epub import ncx_uid_mismatch, repair_epub
 from .library import (
     CalibreIdResolver,
     atomic_replace,
-    calibredb_replace,
+    install_format,
     iter_epubs,
     make_backup,
 )
@@ -460,7 +460,7 @@ def run_library(args) -> int:
                 if args.install_to_calibre:
                     # The id comes from cquarry's metadata.db view — accurate
                     # even when the (id) directory was renamed.
-                    calibredb_replace(epub, work / "repaired.epub", id_resolver)
+                    install_format(epub, work / "repaired.epub", id_resolver)
                 else:
                     atomic_replace(epub, work / "repaired.epub")
                 applied += 1

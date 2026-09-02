@@ -1,10 +1,12 @@
-"""Calibre-library-aware helpers: find books and replace a format file in place.
+"""Calibre-library-aware helpers: find books and install a repaired format.
 
-Replacement is atomic and surgical. It writes the repaired EPUB to a temporary file
-in the same directory, fsyncs it, then os.replace()s it over the original so the path
-and filename Calibre expects never change and no half-written file is ever visible.
-Only the .epub is touched; metadata.opf, cover.jpg, and metadata.db are left alone for
-Calibre's Quality Check sync to reconcile. An optional backup is taken first.
+File placement is atomic and surgical: the repaired EPUB is written to a temporary
+file in the target's directory, fsynced, then os.replace()d over the original so the
+path and filename Calibre expects never change and no half-written file is ever
+visible. With a resolved book id the ``data`` row follows through cquarry's write
+module (OPF-resync queue included); without one, only the .epub is touched and
+metadata.opf, cover.jpg, and metadata.db are left alone for Calibre's Quality Check
+sync to reconcile. An optional backup is taken first.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess
+import sqlite3
 from pathlib import Path
 
 
@@ -47,7 +49,9 @@ def atomic_replace(target: Path, new_file: Path) -> None:
     failure the temp file is removed, so a half-written .bindery.tmp never lingers in
     the library.
     """
-    mode = target.stat().st_mode
+    # A fresh format's destination does not exist yet; a replacement
+    # inherits the original's mode.
+    mode = target.stat().st_mode if target.exists() else 0o644
     tmp = target.with_name(target.name + ".bindery.tmp")
     try:
         shutil.copyfile(new_file, tmp)
@@ -114,6 +118,11 @@ class CalibreIdResolver:
         self._load()
         return self._paths.get(str(Path(epub).resolve()).lower())
 
+    @property
+    def db_path(self) -> Path:
+        """The metadata.db this resolver reads its id map from."""
+        return self._root / "metadata.db"
+
 
 def guess_calibre_id(epub: Path) -> str | None:
     """Legacy fallback: pull the id out of the ``(123)`` directory fragment.
@@ -126,16 +135,31 @@ def guess_calibre_id(epub: Path) -> str | None:
     return match.group(1) if match else None
 
 
-def calibredb_replace(
+def install_format(
     target: Path, new_file: Path, resolver: CalibreIdResolver | None = None
 ) -> None:
-    """Use calibredb to seamlessly replace the fixed EPUB in the library.
-    This preserves all metadata, custom columns, and reading progress natively.
+    """Install a repaired EPUB as a book's format through cquarry's write module.
 
     The book id comes from cquarry's metadata.db view when a resolver is given
     (accurate even for hand-renamed directories); the legacy ``(id)``
     directory-name guess is the fallback, and without any id the repaired
     file is saved atomically in place instead.
+
+    With a book id, the repaired file is placed in the book's directory —
+    an atomic replace over the catalogued file when one exists (same path,
+    same ``data.name``; Calibre's layout never changes) — and the ``data``
+    row follows through ``WritableCalibreDB``: ``remove_format`` +
+    ``add_format`` in one ``batch()`` when the format exists (``add_format``
+    refuses duplicates by design), a fresh ``add_format`` otherwise. The
+    row's size stays truthful and the book lands in ``metadata_dirtied``, so
+    Calibre regenerates its sidecar .opf. Files are the caller's
+    responsibility in cquarry; they are placed here, atomically, before the
+    row is written, and a failed row update degrades to the in-place save
+    with a warning rather than losing the repair.
+
+    This used to shell out to ``calibredb add_format``; the native path drops
+    the external CLI dependency and the flag-shape crash class with it (the
+    2026-08-31 ``--replace`` incident).
     """
     calibre_id: str | None = None
     if resolver is not None:
@@ -155,7 +179,66 @@ def calibredb_replace(
         atomic_replace(target, new_file)
         return
 
-    # add_format has no --replace flag: replacement is its default behavior
-    # (--dont-replace opts out), and passing the flag dies with a usage error
-    # (the 2026-08-31 --install-to-calibre crash).
-    subprocess.run(["calibredb", "add_format", calibre_id, str(new_file)], check=True)
+    if resolver is not None:
+        db_path = resolver.db_path
+    else:
+        # The legacy guess comes from a path inside a library tree whose root
+        # only calibredb knew (its default library / CALIBRE_DBPATH). Mirror
+        # that contract; with neither, do not guess where to write.
+        env = os.environ.get("CALIBRE_DBPATH")
+        db_path = Path(env) / "metadata.db" if env else None
+    if db_path is None or not db_path.is_file():
+        import sys
+
+        print(
+            f"WARNING: No metadata.db found for book {calibre_id} (no resolver "
+            "library, CALIBRE_DBPATH unset or missing). Saving in place instead.",
+            file=sys.stderr,
+        )
+        atomic_replace(target, new_file)
+        return
+
+    from cquarry.write import WritableCalibreDB
+
+    placed = False
+    try:
+        with WritableCalibreDB(str(db_path)) as wdb:
+            row = wdb.conn.execute(
+                "SELECT name FROM data WHERE book = ? AND upper(format) = 'EPUB'",
+                (int(calibre_id),),
+            ).fetchone()
+            if row is not None:
+                atomic_replace(target, new_file)
+                placed = True
+                with wdb.batch():
+                    wdb.remove_format(int(calibre_id), "EPUB")
+                    wdb.add_format(
+                        int(calibre_id), "EPUB", row["name"], new_file.stat().st_size
+                    )
+            else:
+                book = wdb.conn.execute(
+                    "SELECT path FROM books WHERE id = ?", (int(calibre_id),)
+                ).fetchone()
+                dest_dir = Path(db_path).parent / book["path"]
+                name = new_file.stem
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                atomic_replace(dest_dir / f"{name}.epub", new_file)
+                placed = True
+                with wdb.batch():
+                    wdb.add_format(
+                        int(calibre_id), "EPUB", name, new_file.stat().st_size
+                    )
+    except (ValueError, sqlite3.Error) as e:
+        import sys
+
+        if not placed:
+            # The repair must never be lost to a database problem: save it in
+            # place (same path the library already knows) and say what happened.
+            atomic_replace(target, new_file)
+            placed = True
+        print(
+            f"WARNING: the repaired file for book {calibre_id} was saved, but the "
+            f"database row could not be updated ({e}); Calibre may show a stale "
+            "size until its next metadata refresh.",
+            file=sys.stderr,
+        )

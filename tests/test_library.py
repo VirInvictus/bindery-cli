@@ -13,8 +13,8 @@ from bindery.library import (
     CalibreIdResolver,
     atomic_replace,
     backup_path,
-    calibredb_replace,
     guess_calibre_id,
+    install_format,
     iter_epubs,
     make_backup,
 )
@@ -100,6 +100,7 @@ def make_library(root: Path, dir_id: int = 1) -> Path:
         CREATE TABLE data (id INTEGER PRIMARY KEY, book INT, format TEXT,
             name TEXT, uncompressed_size INT);
         CREATE TABLE identifiers (book INT, type TEXT, val TEXT);
+        CREATE TABLE metadata_dirtied (book INTEGER UNIQUE);
         """
     )
     conn.execute(
@@ -160,9 +161,11 @@ class TestGuessCalibreId(unittest.TestCase):
         self.assertIsNone(guess_calibre_id(Path("/lib/loose.epub")))
 
 
-class TestCalibredbReplaceRouting(unittest.TestCase):
-    """calibredb_replace prefers the cquarry-resolved id over the name guess,
-    and falls back to an atomic in-place save when no id can be found."""
+class TestInstallFormat(unittest.TestCase):
+    """install_format replaces a book's EPUB through cquarry's write module:
+    the file lands atomically at the catalogued path, the data row follows
+    (same name, truthful size, OPF-resync queue), and the id comes from the
+    resolver — never the directory name. No external calibredb process."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -174,31 +177,93 @@ class TestCalibredbReplaceRouting(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_resolver_id_wins_over_directory_guess(self):
-        with mock.patch("bindery.library.subprocess.run") as run:
-            calibredb_replace(self.epub, self.new, CalibreIdResolver(self.root))
-        run.assert_called_once()
-        # the DB says book 1 even though the directory screams (9)
-        self.assertEqual(run.call_args.args[0][2], "1")
-        self.assertNotIn("--replace", run.call_args.args[0])
-        self.assertEqual(self.epub.read_bytes(), b"EPUB")  # untouched in place
+    def _rows(self, root=None):
+        con = sqlite3.connect((root or self.root) / "metadata.db")
+        try:
+            return con.execute(
+                "SELECT format, name, uncompressed_size FROM data"
+            ).fetchall()
+        finally:
+            con.close()
 
-    def test_add_format_gets_no_replace_flag(self):
-        # calibredb add_format has no --replace flag (replacement is its
-        # default; --dont-replace opts out). Passing it crashed
-        # --install-to-calibre with a usage error on 2026-08-31; the command
-        # stays exactly this four-argument form.
-        with mock.patch("bindery.library.subprocess.run") as run:
-            calibredb_replace(self.epub, self.new, CalibreIdResolver(self.root))
+    def _dirtied(self, root=None):
+        con = sqlite3.connect((root or self.root) / "metadata.db")
+        try:
+            return [r[0] for r in con.execute("SELECT book FROM metadata_dirtied")]
+        finally:
+            con.close()
+
+    def test_resolver_id_wins_and_row_follows(self):
+        # the DB says book 1 even though the directory screams (9)
+        install_format(self.epub, self.new, CalibreIdResolver(self.root))
+        self.assertEqual(self.epub.read_bytes(), b"REPAIRED")
+        # same data.name, truthful size, still exactly one EPUB row
+        self.assertEqual(self._rows(), [("EPUB", "Title - Author", len(b"REPAIRED"))])
+        self.assertEqual(self._dirtied(), [1])
+
+    def test_replace_survives_a_database_error(self):
+        # A database failure must never lose the repair: the file is saved in
+        # place and the warning says the row is stale. add_format fails after
+        # the batch's remove_format, so the whole batch rolls back.
+        import contextlib
+        import io
+
+        with mock.patch("cquarry.write.WritableCalibreDB.add_format") as m:
+            m.side_effect = sqlite3.OperationalError("database is locked")
+            with contextlib.redirect_stderr(io.StringIO()):
+                install_format(self.epub, self.new, CalibreIdResolver(self.root))
+        self.assertEqual(self.epub.read_bytes(), b"REPAIRED")
+        # the batch rolled back: the old row survives untouched
+        self.assertEqual(self._rows(), [("EPUB", "Title - Author", 10)])
+
+    def test_guess_fallback_uses_calibre_dbpath(self):
+        # No resolver: the legacy (id) guess plus CALIBRE_DBPATH (the old
+        # calibredb contract) still installs natively when they agree.
+        import os
+
+        root = make_library(Path(self.tmp.name) / "lib2", dir_id=1)
+        epub = root / "Author" / "Title (1)" / "Title - Author.epub"
+        new = root / "repaired.epub"
+        new.write_bytes(b"REPAIRED")
+        with mock.patch.dict(os.environ, {"CALIBRE_DBPATH": str(root)}):
+            install_format(epub, new)
+        self.assertEqual(epub.read_bytes(), b"REPAIRED")
         self.assertEqual(
-            run.call_args.args[0], ["calibredb", "add_format", "1", str(self.new)]
+            self._rows(root), [("EPUB", "Title - Author", len(b"REPAIRED"))]
         )
 
-    def test_regex_fallback_when_no_resolver(self):
-        with mock.patch("bindery.library.subprocess.run") as run:
-            calibredb_replace(self.epub, self.new)  # legacy behaviour
-        run.assert_called_once()
-        self.assertEqual(run.call_args.args[0][2], "9")
+    def test_guess_degrades_to_in_place_without_a_library(self):
+        # No resolver, no CALIBRE_DBPATH: do not guess where to write; save
+        # the repair in place and leave every database untouched.
+        import contextlib
+        import io
+        import os
+
+        root = make_library(Path(self.tmp.name) / "lib3", dir_id=1)
+        epub = root / "Author" / "Title (1)" / "Title - Author.epub"
+        new = root / "repaired.epub"
+        new.write_bytes(b"REPAIRED")
+        env = {k: v for k, v in os.environ.items() if k != "CALIBRE_DBPATH"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stderr(io.StringIO()):
+                install_format(epub, new)
+        self.assertEqual(epub.read_bytes(), b"REPAIRED")
+        # the row was not touched (size still the fixture's 10)
+        self.assertEqual(self._rows(root), [("EPUB", "Title - Author", 10)])
+
+    def test_wrong_guess_degrades_to_in_place(self):
+        # The guess finds book 9, which does not exist; the repair is saved
+        # in place rather than crashing the sweep.
+        import contextlib
+        import io
+        import os
+
+        env = {k: v for k, v in os.environ.items() if k != "CALIBRE_DBPATH"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stderr(io.StringIO()):
+                install_format(self.epub, self.new)
+        self.assertEqual(self.epub.read_bytes(), b"REPAIRED")
+        self.assertEqual(self._rows(), [("EPUB", "Title - Author", 10)])
 
     def test_no_id_falls_back_to_atomic_replace(self):
         import contextlib
@@ -206,11 +271,37 @@ class TestCalibredbReplaceRouting(unittest.TestCase):
 
         loose = self.root / "loose.epub"
         loose.write_bytes(b"OLD")
-        with mock.patch("bindery.library.subprocess.run") as run:
-            with contextlib.redirect_stderr(io.StringIO()):
-                calibredb_replace(loose, self.new)
-        run.assert_not_called()
+        with contextlib.redirect_stderr(io.StringIO()):
+            install_format(loose, self.new)
         self.assertEqual(loose.read_bytes(), b"REPAIRED")
+        # no (id) directory fragment: no book id, no database write
+        self.assertEqual(self._dirtied(), [])
+
+    def test_fresh_format_added_when_none_catalogued(self):
+        # A book with no catalogued EPUB row: the resolver cannot see it (its
+        # map IS the format rows), so the legacy guess plus CALIBRE_DBPATH
+        # carries the id; the repaired file is placed in the book's directory
+        # under the repaired file's stem and registered fresh.
+        import os
+
+        root = make_library(Path(self.tmp.name) / "lib4", dir_id=1)
+        epub = root / "Author" / "Title (1)" / "Title - Author.epub"
+        new = root / "repaired.epub"
+        new.write_bytes(b"REPAIRED")
+        con = sqlite3.connect(root / "metadata.db")
+        try:
+            con.execute("DELETE FROM data")
+            con.commit()
+        finally:
+            con.close()
+        env = {k: v for k, v in os.environ.items() if k != "CALIBRE_DBPATH"}
+        env["CALIBRE_DBPATH"] = str(root)
+        with mock.patch.dict(os.environ, env, clear=True):
+            install_format(epub, new)
+        placed = root / "Author" / "Title (1)" / "repaired.epub"
+        self.assertEqual(placed.read_bytes(), b"REPAIRED")
+        self.assertEqual(self._rows(root), [("EPUB", "repaired", len(b"REPAIRED"))])
+        self.assertEqual(self._dirtied(root), [1])
 
 
 if __name__ == "__main__":

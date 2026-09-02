@@ -228,8 +228,8 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
 - The `library` exit code is 0 for a clean sweep, 1 for a usage error, and 2 when any
   book was rejected, unreadable, or failed epubcheck, so scripts can detect trouble.
 
-### calibredb replacement (`--install-to-calibre`)
-Optionally, Bindery can replace the format natively inside Calibre using `calibredb add_format` (replacement is add_format's default behavior; the flag does not exist). This natively manages the database change (updating sizes, retaining metadata, keeping custom columns intact). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted from the candidate's filesystem path.
+### Native format installation (`--install-to-calibre`)
+Optionally, Bindery installs the repaired EPUB as the book's format through cquarry's write module (`WritableCalibreDB`): the file is placed atomically — an in-place replace over the catalogued file when one exists (same path, same `data.name`), or a fresh placement under the repaired file's stem otherwise — and the `data` row follows in one `batch()` transaction (`remove_format` + `add_format`, since `add_format` refuses duplicates), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. The external `calibredb` CLI is no longer used (the v0.23.1 `--replace` crash class is gone with it). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
 
 ## Audit subcommand (read-only)
 

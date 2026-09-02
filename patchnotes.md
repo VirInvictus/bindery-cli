@@ -1,4 +1,37 @@
 # Bindery Patch Notes
+## v0.24.0 (2026-09-02)
+
+### Phase 11: native format installation (the calibredb subprocess is gone)
+
+- **`bindery library --install-to-calibre` writes through cquarry now.** The
+  `calibredb_replace` shell-out (a `calibredb add_format` subprocess) is
+  replaced by `install_format()`: the repaired EPUB is placed atomically at
+  the catalogued path — same directory, same `data.name`, so Calibre's layout
+  never changes — and the `data` row is re-registered through
+  `cquarry.write.WritableCalibreDB` (`remove_format` + `add_format` in one
+  `batch()` transaction, because `add_format` refuses case-insensitive
+  duplicates). Two things improve beyond the crash fix: the stored
+  `uncompressed_size` becomes the repaired file's true size (the CLI path
+  updated it, but the row's truthfulness now holds for the fresh-format case
+  too), and the book lands in `metadata_dirtied`, so Calibre regenerates the
+  sidecar `.opf` and re-pushes metadata to wireless readers — the raw
+  subprocess never queued anything.
+- **Fresh-format case.** A book with no catalogued EPUB row gets the repaired
+  file placed under the repaired file's stem and a row registered fresh (the
+  resolver cannot see such books — its id map IS the format rows — so the
+  legacy `(id)` guess plus `CALIBRE_DBPATH`, the old calibredb library
+  contract, carries the id).
+- **Failure posture.** A database failure (locked, missing book) degrades to
+  the atomic in-place save with a warning instead of losing the repair or
+  crashing a multi-hour sweep; when the file was already placed, the warning
+  says the row may be stale.
+- **Dependency.** `uv.lock` moves to cquarry 1.9.0 (`f22bbe7`) in the same
+  release, closing the lock-refresh note recorded at the 1.9 sync.
+- Tests 240 → 244: the routing battery was rewritten against the real write
+  module (id-wins-over-directory, row follow-through + queueing, guess via
+  `CALIBRE_DBPATH`, degrade paths for a wrong guess / missing library /
+  database failure, the fresh-format placement).
+
 
 ## v0.23.1 (2026-09-02)
 
