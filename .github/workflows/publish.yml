@@ -16,7 +16,7 @@ jobs:
 
       - name: Run test suite
         run: |
-          pip install html5lib
+          pip install .[reserialize]
           PYTHONPATH=src python -m unittest discover -s tests
 
   build-and-publish:
