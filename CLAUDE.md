@@ -1,4 +1,4 @@
-# CLAUDE.md (Bindery)
+# CLAUDE.md (bindery-cli)
 
 Per-project guidance. Overrides the global file where they conflict.
 

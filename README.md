@@ -1,16 +1,16 @@
 <div align="center">
-  <img src="logo.svg" width="96" height="96" alt="Bindery logo"/>
-  <h1>Bindery</h1>
+  <img src="logo.svg" width="96" height="96" alt="bindery-cli logo"/>
+  <h1>bindery-cli</h1>
   <p>Audit EPUB body text and repair broken EPUBs with safe, deterministic fixes, validated by epubcheck, with optional in-place replacement in a Calibre library.</p>
 </div>
 
 <p align="center">
-  <img src="docs/screenshots/library-sweep.png" alt="Bindery's dry-run library sweep: per-book epubcheck results and a summary table ending in 'no files written'">
+  <img src="docs/screenshots/library-sweep.png" alt="bindery-cli's dry-run library sweep: per-book epubcheck results and a summary table ending in 'no files written'">
 </p>
 
 ## What it fixes
 
-Bindery makes accidentally broken markup well-formed again. It does not rewrite or reflow content. The **default pass** applies only a small set of deterministic, semantics-preserving well-formedness fixes that real-world EPUBs (especially Calibre conversions) trip over — nothing else changes without an explicit flag:
+bindery-cli makes accidentally broken markup well-formed again. It does not rewrite or reflow content. The **default pass** applies only a small set of deterministic, semantics-preserving well-formedness fixes that real-world EPUBs (especially Calibre conversions) trip over — nothing else changes without an explicit flag:
 
 - **Unclosed void elements** (`<link>`, `<br>`, `<img>`, ...) get self-closed.
 - **Undeclared named entities** (`&nbsp;`, `&deg;`, `&eacute;`, ...) become numeric character references that every XML parser understands.
@@ -77,7 +77,7 @@ The sections below take each in turn.
 
 ## Auditing
 
-Bindery includes a comprehensive auditing tool to inspect EPUB body text for non-schema flaws that epubcheck cannot catch. It extracts and analyzes the visible text to detect content issues, producing console reports that can be used to filter your library or feed into `bindery repair`.
+bindery-cli includes a comprehensive auditing tool to inspect EPUB body text for non-schema flaws that epubcheck cannot catch. It extracts and analyzes the visible text to detect content issues, producing console reports that can be used to filter your library or feed into `bindery repair`.
 
 Scan a Calibre library for specific issues:
 
@@ -162,7 +162,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - `--only {fatals,ncx,all}` restricts the candidate set. `ncx` targets NCX-001 mismatches (detected without epubcheck); `fatals` needs `--audit`.
 - `--id <ids>` limits the sweep to a comma-separated list of Calibre book IDs, skipping the full library walk.
 - `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast. Paths are resolved on both sides, and a CSV that matches nothing triggers a loud warning instead of silently selecting zero books.
-- `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. Bindery launches a transparent, persistent Java daemon (`EpubcheckDaemon`) to evaluate candidates in the background, eliminating the JVM startup penalty. This reduces validation time from ~5 seconds per book down to ~0.05 seconds, allowing `--sweep` to scan a 5,000-book library in just 10 minutes. Combine with `--only fatals` for a self-contained, lightning-fast "find and fix the broken books" run.
+- `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. bindery-cli launches a transparent, persistent Java daemon (`EpubcheckDaemon`) to evaluate candidates in the background, eliminating the JVM startup penalty. This reduces validation time from ~5 seconds per book down to ~0.05 seconds, allowing `--sweep` to scan a 5,000-book library in just 10 minutes. Combine with `--only fatals` for a self-contained, lightning-fast "find and fix the broken books" run.
 - `--json FILE` writes a machine-readable report of the whole run (per-book status, before/after counts, applied flag, summary totals). `--manual-list FILE` writes the paths of every book that was not auto-repaired, one per line, ready for manual follow-up.
 - `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file.
 - `--install-to-calibre` resolves the Calibre book id from `metadata.db` via cquarry (one read-only path→id map per run), so a hand-renamed `Author/Title (id)/` directory can never send the repaired file to the wrong book. The directory-name regex is only a no-catalog fallback; with neither, the file is saved atomically in place.
@@ -175,7 +175,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 
 ## Companion scripts
 
-`scripts/` holds standalone, read-only utilities that are useful for EPUB maintenance but fall outside Bindery's repair contract (fixing what they find would be a content change, which Bindery makes only via the opt-in `--strip-pagination`):
+`scripts/` holds standalone, read-only utilities that are useful for EPUB maintenance but fall outside bindery-cli's repair contract (fixing what they find would be a content change, which bindery-cli makes only via the opt-in `--strip-pagination`):
 
 - `find_missing_images.py`: scans a library tree and reports every book whose `<img>` tags point at files that do not exist inside the archive (a common defect in converted EPUBs). Reads the archives in place; nothing is unpacked or written. The library path is set at the bottom of the script.
 
@@ -193,7 +193,7 @@ MIT. See [LICENSE](LICENSE).
 
 ## Support
 
-If Bindery's useful to you and you'd like to chip in:
+If bindery-cli's useful to you and you'd like to chip in:
 
 - liberapay · [liberapay.com/bdkl](https://liberapay.com/bdkl/)
 - bitcoin

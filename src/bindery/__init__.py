@@ -1,4 +1,4 @@
-"""Bindery: repair EPUBs (well-formedness fixes, plus an opt-in lossy page-number
+"""bindery-cli: repair EPUBs (well-formedness fixes, plus an opt-in lossy page-number
 strip), epubcheck-gated.
 
 Single source of truth for the version. pyproject.toml must match VERSION below.

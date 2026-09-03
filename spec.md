@@ -1,14 +1,14 @@
-# Bindery specification
+# bindery-cli specification
 
 The contract. Read this before changing semantics.
 
 ## Scope
 
-Bindery repairs well-formedness and a few specific validity defects in EPUBs. It is
+bindery-cli repairs well-formedness and a few specific validity defects in EPUBs. It is
 deliberately narrow: every transform is deterministic and semantics-preserving, and
 the result is only kept when epubcheck confirms it improved. Deterministic is meant at
 the byte level: repairing the same book twice, in separate processes, produces
-identical archives. Bindery does not reflow,
+identical archives. bindery-cli does not reflow,
 restyle, re-compress, or restructure content, and it does not attempt to fix arbitrary
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
@@ -246,7 +246,7 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
   book was rejected, unreadable, or failed epubcheck, so scripts can detect trouble.
 
 ### Native format installation (`--install-to-calibre`)
-Optionally, Bindery installs the repaired EPUB as the book's format through cquarry's write module (`WritableCalibreDB`): the file is placed atomically — an in-place replace over the catalogued file when one exists (same path, same `data.name`), or a fresh placement under the repaired file's stem otherwise — and the `data` row follows in one `batch()` transaction (`remove_format` + `add_format`, since `add_format` refuses duplicates), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. The external `calibredb` CLI is no longer used (the v0.23.1 `--replace` crash class is gone with it). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
+Optionally, bindery-cli installs the repaired EPUB as the book's format through cquarry's write module (`WritableCalibreDB`): the file is placed atomically — an in-place replace over the catalogued file when one exists (same path, same `data.name`), or a fresh placement under the repaired file's stem otherwise — and the `data` row follows in one `batch()` transaction (`remove_format` + `add_format`, since `add_format` refuses duplicates), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. The external `calibredb` CLI is no longer used (the v0.23.1 `--replace` crash class is gone with it). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
 
 ## Audit subcommand (read-only)
 

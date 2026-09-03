@@ -1,4 +1,4 @@
-# Bindery Patch Notes
+# bindery-cli Patch Notes
 ## v0.27.0 (2026-09-02)
 
 ### RSC-005 verdict, part two: --downgrade-epub3-tags
@@ -172,7 +172,7 @@
   directories and case-insensitive matching behave exactly as before. The
   `(123)` directory-name regex remains the documented no-catalog fallback.
   The `audit.py` raw-join swap was waived at the Phase 9 design session (its
-  three targeted joins are cheaper than whole-library hydration and Bindery
+  three targeted joins are cheaper than whole-library hydration and bindery-cli
   wants per-book maps, not row dicts); do not "improve" it into a regression.
 - **Dependency**: requires cquarry ≥ 1.8 (`format_path_index`). The `uv.lock`
   still pins the pre-1.8 `@main` commit until cquarry's 1.8.0 commits are
@@ -206,7 +206,7 @@
 - **Dependency bump (deliberate pin move).** The `vir-tui` pin moved from `d13ad0e` to `e53f17e`
   (vir-tui 2.2.0), per the repo policy of pinning exact commits and bumping deliberately. 2.2.0 is
   additive — `progress_box()`, `interactive_session()`, `prompt_float`/`prompt_path`/`confirm`,
-  `out_note`, `text_mode()`, and results-pager search — and every API Bindery uses (`ui.tqdm`,
+  `out_note`, `text_mode()`, and results-pager search — and every API bindery-cli uses (`ui.tqdm`,
   `ui.info`, `ui.print_header`) is unchanged, so no behavior change is expected; `uv.lock`
   regenerated to match the new pin.
 - **Version sync fix.** `src/bindery/__init__.py` still said `0.18.0` while `pyproject.toml` said
@@ -253,7 +253,7 @@
 - **Tagged books are queued for OPF regeneration.** The pinned cquarry bump (1.1 → 1.2) means every
   `WritableCalibreDB.add_tag()` now records the book id in Calibre's `metadata_dirtied` queue —
   the table upstream consumes to decide which sidecar `.opf`s to regenerate (and re-push to wireless
-  readers) at next startup. Previously a Bindery-applied tag would appear in the GUI but never reach
+  readers) at next startup. Previously a bindery-cli-applied tag would appear in the GUI but never reach
   OPF/wireless sync. Verified end-to-end against a synthetic library: flagged book tagged,
   `metadata_dirtied` gains exactly that id, clean books untouched.
 - **Requires `cquarry` @ e19c24c** (v1.2.0); pin bumped accordingly.
@@ -326,13 +326,13 @@ above the daemon call where it is an actual docstring. Suite: 183 -> 201 tests.
 
 ### Core Upgrades
 
-**Centralized Calibre DB Access:** Bindery has transitioned to the unified `cquarry` library for all read-only `metadata.db` accesses. The internal `bindery.audit` DB connection logic has been completely replaced with `cquarry.db.CalibreDB`. This inherits robust Calibre lock handling, database snapshotting, and ensures query logic stays perfectly synchronized with `CalibreQuarry` and `Hermitage`.
+**Centralized Calibre DB Access:** bindery-cli has transitioned to the unified `cquarry` library for all read-only `metadata.db` accesses. The internal `bindery.audit` DB connection logic has been completely replaced with `cquarry.db.CalibreDB`. This inherits robust Calibre lock handling, database snapshotting, and ensures query logic stays perfectly synchronized with `CalibreQuarry` and `Hermitage`.
 
 
 ## v0.15.0 (2026-08-23)
 
 ### Features
-- **Integrated EPUB Auditing (`bindery audit`):** Successfully absorbed the external `audit_epub` codebase directly into Bindery as a native subcommand. This transforms Bindery from a pure repair tool into a complete EPUB lifecycle toolkit (Audit -> Repair -> Validate). 
+- **Integrated EPUB Auditing (`bindery audit`):** Successfully absorbed the external `audit_epub` codebase directly into bindery-cli as a native subcommand. This transforms bindery-cli from a pure repair tool into a complete EPUB lifecycle toolkit (Audit -> Repair -> Validate). 
   - **`content`:** Identifies non-English text by sniffing the text blocks, reporting the predominant script block (e.g., Cyrillic, CJK) to catch untranslated or mis-encoded EPUBs.
   - **`pagenumbers`:** Detects books polluted with hardcoded print page numbers (using sliding window regex to find high-density sequential digits interrupting prose), seamlessly bridging into `bindery repair --strip-pagination` for the fix.
   - **`emptytext`:** Audits EPUBs to find effectively empty books or spine stubs (below configurable `--min-chars` and `--thin-chars` thresholds).
@@ -355,7 +355,7 @@ above the daemon call where it is an actual docstring. Suite: 183 -> 201 tests.
 ## v0.13.0 (2026-08-22)
 
 ### Structural Changes
-- **Epubcheck Daemon:** Radically accelerated the `bindery library` validation gate by implementing a transparent, persistent Java daemon. Bindery now automatically compiles `FastDaemon.java` in the background and pipes EPUB paths to it, eliminating the JVM startup penalty.
+- **Epubcheck Daemon:** Radically accelerated the `bindery library` validation gate by implementing a transparent, persistent Java daemon. bindery-cli now automatically compiles `FastDaemon.java` in the background and pipes EPUB paths to it, eliminating the JVM startup penalty.
 - Validation time dropped from ~5 seconds per book down to under ~0.05 seconds per book, cutting library sweeps from 6 hours to 10 minutes.
 
 ## v0.12.3 (2026-08-22)
@@ -378,10 +378,10 @@ above the daemon call where it is an actual docstring. Suite: 183 -> 201 tests.
 ## v0.12.0 (2026-08-22)
 
 ### Features
-- **Oceanstrip Merged:** Fully incorporated the `oceanstrip` standalone tool directly into Bindery's primary pipeline.
+- **Oceanstrip Merged:** Fully incorporated the `oceanstrip` standalone tool directly into bindery-cli's primary pipeline.
 - Added `--strip-watermarks` flag to systematically detect and remove producer/distributor watermarks (e.g. OceanofPDF stamps and zero-byte marker files, ABC Amber LIT Converter injections) from EPUBs.
 - This lossy transform is correctly governed by the `validate.no_worse` EPUBCheck oracle, ensuring clean structural extraction without regressing file validity.
-- The `--strip-watermarks` argument is automatically engaged when running Bindery with `--all`.
+- The `--strip-watermarks` argument is automatically engaged when running bindery-cli with `--all`.
 
 ## v0.11.0 (2026-08-21)
 
@@ -493,7 +493,7 @@ that the correct hook does not create.
 
 Two constraints recorded with the decision, because they shape what the plugin can
 be: it runs inside Calibre's bundled Python, so it must vendor its own code and
-cannot assume Bindery is installed (the minimal-dependency rule is what makes this
+cannot assume bindery-cli is installed (the minimal-dependency rule is what makes this
 practical, and the optional `html5lib` path cannot come along); and epubcheck
 cannot gate an import, being an external Java process of seconds per book, so the
 plugin does the deterministic transforms and leaves gated work to the CLI where a
@@ -643,7 +643,7 @@ round of CLI hardening and UX. Every fix ships with a unittest regression test.
 
 ## v0.5.0 (2026-06-14)
 
-**New: `--strip-pagination` (opt-in, lossy).** Removes print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs, which reflow into the middle of sentences ("where the hay cart 16 was taking him"). This is the first mode that removes visible content, so it is a deliberate, fenced-off exception to Bindery's semantics-preserving rule: off by default, and accepted by a new `no_worse` bar (no net-new fatals or errors) instead of the improvement-demanding `gate`, because a baked page number is valid markup that epubcheck cannot see.
+**New: `--strip-pagination` (opt-in, lossy).** Removes print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs, which reflow into the middle of sentences ("where the hay cart 16 was taking him"). This is the first mode that removes visible content, so it is a deliberate, fenced-off exception to bindery-cli's semantics-preserving rule: off by default, and accepted by a new `no_worse` bar (no net-new fatals or errors) instead of the improvement-demanding `gate`, because a baked page number is valid markup that epubcheck cannot see.
 
 - Removes only injected furniture, never the author's prose. Where a number split a sentence it rejoins the two paragraphs (closing up a word split like `compli-`/`mentary`); page-list `id` anchors are hoisted into the merged paragraph so navigation still resolves.
 - A book is treated as paginated only when it has both a dense run of standalone arabic numbers (>= 20) and several confident mid-sentence interrupts (>= 3), so a merely chapter-numbered book is never touched. Roman chapter/front-matter numerals and year-range values are preserved.

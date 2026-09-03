@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Bindery logo">
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="bindery-cli logo">
   <rect width="128" height="128" rx="24" fill="#181616"/>
   <!-- book spine / cover being rebound -->
   <rect x="30" y="26" width="68" height="76" rx="5" fill="none" stroke="#c5c9c5" stroke-width="5"/>

@@ -1,4 +1,4 @@
-# Bindery roadmap
+# bindery-cli roadmap
 
 ## Phase 1: deterministic repair engine (shipped, v0.1.0)
 
@@ -303,14 +303,14 @@ enters the library, the user's original on disk is never touched, and no write t
 
 Three consequences worth stating, because they change existing plans:
 
-1. **Bindery's separate "metadata.db nudge" item is unnecessary and is dropped.**
+1. **bindery-cli's separate "metadata.db nudge" item is unnecessary and is dropped.**
    It existed so Calibre would notice a changed file size after an in-place
    replacement. Under `on_import` the file is modified *before* Calibre reads it,
    so the size it records is already correct. The nudge was solving a problem
    created by replacing files behind Calibre's back.
 2. **The plugin must carry its own code.** It runs inside Calibre's bundled
    Python, which will not have either tool pip-installed. Both being minimal-dependency
-   is what makes this practical: the module vendors into the plugin zip. Bindery's
+   is what makes this practical: the module vendors into the plugin zip. bindery-cli's
    optional `html5lib` path and its epubcheck gate cannot come along, so the
    plugin must degrade honestly rather than half-run.
 3. **epubcheck cannot gate the import.** It is an external Java process taking
@@ -339,10 +339,10 @@ never wrote — exactly the class of fix that must stay opt-in under the safety 
 
 ## Phase 4: cquarry Integration (complete 2026-08-28, v0.19.0)
 
-With the transition to the `cquarry` shared library (v0.16.0), Bindery inherits the ability to perform complex search and batch resolution natively. As the `cquarry` library adds new write capabilities, Bindery is slated to adopt the following upgrades:
+With the transition to the `cquarry` shared library (v0.16.0), bindery-cli inherits the ability to perform complex search and batch resolution natively. As the `cquarry` library adds new write capabilities, bindery-cli is slated to adopt the following upgrades:
 
 - [x] **Format Path Resolution:** Transition to `cquarry.get_format_path()` to remove manual path concatenations during file discovery. *(done: v0.18.0 for library-mode audits; v0.19.0 finishes the job — `CalibreIdResolver` builds the id→EPUB-path map through `get_format_path()` so `--install-to-calibre` resolves the book id from `metadata.db` instead of the `(id)` directory fragment.)*
-- [x] **Safe Tag Application:** When `cquarry` implements safe DB writes (`add_tag`), Bindery will gain the ability to automatically tag books in the Calibre UI as "Audited" or "Flagged" when issues are found, rather than relying strictly on console output. *(done: v0.18.1 — `audit --tag` applies via `cquarry.write.WritableCalibreDB.add_tag`, OPF-resync queued through `metadata_dirtied`; v0.19.0 extends `--tag` to the new `--id` single-book mode.)*
+- [x] **Safe Tag Application:** When `cquarry` implements safe DB writes (`add_tag`), bindery-cli will gain the ability to automatically tag books in the Calibre UI as "Audited" or "Flagged" when issues are found, rather than relying strictly on console output. *(done: v0.18.1 — `audit --tag` applies via `cquarry.write.WritableCalibreDB.add_tag`, OPF-resync queued through `metadata_dirtied`; v0.19.0 extends `--tag` to the new `--id` single-book mode.)*
 - [x] **Single-Entity Fetching:** Utilize `get_book(book_id)` for faster isolated audits when analyzing a single book, avoiding the overhead of caching the entire library layout. *(done: v0.19.0 — `audit --id BOOK_ID` fetches one row via `get_book()`, resolves the EPUB via `get_format_path()`, and reports the same verdicts as directory mode.)*
 
 ## Phase 6: Code Sweep & Fixes (2026-08-23)
@@ -527,7 +527,7 @@ aside), the sweep's sub-reason split, the flipped CRC test plus
 hand-rolled zipfile sweep.
 
 ### Pending Repair Implementations
-- **Strip Invalid/Deprecated Attributes (RSC-005):** `testing_facility/books_to_fix/Lost Lambs (Madeline Cash) (z-library.sk, 1lib.sk, z-lib.sk).epub` throws `RSC-005` errors for `page-progression-direction` on `<package>`, `epub:type` on `<body>`, `aria-label` outside of allowed namespaces, and unwrapping illegal `<span>` tags. Bindery currently intercepts `<li value="..">` via `--strip-invalid-value`, but needs a broader pass to scrub these specific deprecated HTML5/EPUB3 attributes when targeting EPUB2 compliance, or just to silence strict validation errors. **DECISION 2026-09-02 (Brandon, on the NEW-AUDIT brief): Option B — the attribute scrub ships as its own opt-in flag (v0.26.0), and the element downgrade ships separately with the CSS-protection work (v0.27.0); no per-book flags, no silent tolerance.**
+- **Strip Invalid/Deprecated Attributes (RSC-005):** `testing_facility/books_to_fix/Lost Lambs (Madeline Cash) (z-library.sk, 1lib.sk, z-lib.sk).epub` throws `RSC-005` errors for `page-progression-direction` on `<package>`, `epub:type` on `<body>`, `aria-label` outside of allowed namespaces, and unwrapping illegal `<span>` tags. bindery-cli currently intercepts `<li value="..">` via `--strip-invalid-value`, but needs a broader pass to scrub these specific deprecated HTML5/EPUB3 attributes when targeting EPUB2 compliance, or just to silence strict validation errors. **DECISION 2026-09-02 (Brandon, on the NEW-AUDIT brief): Option B — the attribute scrub ships as its own opt-in flag (v0.26.0), and the element downgrade ships separately with the CSS-protection work (v0.27.0); no per-book flags, no silent tolerance.**
   *(Attribute scrub shipped in v0.26.0 as `--strip-epub3-attrs` (counter
   `epub3_attrs_stripped`): the three named attributes, fixed documented set,
   content docs and the OPF both, lookalikes survive. The illegal `<span>`
@@ -555,7 +555,7 @@ subprocess is gone, so the crash class no longer exists.)*
 
 ## Phase 11: Migrate install-to-calibre to native cquarry API (proposed 2026-08-31)
 
-*Context: `bindery library --install-to-calibre` currently shells out to the external `calibredb add_format` CLI binary. This is fragile (it crashed on 2026-08-31 due to a non-existent `--replace` flag) and bypasses the transaction and trigger-safety guarantees built into the `cquarry` library. Since Bindery already imports `cquarry` for path resolution, it should adopt the native write module.*
+*Context: `bindery library --install-to-calibre` currently shells out to the external `calibredb add_format` CLI binary. This is fragile (it crashed on 2026-08-31 due to a non-existent `--replace` flag) and bypasses the transaction and trigger-safety guarantees built into the `cquarry` library. Since bindery-cli already imports `cquarry` for path resolution, it should adopt the native write module.*
 
 - [x] **Adopt `WritableCalibreDB` for format installation:** Replace the `subprocess.run(["calibredb", ...])` call in `bindery/library.py` with `cquarry.write.WritableCalibreDB.add_format()`. This keeps all database writes safely centralized in `cquarry` and eliminates the dependency on the external Calibre CLI for structural sweeps.
   *(Shipped in v0.24.0 as `install_format()`: the file is placed atomically
