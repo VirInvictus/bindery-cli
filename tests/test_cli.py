@@ -368,6 +368,9 @@ class TestOptInFlagWiring(unittest.TestCase):
         "unwrap_block_in_inline",
         "strip_invalid_value",
         "unwrap_illegal_tags",
+        "prune_missing_resources",
+        "strip_broken_anchors",
+        "encode_url_spaces",
     )
 
     def test_flags_default_off_on_both_subcommands(self):
@@ -388,6 +391,9 @@ class TestOptInFlagWiring(unittest.TestCase):
             "block_in_inline",
             "invalid_value",
             "illegal_tags",
+            "prune_missing",
+            "strip_anchors",
+            "url_spaces",
         )
         with tempfile.TemporaryDirectory() as td:
             src = Path(td) / "in.epub"

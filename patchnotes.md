@@ -1,4 +1,93 @@
 # bindery-cli Patch Notes
+## v0.28.0 (2026-09-05)
+
+### Phase 12: repairs for the top epubcheck error codes
+
+The 2026-09-05 full-library sweep (`testing_facility/top500candidates/REPORT.md`)
+catalogued the top recurring codes: RSC-005 (164,302), RSC-020 (8,431), PKG-010
+(4,112), RSC-007 (3,219), RSC-012 (1,940), HTM-025 (800). Bulk RSC-005 repair stays
+rejected (the spec non-goal stands); everything else gained a deterministic,
+epubcheck-gated, opt-in repair. The structural-repair set is now twelve; `--all`
+includes all three.
+
+- **`--prune-missing-resources`** (PKG-010/RSC-007) removes references to files the
+  archive does not contain: dead `<link>` elements (`dead_links_pruned`), anchors'
+  href to absent files with the text kept (`missing_file_hrefs_stripped`), absent
+  `<img>` sources replaced by their escaped alt text when they carry one
+  (`missing_imgs_unwrapped`) or dropped when they do not (`missing_imgs_pruned`), and
+  orphaned non-spine OPF manifest items (`manifest_items_pruned`). Spine documents are
+  never pruned: a missing spine document is a damaged fragment for the spine-integrity
+  report, not a pruning candidate.
+- **`--strip-broken-anchors`** (RSC-020/RSC-012, plus the HTM-025 scheme half) strips
+  href attributes that cannot resolve while keeping the anchor text byte-for-byte: a
+  `#fragment` the target document does not define (`broken_fragment_hrefs_stripped`;
+  the anchor keeps its text, NCX navTargets fall back to the document target so
+  chapter navigation survives, and the fragment is never re-pointed at a guessed
+  sibling document), and non-resolvable URI schemes (`nonfile_scheme_hrefs_stripped`;
+  fixed resolvable set: http, https, mailto). NCX counter: `ncx_fragments_stripped`.
+  The id set for fragment checks is built from the documents as they will look when
+  the pass runs (core transforms, `--reserialize`, `--fix-id-colons` applied), so an
+  id rename can never make a valid reference look broken.
+- **`--encode-url-spaces`** (the Death Masks shape: 67 RSC-020 "not a valid URL")
+  percent-encodes raw spaces in src/href attribute values across the package — OPF
+  manifest href, NCX content src, content documents (counter `url_spaces_encoded`).
+  Scope is fixed to the space character; archive entry names are untouched.
+- **HTM-025 ampersand half closed by test:** `escape_bare_amp` always covered
+  attribute values (transforms run on raw text); the URL-attribute case is now pinned
+  by an explicit test instead of an assumption.
+
+Fixture validation (all /tmp copies, gate-accepted, zero regressions):
+
+| Book | Before | After | Fixes |
+|---|---|---|---|
+| Swann's Way | 0f/31e/1w | 0f/2e/0w | dead_links_pruned:29, nonfile_scheme_hrefs_stripped:1 |
+| Sodom and Gomorrah | 0f/53e/0w | 0f/42e/0w | ncx_fragments_stripped:9, broken_fragment_hrefs_stripped:2 |
+| Death Masks | 0f/68e/34w | 0f/1e/34w | url_spaces_encoded:67 |
+
+Every surviving finding is RSC-005 (the non-goal) or the Death Masks entry-name
+warnings (see below). The full label-vs-reality findings postscript lives in
+roadmap.md Phase 12; headline: the staged "PKG-010" book has no missing resources at
+all — its 34 PKG-010s are "file name contains spaces" warnings about the zip entry
+names, which no shipped flag touches. Renaming entries and rewriting every reference
+is a possible future flag.
+
+### FastSweep: parallel JVM sweep harness (scripts/)
+
+- `scripts/FastSweep.java` now merges the audit (CSV `fatals,errors,warnings,path`,
+  the format `bindery library --audit` reads) and extract (`path ||| CODE,...`)
+  prototypes behind `--mode=audit` / `--mode=extract`, keeping the stdin +
+  `parallelStream()` shape.
+- **The prototype's extract mode never worked:** `CheckingReport` buffers every
+  message and writes nothing to its writer until `generate()` — and `generate()`
+  NPEs without a preceding `initialize()`. Every code list in the prototype's
+  `raw_errors*.txt` runs came back empty. The merged harness follows the CLI's own
+  lifecycle (`initialize` → validate → `generate`) and extracts codes from the JSON.
+  The committed REPORT.md's per-book code attributions should be treated as
+  unverified until regenerated with the fixed harness.
+- `scripts/fast_sweep.py` (stdlib-only) is the wrapper: locates the epubcheck jar
+  (`--jar` / `EPUBCHECK_JAR` / parsed from the launcher), compiles the harness once
+  with `--release 25` (cached on mtime), scans a directory or a path list, and
+  `--summary` aggregates extract output into the per-code REPORT-style table.
+  Measured on the 14 staged fixtures: ~4.5 s across all cores vs ~42 s sequential.
+- The audit CSV feeds `bindery library --audit` cleanly (smoke-tested for candidate
+  selection both ways).
+
+### Notes
+
+- epubcheck 5.3.0 surfaces disagree on counts: the human listing prints raw message
+  totals while the `--json` checker block prints deduplicated ones (Swann's Way: 31
+  vs 2 errors). bindery's gate reads the JSON surface consistently for both
+  measurements, so gate decisions are unaffected. FastSweep's audit mode carries the
+  raw CheckingReport counts; that CSV is used for candidate selection only.
+- Related, unchanged on purpose: validate.py's persistent daemon launches
+  `java -cp ".:epubcheck.jar"` without epubcheck's `lib/` dependencies, so it always
+  fails its first check and silently falls back to the subprocess JSON path on this
+  machine. Fixing the classpath would flip gate measurements from deduplicated to
+  raw counts — a gate-behavior change that gets its own decision.
+- Tests 260 → 277: transform units (encoding, protection, idempotency, HTM-025),
+  repair-level opt-in/counter/output tests for all three flags, the structural
+  default-off case list, and the CLI wiring tuples.
+
 ## v0.27.0 (2026-09-02)
 
 ### RSC-005 verdict, part two: --downgrade-epub3-tags

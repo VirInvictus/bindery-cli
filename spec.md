@@ -14,9 +14,10 @@ schema (RSC-005) violations, which are usually harmless to readers and not safel
 mechanizable.
 
 The deliberate exceptions to "semantics-preserving" come in two kinds, both strictly
-opt-in. The nine **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
+opt-in. The twelve **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
 `--fix-id-colons`, `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
-`--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`) alter
+`--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
+`--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`) alter
 markup structure or fabricate minimal content; the three
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
 content a converter injected rather than content the author wrote. The default pass runs
@@ -83,7 +84,7 @@ normal gate applies.
 
 ### Opt-in: structural repairs
 
-Six repairs go past well-formedness and therefore require their own flag; none is ever
+Twelve repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
@@ -119,8 +120,30 @@ part of the default pipeline:
   used as *element selectors* (`w { }`, `pagebreak.new:after {}`; `.st`/`#w` class/id
   selectors do not protect), and protected names are skipped for the whole book — styled
   formatting can never be silently destroyed.
+- **`--prune-missing-resources`**: remove references to files the archive does not
+  contain (RSC-007/PKG-010): dead `<link>` elements, anchors' `href` to absent files
+  (the anchor and its text stay), absent `<img>` sources (replaced by their escaped
+  alt text when they carry one, dropped otherwise), and orphaned non-spine OPF manifest
+  `<item>` declarations. Spine documents are never pruned: a missing spine document is
+  a damaged fragment for the audit's spine-integrity check, never a silent drop.
+- **`--strip-broken-anchors`**: strip `href` attributes that cannot resolve, keeping
+  the anchor text byte-for-byte. A `#fragment` the target document does not define
+  (RSC-020 "fragment identifier not defined", RSC-012 "points to the wrong element") is
+  removed from the anchor; NCX `<content src="doc#frag"/>` falls back to the document
+  target, keeping chapter navigation at document precision — the fragment is never
+  re-pointed at a guessed sibling document, because a drifted id (Mobipocket `filepos`
+  anchors after a converter re-split) may exist nowhere. A target wholly absent from
+  the archive is left for the spine-integrity report. href values carrying a scheme no
+  reader resolves (`kindle:embed:`, `file:`, ...) are stripped under the same flag; the
+  resolvable set is fixed (`http`, `https`, `mailto`) and extends only with a named
+  finding.
+- **`--encode-url-spaces`**: percent-encode raw spaces in `src`/`href` attribute values
+  across the package (OPF manifest, NCX `content src`, content documents). A URL with a
+  literal space is not a valid URL (RSC-020 "not a valid URL") and unresolvable on
+  strict readers; the encoded form denotes the same file and renders identically. Scope
+  is fixed to the space character: extend only with a named epubcheck finding.
 
-All six are evaluated by the normal `gate`: unlike the lossy strips, their benefit is
+All twelve are evaluated by the normal `gate`: unlike the lossy strips, their benefit is
 visible to epubcheck (they clear errors), so a run with no measurable improvement is a
 noop and nothing is applied. CDATA sections and comments are never rewritten, as
 everywhere else.

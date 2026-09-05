@@ -11,6 +11,7 @@ from bindery.transforms import (
     apply_transforms,
     css_protected_tags,
     drop_duplicate_xmlns,
+    encode_url_spaces,
     escape_bare_amp,
     escape_unknown_entities,
     fix_empty_body,
@@ -206,6 +207,49 @@ class TestBareAmp(unittest.TestCase):
         self.assertEqual(n, 0)
         self.assertEqual(out, s)
 
+    def test_bare_amp_in_url_attribute_is_core(self):
+        # The HTM-025 'unescaped ampersand' shape in a query string: the core
+        # transform already covers attribute values (transforms run on raw text).
+        out, n = escape_bare_amp('<a href="page?a=1&b=2">x</a>')
+        self.assertEqual(n, 1)
+        self.assertEqual(out, '<a href="page?a=1&amp;b=2">x</a>')
+
+
+class TestEncodeUrlSpaces(unittest.TestCase):
+    def test_double_quoted(self):
+        out, n = encode_url_spaces('<a href="a b.htm">x</a>')
+        self.assertEqual((out, n), ('<a href="a%20b.htm">x</a>', 1))
+
+    def test_single_quoted(self):
+        out, n = encode_url_spaces("<img src='i 1.jpg'/>")
+        self.assertEqual((out, n), ("<img src='i%201.jpg'/>", 1))
+
+    def test_namespaced_prefix_covered(self):
+        out, n = encode_url_spaces('<image xlink:href="a b.png"/>')
+        self.assertEqual((out, n), ('<image xlink:href="a%20b.png"/>', 1))
+
+    def test_data_href_is_not_href(self):
+        s = '<a data-href="a b.htm" href="c d.htm">x</a>'
+        out, n = encode_url_spaces(s)
+        self.assertEqual(n, 1)
+        self.assertIn('data-href="a b.htm"', out)
+        self.assertIn('href="c%20d.htm"', out)
+
+    def test_other_attributes_untouched(self):
+        s = '<a title="a b" href="c.htm">x</a>'
+        self.assertEqual(encode_url_spaces(s), (s, 0))
+
+    def test_idempotent(self):
+        out, _ = encode_url_spaces('<a href="a b.htm">x</a>')
+        self.assertEqual(encode_url_spaces(out), (out, 0))
+
+    def test_protected_spans_untouched(self):
+        s = '<!-- keep href="a b.htm" --><a href="c d.htm">x</a>'
+        out, n = encode_url_spaces(s)
+        self.assertEqual(n, 1)
+        self.assertIn('<!-- keep href="a b.htm" -->', out)
+        self.assertIn('href="c%20d.htm"', out)
+
 
 class TestPrologAndXmlns(unittest.TestCase):
     def test_strip_bom_and_junk(self):
@@ -343,6 +387,7 @@ class TestStructuralRepairsAreOptIn(unittest.TestCase):
         "block in inline": "<span><div>x</div></span>",
         "invalid value": '<div class="c" value="7">x</div>',
         "illegal tags": "<w>bold</w><sentence>s</sentence><pagebreak/>",
+        "url spaces": '<a href="a b.htm">x</a>',
     }
 
     def test_default_pipeline_leaves_every_structural_defect_alone(self):
@@ -359,6 +404,7 @@ class TestStructuralRepairsAreOptIn(unittest.TestCase):
             unwrap_block_in_inline,
             strip_invalid_value,
             lambda s: unwrap_illegal_tags(s),
+            encode_url_spaces,
         ]
         for fn, (_, doc) in zip(functions, self.CASES.items(), strict=True):
             with self.subTest(

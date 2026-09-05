@@ -28,7 +28,8 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   visible content. Two kinds of exceptions exist, both opt-in and off unless requested:
   * **Structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
     `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
-    `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`;
+    `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
+    `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`;
     transforms.py, threaded through epub.py): they alter markup structure or fabricate
     minimal content. v0.14–v0.16 ran these unconditionally, which broke this rule;
     v0.17.0 restored it. `--unwrap-illegal-tags` additionally protects any illegal-tag

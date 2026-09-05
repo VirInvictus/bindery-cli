@@ -75,6 +75,9 @@ def process_book(
     page_map: bool = False,
     strip_epub3_attrs: bool = False,
     downgrade_epub3: bool = False,
+    prune_missing: bool = False,
+    strip_anchors: bool = False,
+    url_spaces: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -102,6 +105,9 @@ def process_book(
         page_map=page_map,
         strip_epub3_attrs=strip_epub3_attrs,
         downgrade_epub3=downgrade_epub3,
+        prune_missing=prune_missing,
+        strip_anchors=strip_anchors,
+        url_spaces=url_spaces,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -416,6 +422,11 @@ def run_library(args) -> int:
                     or getattr(args, "all", False),
                     downgrade_epub3=args.downgrade_epub3_tags
                     or getattr(args, "all", False),
+                    prune_missing=args.prune_missing_resources
+                    or getattr(args, "all", False),
+                    strip_anchors=args.strip_broken_anchors
+                    or getattr(args, "all", False),
+                    url_spaces=args.encode_url_spaces or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -604,6 +615,10 @@ def run_repair(args) -> int:
                 strip_epub3_attrs=args.strip_epub3_attrs or getattr(args, "all", False),
                 downgrade_epub3=args.downgrade_epub3_tags
                 or getattr(args, "all", False),
+                prune_missing=args.prune_missing_resources
+                or getattr(args, "all", False),
+                strip_anchors=args.strip_broken_anchors or getattr(args, "all", False),
+                url_spaces=args.encode_url_spaces or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -727,6 +742,33 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         "(figure/section to div, figcaption to p; semantic name kept as a "
         "class; names a stylesheet styles as an element selector are "
         "protected book-wide)",
+    )
+    p.add_argument(
+        "--prune-missing-resources",
+        dest="prune_missing_resources",
+        action="store_true",
+        help="remove references to files the archive does not contain "
+        "(RSC-007/PKG-010): dead <link> elements, anchors' href to absent "
+        "files, absent <img> sources (replaced by their alt text when they "
+        "carry one), and orphaned non-spine OPF manifest items; spine "
+        "documents are never pruned",
+    )
+    p.add_argument(
+        "--strip-broken-anchors",
+        dest="strip_broken_anchors",
+        action="store_true",
+        help="strip href attributes that cannot resolve: a #fragment the "
+        "target document does not define (RSC-020/RSC-012; NCX navTargets "
+        "keep the document target) and non-resolvable URI schemes (kindle:, "
+        "file:); anchor text is always preserved",
+    )
+    p.add_argument(
+        "--encode-url-spaces",
+        dest="encode_url_spaces",
+        action="store_true",
+        help="percent-encode raw spaces in src/href attribute values across "
+        "the package (OPF href, NCX src, content docs): a literal space is "
+        "not a valid URL (RSC-020)",
     )
     p.add_argument(
         "--strip-pagination",

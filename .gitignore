@@ -11,3 +11,6 @@ dist/
 testing_facility/books_to_fix/*
 !testing_facility/books_to_fix/.gitkeep
 testing_facility/top500candidates/*.epub
+
+# Compiled Java scratch (FastSweep harness)
+*.class

@@ -575,21 +575,57 @@ subprocess is gone, so the crash class no longer exists.)*
 
 *Context: A diagnostic sweep of the full Calibre library on 2026-09-05 (`testing_facility/top500candidates/REPORT.md`) catalogued the top recurring error codes across all candidates: RSC-005 (164,302), RSC-020 (8,431), PKG-010 (4,112), RSC-007 (3,219), RSC-012 (1,940), and HTM-025 (800). Evaluating these against spec.md establishes which are safe to automate deterministically and which must remain rejected under the safety charter.*
 
-- [ ] **Opt-in missing resource pruning (`--prune-missing-resources`):**
+- [x] **Opt-in missing resource pruning (`--prune-missing-resources`):**
   - **PKG-010 (missing package resource):** When the OPF manifest lists an `<item>` whose file is absent from the archive, prune the orphaned declaration. Strictly scoped to non-spine assets (fonts, stylesheets, unused media); missing spine documents remain classified as damaged fragments and are never silently dropped.
   - **RSC-007 (referenced resource not found):** When content documents reference absent external assets, prune dead `<link rel="stylesheet">` tags and strip `href` attributes from anchors targeting non-existent files. Missing `<img>` elements are pruned or replaced with their `alt` text under character conservation.
-- [ ] **Opt-in broken anchor stripping (`--strip-broken-anchors`):**
+  *(Shipped in v0.28.0. Fixture reality check: Swann's Way, the staged RSC-007 book, carries exactly one defect shape — 29 identical `<link rel="stylesheet" href="../page-template.xpgt">` elements for an Adobe page template the converter never copied in; all 29 prune, zero regression. Death Masks, the staged PKG-010 book, has NO missing resources at all: its 34 PKG-010s are "file name contains spaces" warnings about the zip entry names, not absent files, so nothing is prunable there — see the `--encode-url-spaces` note below. Counters: `manifest_items_pruned`, `dead_links_pruned`, `missing_file_hrefs_stripped`, `missing_imgs_unwrapped`, `missing_imgs_pruned`.)*
+- [x] **Opt-in broken anchor stripping (`--strip-broken-anchors`):**
   - **RSC-020 (fragment identifier not defined):** When an `href` points to a non-existent `#fragment` target, remove the `href` attribute rather than fabricating an ID. Inner anchor text is preserved byte-for-byte under character conservation.
   - **RSC-012 (fragment points to wrong element):** For content anchors targeting illegal elements, strip the invalid fragment. For NCX `<content src="doc.xhtml#bad_id"/>` references, strip the fragment to point directly to the containing document, preserving chapter navigation.
-- [ ] **URI and entity normalization (HTM-025):**
+  *(Shipped in v0.28.0. Sodom and Gomorrah, the staged RSC-012 book, is Mobipocket `filepos` drift: the converter re-split the flow and every NCX target points one file late. Per the charter the repair strips the fragment and keeps the document target — it never re-points at the guessed sibling document, because the 9th navPoint's id exists nowhere at all. Fixture run: 9 NCX fragments + 2 in-content Notes anchors stripped, 11 RSC-012 cleared, zero regression. Counters: `broken_fragment_hrefs_stripped`, `nonfile_scheme_hrefs_stripped`, `ncx_fragments_stripped`.)*
+- [x] **URI and entity normalization (HTM-025):**
   - **Attribute ampersand escaping:** Ensure `transforms.escape_bare_amp` covers bare ampersands inside URL attributes (such as query strings `?a=1&b=2` converted to `?a=1&amp;b=2`).
   - **Non-registered URI schemes:** Strip unresolvable proprietary or local URI schemes (e.g. `scrivcmt://`, local `file:///` paths) from anchor `href` attributes under `--strip-broken-anchors`, retaining visible prose.
-- [ ] **Fast sweep testing harness (`FastSweep.java` JVM parallelization):**
+  *(Shipped in v0.28.0. The ampersand half already worked — the transforms run on raw text, so attribute values were always covered; the behavior is now pinned by an explicit test rather than an assumption. The scheme half ships inside `--strip-broken-anchors` with a fixed resolvable set (http, https, mailto); Swann's Way's single HTM-025 was a `kindle:embed:` anchor href, stripped with the anchor text kept.)*
+- [x] **Fast sweep testing harness (`FastSweep.java` JVM parallelization):**
   - **Objective:** Integrate parallel JVM validation sweeps directly into the testing/benchmarking suite to bypass Python subprocess I/O bottlenecks during massive 7,000+ book dry-runs.
   - **Context:** Standard `epubcheck` execution in a Python `subprocess.run` loop takes ~3 seconds per book (6.5 hours for the library). The `FastSweepExtract.java` prototype proved that instantiating `com.adobe.epubcheck.api.EpubCheck` directly and routing `CheckingReport` to a `StringWriter` within a Java `parallelStream()` reduces this to minutes by sharing the JVM startup cost and saturating all CPU cores.
   - **Implementation Details for Future Agents:**
     1. Expand `scripts/FastSweep.java` (or merge `FastSweepExtract.java` into it) to parse CLI flags (e.g., `--mode=audit`, `--mode=extract`).
     2. Write an integration wrapper in `bindery-cli` that compiles the Java file (targeting `--release 25`) and invokes it against a provided directory.
     3. **Test Fixtures:** Use the sample candidate EPUBs pre-staged in `testing_facility/top500candidates/` (which includes confirmed instances of `RSC-005`, `RSC-020`, `PKG-010`, `RSC-007`, `RSC-012`, and `HTM-025`) to verify the Java AST parsing and error-code extraction before running it across the live library.
+  *(Shipped in v0.28.0 as scripts/FastSweep.java + scripts/fast_sweep.py — see patchnotes for the full notes; the prototype's extract mode never actually worked: CheckingReport buffers its messages and writes nothing until generate(), which NPEs without a preceding initialize(); the merged harness follows the CLI's own initialize → validate → generate lifecycle and extracts codes from the JSON. The two prototypes' stdin + parallelStream shape was otherwise kept. Measured on the 14 staged fixtures: 14 books in ~4.5 s (all cores) vs ~3 s/book sequential.)*
+
+### Phase 12 findings postscript (2026-09-05)
+
+The REPORT.md code labels do not describe the actual defects in the staged fixtures;
+the underlying conditions are what the repairs target:
+
+- **Death Masks ("RSC-020 fragment not defined" + "PKG-010 resource missing"):** all 39
+  manifest items exist. The 67 RSC-020s are "not a valid URL" (literal spaces in OPF
+  hrefs and NCX srcs; fixed by `--encode-url-spaces`), and the 34 PKG-010s are
+  "file name contains spaces" WARNINGS about the zip entry names themselves. Clearing
+  those would mean renaming archive entries and rewriting every reference — a viable
+  future flag, deliberately not attempted here. After repair: 0f/1e/34w (the one error
+  is an `<img id="Picture 0">` RSC-005, out of scope).
+- **Swann's Way ("RSC-007 missing resource" + HTM-025):** 29 identical dead Adobe
+  page-template `<link>` elements plus one `kindle:embed:` anchor. After
+  `--prune-missing-resources --strip-broken-anchors`: 0f/2e/0w.
+- **Sodom and Gomorrah (RSC-012):** Mobipocket `filepos` anchors pointing one split
+  file late. After `--strip-broken-anchors`: 0f/42e/0w (the 42 survivors are RSC-005,
+  the declared non-goal).
+- **epubcheck 5.3.0 surfaces disagree on counts:** the human listing reports raw
+  message totals (Swann's Way: 31 errors) while the `--json` checker block reports
+  deduplicated ones (2). bindery's gate reads the JSON surface consistently for both
+  measurements, so gate decisions are unaffected — but audit CSVs produced by
+  FastSweep's audit mode carry the raw CheckingReport counts, which are larger than
+  the JSON surface the gate re-measures with. Candidate selection only (fatals > 0,
+  clean-book skipping), so the mixing is safe today.
+- Related discovery, unchanged on purpose: `validate.py`'s persistent daemon launches
+  `java -cp ".:epubcheck.jar"` without epubcheck's `lib/` dependencies, so on this
+  machine it has always failed its first check and silently fallen back to the
+  subprocess JSON path. Fixing the classpath would switch gate measurements from the
+  deduplicated JSON counts to raw CheckingReport counts — a behavior change to the
+  gate that deserves its own decision, not a drive-by edit.
 
 Non-goals: No bulk repair of RSC-005 schema/content-model violations. With 164,302 instances, arbitrary schema repair violates the explicit non-goal in spec.md ("Fixing RSC-005 schema/content-model violations in bulk"). Restructuring arbitrary markup requires semantic human judgment; attempting to automate it risks silent content corruption, tag swallowing, or destroying valid styling. Specific, narrowly bounded RSC-005 sub-cases remain opt-in under their own flags (`--strip-epub3-attrs`, `--downgrade-epub3-tags`, `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`, `--add-img-alt`, `--fix-id-colons`); arbitrary bulk repair is rejected. No spine-item manifest pruning (missing spine documents indicate corrupt archives or broken fragments, not safe pruning candidates). No text deletion in anchor unwrapping (character conservation is absolute).

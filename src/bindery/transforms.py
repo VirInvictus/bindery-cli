@@ -60,19 +60,29 @@ _EPUB_PREFIX_VAL_RE = re.compile(r"(?:^|\s)([A-Za-z_][\w.-]*)\s*:\s*\S+")
 _PROTECTED_RE = re.compile(r"(<!\[CDATA\[.*?\]\]>|<!--.*?-->)", re.DOTALL)
 
 
+def outside_protected_map(s: str, fn: Transform) -> tuple[str, int]:
+    """Run a transform over every span that is not a CDATA section or comment.
+
+    The decorator form (`_outside_protected`) only fits single-argument
+    transforms; the context-carrying repairs (book-level file/id sets) call
+    this directly with a partially-applied transform.
+    """
+    if "<!" not in s:  # fast path: nothing to protect
+        return fn(s)
+    parts = _PROTECTED_RE.split(s)
+    total = 0
+    for i in range(0, len(parts), 2):
+        parts[i], n = fn(parts[i])
+        total += n
+    return "".join(parts), total
+
+
 def _outside_protected(fn: Transform) -> Transform:
     """Wrap a transform so it never touches CDATA sections or comments."""
 
     @wraps(fn)
     def wrapped(s: str) -> tuple[str, int]:
-        if "<!" not in s:  # fast path: nothing to protect
-            return fn(s)
-        parts = _PROTECTED_RE.split(s)
-        total = 0
-        for i in range(0, len(parts), 2):
-            parts[i], n = fn(parts[i])
-            total += n
-        return "".join(parts), total
+        return outside_protected_map(s, fn)
 
     return wrapped
 
@@ -529,6 +539,40 @@ def fix_id_colons(s: str) -> tuple[str, int]:
         flags=re.IGNORECASE,
     )
     return s, count
+
+
+# A src/href attribute with a quoted value. A raw space can only survive inside
+# quotes (an unquoted value ends at the first space). The optional namespaced
+# prefix must end in a colon, so `xlink:href` is covered while `data-href` and
+# friends are not.
+_SRC_HREF_ATTR_RE = re.compile(
+    r"""((?:^|\s)(?:[\w.-]+:)?(?:src|href)\s*=\s*)(["'])([^"']*)(\2)""",
+    re.IGNORECASE,
+)
+
+
+@_outside_protected
+def encode_url_spaces(s: str) -> tuple[str, int]:
+    """Percent-encode raw spaces in src/href attribute values
+    (`href="a b.htm"` -> `href="a%20b.htm"`).
+
+    Opt-in (--encode-url-spaces): it rewrites URL references across the
+    package, so it never runs in the core pass. A URL with a literal space is
+    not a valid URL (epubcheck RSC-020 'not a valid URL') and unresolvable on
+    strict readers; the encoded form denotes the same file and renders
+    identically. Scope is fixed to the space character: extend only with a
+    named epubcheck finding, never speculatively.
+    """
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        if " " not in m.group(3):
+            return m.group(0)
+        count += 1
+        return m.group(1) + m.group(2) + m.group(3).replace(" ", "%20") + m.group(4)
+
+    return _SRC_HREF_ATTR_RE.sub(repl, s), count
 
 
 # The always-on core: exactly the five semantics-preserving well-formedness fixes

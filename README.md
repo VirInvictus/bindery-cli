@@ -38,6 +38,9 @@ Everything below is off until its flag is passed (or all at once via `--all`). T
 - **`--strip-epub3-attrs`**: scrubs the EPUB3-only attributes epubcheck rejects on an EPUB2 package — `page-progression-direction`, `epub:type`, `aria-label` (a fixed, documented set; rendering is unchanged, and lookalikes like `type` or the wider aria family survive).
 - **`--downgrade-epub3-tags`**: downgrades EPUB3/HTML5 semantic elements to their EPUB2 equivalents — `figure`/`section` to `div`, `figcaption` to `p` — keeping existing classes and appending the semantic name (`class="figure"`) as the styling hook. Tag names a stylesheet styles as an element selector are protected book-wide, so styled formatting is never destroyed.
 - **`--unwrap-illegal-tags`**: strips completely invalid or deprecated HTML tags that break EPUB3 validation (`<st>`, `<sentence>`, `<o>`, `<w>`, `<pagebreak>`) while retaining their inner text. Any of those names styled as an *element selector* by an EPUB stylesheet (`.css` entries and inline `<style>` blocks alike; class/id selectors like `.st`/`#w` don't count) is protected for the whole book, guaranteeing format preservation.
+- **`--prune-missing-resources`**: removes references to files the archive does not contain (RSC-007/PKG-010): dead `<link>` elements, anchors' `href` to absent files (anchor text preserved), absent `<img>` sources (replaced by their alt text when they carry one), and orphaned non-spine OPF manifest items. Spine documents are never pruned: a missing spine document is reported as a damaged fragment, not silently dropped.
+- **`--strip-broken-anchors`**: strips href attributes that cannot resolve, keeping the anchor text byte-for-byte: a `#fragment` the target document does not define (RSC-020/RSC-012; NCX navTargets fall back to the document target, so chapter navigation survives) and unresolvable URI schemes (`kindle:`, `file:`).
+- **`--encode-url-spaces`**: percent-encodes raw spaces in `src`/`href` attribute values across the package (OPF manifest, NCX, content documents). A URL with a literal space is not a valid URL (RSC-020) and unresolvable on strict readers; the encoded form denotes the same file.
 
 
 Three opt-in fixes are **lossy** and stand apart from the semantics-preserving rest:
@@ -178,6 +181,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 `scripts/` holds standalone, read-only utilities that are useful for EPUB maintenance but fall outside bindery-cli's repair contract (fixing what they find would be a content change, which bindery-cli makes only via the opt-in `--strip-pagination`):
 
 - `find_missing_images.py`: scans a library tree and reports every book whose `<img>` tags point at files that do not exist inside the archive (a common defect in converted EPUBs). Reads the archives in place; nothing is unpacked or written. The library path is set at the bottom of the script.
+- `fast_sweep.py`: compiles and drives `FastSweep.java`, a parallel JVM epubcheck sweep that pays JVM startup once instead of per book (a 7,000-book dry-run sweep drops from hours to minutes). `--mode=audit` emits the `fatals,errors,warnings,path` CSV that `bindery library --audit` reads; `--mode=extract` emits per-book error codes for aggregation (`--summary` prints the per-code report). The epubcheck jar is located from the `epubcheck` launcher or `EPUBCHECK_JAR`; the harness compiles once (`--release 25`) and is cached on mtime.
 
 ## Development
 

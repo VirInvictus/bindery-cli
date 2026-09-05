@@ -9,23 +9,28 @@ itself is left untouched to keep Calibre's embedded metadata pristine.
 
 from __future__ import annotations
 
+import posixpath
 import re
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import unquote
 
 from .pagination import collect_runheads, detect_page_layer, strip_pagination_doc
 from .reserialize import reserialize_if_broken
 from .transforms import (
+    _PROTECTED_RE,
     HTML_TRANSFORMS,
     XML_TRANSFORMS,
     add_img_alt,
     apply_transforms,
     css_protected_tags,
+    encode_url_spaces,
     escape_unknown_entities,
     fix_empty_body,
     fix_id_colons,
     fix_missing_title,
+    outside_protected_map,
     strip_broken_tags,
     strip_invalid_attributes,
     strip_invalid_value,
@@ -316,6 +321,324 @@ def downgrade_epub3_tags(
     return text, count
 
 
+# ---------------------------------------------------------------------------
+# Broken-reference repairs (Phase 12, all opt-in). The well-formedness fixes
+# rewrite what is already there; these remove references the archive cannot
+# satisfy: manifest items, stylesheets, images and anchors pointing at absent
+# files, fragments no target document defines, and URL references a strict
+# reader cannot resolve. Every removal is epubcheck-visible, so all three ride
+# the normal gate.
+
+# A URI scheme per RFC 3986: letter, then letter/digit/+/-/. up to a colon.
+# Relative paths and fragments never match (no colon before the first /?#).
+_URL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:")
+# Schemes a reader can actually resolve; everything else in an anchor
+# (kindle:embed:, file:, scrivcmt:) is a dead reference. Fixed, documented
+# set: extend only with a named epubcheck finding, never speculatively.
+_RESOLVABLE_SCHEMES = {"http", "https", "mailto"}
+
+
+def _norm_path(p: str) -> str:
+    """Archive-path shape for comparisons: percent-decoded, posix-normalized."""
+    return posixpath.normpath(unquote(p))
+
+
+def _resolve_href(base_dir: str, href: str) -> str | None:
+    """Resolve a package-relative href to an archive path, or None when it
+    cannot denote an archive file (external scheme, empty target). The
+    fragment is dropped first: it selects a position in the file, not the file."""
+    if _URL_SCHEME_RE.match(href):
+        return None
+    target = href.partition("#")[0]
+    if not target:
+        return None
+    return _norm_path(posixpath.join(base_dir, target))
+
+
+# Attribute accessors for the reference repairs. Whitespace-anchored (not \b)
+# so `data-href`-style names stay out; the optional namespaced prefix must end
+# in a colon, so `xlink:href` is covered and `data-src` is not. Group 2 is the
+# value in either quote style.
+_HREF_ATTR_RE = re.compile(
+    r"""(?:^|\s)href\s*=\s*(["'])((?:(?!\1).)*)\1""", re.IGNORECASE
+)
+_SRC_ATTR_RE = re.compile(
+    r"""(?:^|\s)src\s*=\s*(["'])((?:(?!\1).)*)\1""", re.IGNORECASE
+)
+_ALT_ATTR_RE = re.compile(
+    r"""(?:^|\s)alt\s*=\s*(["'])((?:(?!\1).)*)\1""", re.IGNORECASE
+)
+_IDREF_ATTR_RE = re.compile(
+    r"""(?:^|\s)idref\s*=\s*(["'])((?:(?!\1).)*)\1""", re.IGNORECASE
+)
+# Removes the href attribute (with its leading whitespace) from a tag body.
+_DROP_HREF_ATTR_RE = re.compile(r"""\s+href\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE)
+
+# Quote-aware start-tag matchers for the elements the prune touches — same
+# shape as transforms._VOID_RE, so a '>' inside an attribute value cannot end
+# the tag early.
+_LINK_TAG_RE = re.compile(
+    r"""<link(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
+    re.IGNORECASE | re.DOTALL,
+)
+_ANCHOR_TAG_RE = re.compile(
+    r"""<a(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""", re.IGNORECASE | re.DOTALL
+)
+_IMG_TAG_RE = re.compile(
+    r"""<img(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
+    re.IGNORECASE | re.DOTALL,
+)
+_ITEM_TAG_RE = re.compile(r"""<item\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""", re.IGNORECASE)
+# `\b` is what keeps `<item\b` from matching `<itemref`: "itemref" has a word
+# character right after "item", so there is no boundary there.
+_NCX_CONTENT_SRC_RE = re.compile(
+    r"""(<content\b[^>]*?(?:^|\s)(?:[\w.-]+:)?src\s*=\s*)(["'])((?:(?!\2).)*)(\2)""",
+    re.IGNORECASE,
+)
+
+
+def prune_missing_manifest_items(
+    opf_text: str, opf_dir: str, present: frozenset[str], spine_ids: set[str]
+) -> tuple[str, int]:
+    """Drop `<item>` manifest declarations whose file is absent from the
+    archive — unless the item is a spine document.
+
+    A missing spine document is a damaged fragment (the audit's
+    spine-integrity check reports it); it is never silently pruned. Fonts,
+    stylesheets and media the converter never copied in answer PKG-010 with a
+    dead-declaration removal instead of a stub file.
+    """
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        tag = m.group(0)
+        hm = _HREF_ATTR_RE.search(tag)
+        if not hm:
+            return tag
+        resolved = _resolve_href(opf_dir, hm.group(2))
+        if resolved is None or resolved in present:
+            return tag
+        idm = _XML_ID_RE.search(tag)
+        if idm and idm.group(3) in spine_ids:
+            return tag
+        count += 1
+        return ""
+
+    return _ITEM_TAG_RE.sub(repl, opf_text), count
+
+
+def prune_dead_links(
+    text: str, doc_dir: str, present: frozenset[str]
+) -> tuple[str, int]:
+    """Drop `<link ...>` elements whose href target is absent from the archive.
+
+    The Swann's Way shape: 29 documents link `../page-template.xpgt` (an
+    Adobe InDesign page template) that the converter never copied in — 29
+    identical RSC-007s. A link element carries no visible content, so removing
+    the dead reference changes nothing a reader can see. External schemes are
+    never touched.
+    """
+
+    def fix(part: str) -> tuple[str, int]:
+        count = 0
+
+        def repl(m: re.Match) -> str:
+            nonlocal count
+            hm = _HREF_ATTR_RE.search(m.group(1))
+            if not hm:
+                return m.group(0)
+            resolved = _resolve_href(doc_dir, hm.group(2))
+            if resolved is None or resolved in present:
+                return m.group(0)
+            count += 1
+            return ""
+
+        return _LINK_TAG_RE.sub(repl, part), count
+
+    return outside_protected_map(text, fix)
+
+
+def strip_missing_file_hrefs(
+    text: str, doc_dir: str, present: frozenset[str]
+) -> tuple[str, int]:
+    """Remove the href attribute from anchors pointing at files the archive
+    does not contain; the anchor element and its inner text stay."""
+
+    def fix(part: str) -> tuple[str, int]:
+        count = 0
+
+        def repl(m: re.Match) -> str:
+            nonlocal count
+            attrs, slash = m.group(1), m.group(2)
+            hm = _HREF_ATTR_RE.search(attrs)
+            if not hm:
+                return m.group(0)
+            resolved = _resolve_href(doc_dir, hm.group(2))
+            if resolved is None or resolved in present:
+                return m.group(0)
+            count += 1
+            return "<a" + _DROP_HREF_ATTR_RE.sub("", attrs, count=1) + slash + ">"
+
+        return _ANCHOR_TAG_RE.sub(repl, part), count
+
+    return outside_protected_map(text, fix)
+
+
+def prune_missing_images(
+    text: str, doc_dir: str, present: frozenset[str]
+) -> tuple[str, dict[str, int]]:
+    """Remove or unwrap `<img>` elements whose src is absent from the archive.
+
+    An image that is not in the archive never renders; readers show either
+    nothing or the alt text. With alt text, the element is replaced by that
+    text (it arrives escaped from the attribute, so the words survive);
+    without, the dead element goes entirely. External schemes are untouched.
+    Returns per-shape counters, so this one does its protected-span split
+    manually (outside_protected_map sums one int; here two counters merge).
+    """
+
+    def fix_part(part: str) -> tuple[str, dict[str, int]]:
+        counts: dict[str, int] = {}
+
+        def repl(m: re.Match) -> str:
+            attrs = m.group(1)
+            sm = _SRC_ATTR_RE.search(attrs)
+            if not sm:
+                return m.group(0)
+            resolved = _resolve_href(doc_dir, sm.group(2))
+            if resolved is None or resolved in present:
+                return m.group(0)
+            am = _ALT_ATTR_RE.search(attrs)
+            alt = am.group(2) if am else ""
+            if alt.strip():
+                key = "missing_imgs_unwrapped"
+            else:
+                key = "missing_imgs_pruned"
+            counts[key] = counts.get(key, 0) + 1
+            return alt if key == "missing_imgs_unwrapped" else ""
+
+        return _IMG_TAG_RE.sub(repl, part), counts
+
+    total: dict[str, int] = {}
+    if "<!" in text:
+        parts = _PROTECTED_RE.split(text)
+        for i in range(0, len(parts), 2):
+            parts[i], c = fix_part(parts[i])
+            for k, v in c.items():
+                total[k] = total.get(k, 0) + v
+        return "".join(parts), total
+    return fix_part(text)
+
+
+def prune_missing_resources_doc(
+    text: str, doc_dir: str, present: frozenset[str]
+) -> tuple[str, dict[str, int]]:
+    """All content-document shapes of --prune-missing-resources, in sequence."""
+    text, n = prune_dead_links(text, doc_dir, present)
+    counts: dict[str, int] = {"dead_links_pruned": n} if n else {}
+    text, n = strip_missing_file_hrefs(text, doc_dir, present)
+    if n:
+        counts["missing_file_hrefs_stripped"] = n
+    text, img_counts = prune_missing_images(text, doc_dir, present)
+    for k, v in img_counts.items():
+        counts[k] = counts.get(k, 0) + v
+    return text, counts
+
+
+def strip_broken_anchors_doc(
+    text: str,
+    doc_dir: str,
+    self_ids: frozenset[str],
+    ids_by_doc: dict[str, frozenset[str]],
+) -> tuple[str, dict[str, int]]:
+    """Strip href attributes that cannot resolve, keeping the anchor text.
+
+    Two shapes, both epubcheck-visible:
+    - href="#frag" or href="doc#frag" where the target document exists but
+      does not define the fragment (RSC-020 'fragment identifier not defined'
+      / RSC-012 'points to the wrong element'). The href goes; the anchor and
+      its inner text stay byte-for-byte.
+    - href carrying a scheme no reader resolves (kindle:embed:, file:, ...).
+    A target document absent from the archive is left for
+    --prune-missing-resources (file shape) or the spine-integrity report
+    (whole-document shape): this fix never guesses at a repair destination.
+    """
+
+    def fix_part(part: str) -> tuple[str, dict[str, int]]:
+        counts: dict[str, int] = {}
+
+        def repl(m: re.Match) -> str:
+            attrs, slash = m.group(1), m.group(2)
+            hm = _HREF_ATTR_RE.search(attrs)
+            if not hm:
+                return m.group(0)
+            href = hm.group(2)
+            dead = False
+            key = "nonfile_scheme_hrefs_stripped"
+            sm = _URL_SCHEME_RE.match(href)
+            if sm:
+                dead = sm.group(0)[:-1].lower() not in _RESOLVABLE_SCHEMES
+            elif "#" in href:
+                target, frag = href.partition("#")[::2]
+                if target:
+                    ids = ids_by_doc.get(_resolve_href(doc_dir, target) or "")
+                else:
+                    ids = self_ids
+                if ids is not None and frag not in ids:
+                    dead = True
+                    key = "broken_fragment_hrefs_stripped"
+            if not dead:
+                return m.group(0)
+            counts[key] = counts.get(key, 0) + 1
+            return "<a" + _DROP_HREF_ATTR_RE.sub("", attrs, count=1) + slash + ">"
+
+        return _ANCHOR_TAG_RE.sub(repl, part), counts
+
+    total: dict[str, int] = {}
+    if "<!" in text:
+        parts = _PROTECTED_RE.split(text)
+        for i in range(0, len(parts), 2):
+            parts[i], c = fix_part(parts[i])
+            for k, v in c.items():
+                total[k] = total.get(k, 0) + v
+        return "".join(parts), total
+    return fix_part(text)
+
+
+def strip_ncx_broken_fragments(
+    ncx_text: str, ncx_dir: str, ids_by_doc: dict[str, frozenset[str]]
+) -> tuple[str, int]:
+    """Point `<content src="doc#frag"/>` at `doc` when `doc` exists but does
+    not define `frag` (RSC-012).
+
+    Chapter navigation survives at document precision; the fragment is
+    dropped, never re-pointed at a guessed sibling document — Mobipocket
+    filepos anchors drift when a converter re-splits the flow, and the id may
+    exist nowhere at all. A target absent from the archive entirely is left
+    alone: that is the spine-integrity report's finding, not a repair.
+    """
+    def fix(part: str) -> tuple[str, int]:
+        count = 0
+
+        def repl(m: re.Match) -> str:
+            nonlocal count
+            prefix, quote, src = m.group(1), m.group(2), m.group(3)
+            if _URL_SCHEME_RE.match(src) or "#" not in src:
+                return m.group(0)
+            target, frag = src.partition("#")[::2]
+            resolved = _resolve_href(ncx_dir, target) if target else None
+            ids = ids_by_doc.get(resolved or "") if resolved else None
+            if ids is None or frag in ids:
+                return m.group(0)
+            count += 1
+            return f"{prefix}{quote}{target}{quote}"
+
+        return _NCX_CONTENT_SRC_RE.sub(repl, part), count
+
+    return outside_protected_map(ncx_text, fix)
+
+
 def opf_unique_id(opf_text: str) -> str | None:
     """The dc:identifier value referenced by the OPF unique-identifier attribute."""
     attr = _UID_ATTR_RE.search(opf_text)
@@ -386,6 +709,9 @@ def repair_epub(
     page_map: bool = False,
     strip_epub3_attrs: bool = False,
     downgrade_epub3: bool = False,
+    prune_missing: bool = False,
+    strip_anchors: bool = False,
+    url_spaces: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -420,6 +746,17 @@ def repair_epub(
     With `downgrade_epub3`, downgrade EPUB3/HTML5 semantic elements (figure, figcaption,
     section) to their EPUB2 equivalents with the semantic name kept as a class; names a
     stylesheet styles as an element selector are protected for the whole book.
+    With `prune_missing`, remove references to files the archive does not contain
+    (RSC-007/PKG-010): dead <link> elements, anchors' href to absent files, absent
+    <img> sources (replaced by their alt text when they carry one), and orphaned
+    non-spine OPF manifest items. Spine documents are never pruned.
+    With `strip_anchors`, strip href attributes that cannot resolve: a #fragment the
+    target document does not define (RSC-020/RSC-012; NCX navTargets keep the document
+    target) and non-resolvable URI schemes (kindle:, file:). Anchor text is always
+    preserved byte-for-byte.
+    With `url_spaces`, percent-encode raw spaces in src/href attribute values across
+    the package (OPF href, NCX src, content src/href): a literal space is not a valid
+    URL (RSC-020).
     """
     report = RepairReport()
 
@@ -427,7 +764,8 @@ def repair_epub(
     # output file is created.
     with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
         opf = _locate_opf(zin)
-        uid = opf_unique_id(zin.read(opf).decode("utf-8", "replace")) if opf else None
+        opf_text = zin.read(opf).decode("utf-8", "replace") if opf else None
+        uid = opf_unique_id(opf_text) if opf_text is not None else None
         # Running-header detection and the page-layer decision need the whole book, so
         # collect content text once up front. Only when the lossy strip is requested.
         runheads: set[str] = set()
@@ -459,6 +797,37 @@ def repair_epub(
                 downgrade_css_tags = css_protected_tags(
                     *css_texts, tags=tuple(EPUB3_DOWNGRADE_TAGS)
                 )
+
+        # The broken-reference context (Phase 12 flags) is a whole-book property,
+        # computed once: the archive's file set for existence checks, and every
+        # content document's id set for fragment checks.
+        present: frozenset[str] = frozenset()
+        ids_by_doc: dict[str, frozenset[str]] = {}
+        spine_ids: set[str] = set()
+        opf_dir = posixpath.dirname(opf) if opf else ""
+        if prune_missing or strip_anchors:
+            present = frozenset(_norm_path(n) for n in zin.namelist())
+        if strip_anchors:
+            for i in zin.infolist():
+                if i.filename.lower().endswith(CONTENT_SUFFIXES):
+                    # The id sets must describe the documents as they will look when
+                    # the anchor pass runs, so replicate the transforms that can move
+                    # an id or a fragment (the core pass, plus the two opt-ins that
+                    # rename ids): a --fix-id-colons rename rewrites ids and their
+                    # #fragment refs together, and checking post-rename fragments
+                    # against pre-rename id sets would strip valid references.
+                    t, _ = apply_transforms(
+                        zin.read(i).decode("utf-8", "replace"), HTML_TRANSFORMS
+                    )
+                    if reserialize:
+                        t, _ = reserialize_if_broken(t)
+                    if id_colons:
+                        t, _ = fix_id_colons(t)
+                    ids_by_doc[_norm_path(i.filename)] = frozenset(
+                        m.group(3) for m in _XML_ID_RE.finditer(t)
+                    )
+        if prune_missing and opf_text is not None:
+            spine_ids = {m.group(2) for m in _IDREF_ATTR_RE.finditer(opf_text)}
 
         # The mimetype content is an OCF constant, so adding a missing entry and
         # normalizing wrong or whitespace-padded content is deterministic and
@@ -511,6 +880,16 @@ def repair_epub(
                     text, n = fix_pagelist_class(text)
                     if n:
                         counts["pagelist_class_added"] = n
+                if url_spaces:
+                    text, n = encode_url_spaces(text)
+                    if n:
+                        counts["url_spaces_encoded"] = n
+                if strip_anchors:
+                    text, n = strip_ncx_broken_fragments(
+                        text, posixpath.dirname(name), ids_by_doc
+                    )
+                    if n:
+                        counts["ncx_fragments_stripped"] = n
                 synced = False
                 if uid:
                     text, synced = sync_ncx_uid(text, uid)
@@ -520,7 +899,9 @@ def repair_epub(
                     report.add(counts)
                     report.files_changed += 1
                     data = text.encode("utf-8")
-            elif low.endswith(".opf") and (fix_ids or page_map or strip_epub3_attrs):
+            elif low.endswith(".opf") and (
+                fix_ids or page_map or strip_epub3_attrs or prune_missing or url_spaces
+            ):
                 text = data.decode("utf-8", "replace")
                 opf_changed = False
                 if fix_ids:
@@ -537,6 +918,18 @@ def repair_epub(
                     text, n = strip_epub3_attributes(text)
                     if n:
                         report.add({"epub3_attrs_stripped": n})
+                        opf_changed = True
+                if prune_missing:
+                    text, n = prune_missing_manifest_items(
+                        text, opf_dir, present, spine_ids
+                    )
+                    if n:
+                        report.add({"manifest_items_pruned": n})
+                        opf_changed = True
+                if url_spaces:
+                    text, n = encode_url_spaces(text)
+                    if n:
+                        report.add({"url_spaces_encoded": n})
                         opf_changed = True
                 if opf_changed:
                     report.files_changed += 1
@@ -583,6 +976,15 @@ def repair_epub(
                     text, n = fix_id_colons(text)
                     if n:
                         counts["fix_id_colons"] = n
+                if strip_anchors:
+                    text, acounts = strip_broken_anchors_doc(
+                        text,
+                        posixpath.dirname(name),
+                        ids_by_doc.get(_norm_path(name), frozenset()),
+                        ids_by_doc,
+                    )
+                    if acounts:
+                        counts.update(acounts)
                 if block_in_inline:
                     text, n = unwrap_block_in_inline(text)
                     if n:
@@ -608,6 +1010,16 @@ def repair_epub(
                     text, n = strip_pagination_doc(text, runheads, delete_layer)
                     if n:
                         counts["stripped_pagination"] = n
+                if prune_missing:
+                    text, pcounts = prune_missing_resources_doc(
+                        text, posixpath.dirname(name), present
+                    )
+                    if pcounts:
+                        counts.update(pcounts)
+                if url_spaces:
+                    text, n = encode_url_spaces(text)
+                    if n:
+                        counts["url_spaces_encoded"] = n
                 if counts:
                     report.add(counts)
                     report.files_changed += 1

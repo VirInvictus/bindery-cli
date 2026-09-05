@@ -701,5 +701,295 @@ class TestOptInStructuralRepairs(unittest.TestCase):
         self.assertIn("fix_empty_body", report.fixes)
 
 
+class TestPruneMissingResources(unittest.TestCase):
+    """--prune-missing-resources: references to files the archive does not
+    contain are removed (RSC-007/PKG-010); everything present survives, and
+    spine documents are never pruned."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = Path(self.tmp.name) / "in.epub"
+        self.dst = Path(self.tmp.name) / "out.epub"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _build(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'unique-identifier="bookid">'
+            "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
+            "<dc:identifier id=\"bookid\">urn:uuid:U</dc:identifier>"
+            "</metadata>"
+            "<manifest>"
+            '<item href="c1.xhtml" id="c1" media-type="application/xhtml+xml"/>'
+            '<item href="style.css" id="css" media-type="text/css"/>'
+            '<item href="fonts/gone.ttf" id="f1" media-type="font/ttf"/>'
+            '<item href="gone_spine.xhtml" id="sp" '
+            'media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="c1"/><itemref idref="sp"/></spine>'
+            "</package>"
+        )
+        content = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+            '<link rel="stylesheet" href="style.css"/>'
+            '<link rel="stylesheet" href="../page-template.xpgt"/>'
+            "</head><body>"
+            '<a href="missing.doc">gone</a>'
+            '<a href="c1.xhtml">kept</a>'
+            '<img src="present.jpg" alt="p"/>'
+            '<img src="gone1.jpg" alt="Figure 1"/>'
+            "<img src=\"gone2.jpg\"/>"
+            '<img src="gone3.jpg" alt="   "/>'
+            "</body></html>"
+        )
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/c1.xhtml", content)
+            z.writestr("OEBPS/style.css", "p { margin: 0 }")
+            z.writestr("OEBPS/present.jpg", b"\xff\xd8\xff")
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/toc.ncx", NCX_BAD.replace("THE-WRONG-ID", "U"))
+
+    def test_prunes_only_missing_references(self):
+        self._build()
+        report = repair_epub(self.src, self.dst, prune_missing=True)
+        self.assertEqual(report.fixes.get("dead_links_pruned"), 1)
+        self.assertEqual(report.fixes.get("missing_file_hrefs_stripped"), 1)
+        self.assertEqual(report.fixes.get("missing_imgs_unwrapped"), 1)
+        self.assertEqual(report.fixes.get("missing_imgs_pruned"), 2)
+        self.assertEqual(report.fixes.get("manifest_items_pruned"), 1)
+        with zipfile.ZipFile(self.dst) as z:
+            c = z.read("OEBPS/c1.xhtml").decode()
+            opf = z.read("OEBPS/content.opf").decode()
+            self.assertIn("OEBPS/style.css", z.namelist())
+        # the dead link element is gone entirely; the live one stays
+        self.assertNotIn("page-template.xpgt", c)
+        self.assertIn('<link rel="stylesheet" href="style.css"/>', c)
+        # the anchor to an absent file loses its href, never its text
+        self.assertIn("<a>gone</a>", c)
+        self.assertIn('<a href="c1.xhtml">kept</a>', c)
+        # an alt-carrying img becomes its text; bare and blank-alt imgs go
+        self.assertIn("Figure 1", c)
+        self.assertNotIn("gone1.jpg", c)
+        self.assertNotIn("gone2.jpg", c)
+        self.assertNotIn("gone3.jpg", c)
+        self.assertIn('<img src="present.jpg" alt="p"/>', c)
+        # orphaned non-spine manifest item pruned; the spine-declared absent
+        # item survives (damaged fragments are reported, never pruned)
+        self.assertNotIn("fonts/gone.ttf", opf)
+        self.assertIn("gone_spine.xhtml", opf)
+
+    def test_opt_in(self):
+        self._build()
+        report = repair_epub(self.src, self.dst)
+        for key in (
+            "dead_links_pruned",
+            "missing_file_hrefs_stripped",
+            "missing_imgs_unwrapped",
+            "missing_imgs_pruned",
+            "manifest_items_pruned",
+        ):
+            self.assertNotIn(key, report.fixes)
+
+    def test_idempotent(self):
+        self._build()
+        repair_epub(self.src, self.dst, prune_missing=True)
+        dst2 = Path(self.tmp.name) / "out2.epub"
+        report = repair_epub(self.dst, dst2, prune_missing=True)
+        for key in (
+            "dead_links_pruned",
+            "missing_file_hrefs_stripped",
+            "missing_imgs_unwrapped",
+            "missing_imgs_pruned",
+            "manifest_items_pruned",
+        ):
+            self.assertNotIn(key, report.fixes)
+
+
+class TestStripBrokenAnchors(unittest.TestCase):
+    """--strip-broken-anchors: hrefs to fragments the target does not define and
+    to unresolvable URI schemes are stripped; anchor text is byte-identical."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = Path(self.tmp.name) / "in.epub"
+        self.dst = Path(self.tmp.name) / "out.epub"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _build(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'unique-identifier="bookid">'
+            "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
+            "<dc:identifier id=\"bookid\">urn:uuid:U</dc:identifier>"
+            "</metadata>"
+            "<manifest>"
+            '<item href="a.xhtml" id="a" media-type="application/xhtml+xml"/>'
+            '<item href="b.xhtml" id="b" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="a"/><itemref idref="b"/></spine>'
+            "</package>"
+        )
+        doc_a = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body><p id=\"real\">target</p></body></html>"
+        )
+        doc_b = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body>"
+            '<a href="a.xhtml#real">ok</a>'
+            '<a href="a.xhtml#ghost">cross</a>'
+            '<a href="#ghost">local</a>'
+            '<a href="kindle:embed:0003?mime=image/jpg">Cover</a>'
+            '<a href="https://example.com/x?a=1&amp;b=2">web</a>'
+            '<a href="absent.doc#x">dangling</a>'
+            "</body></html>"
+        )
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
+            '<meta name="dtb:uid" content="urn:uuid:U"/></head>'
+            "<navMap>"
+            '<navPoint id="n1" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="a.xhtml#real"/></navPoint>'
+            '<navPoint id="n2" playOrder="2"><navLabel><text>B</text></navLabel>'
+            '<content src="a.xhtml#ghost"/></navPoint>'
+            '<navPoint id="n3" playOrder="3"><navLabel><text>C</text></navLabel>'
+            '<content src="absent.xhtml#x"/></navPoint>'
+            "</navMap></ncx>"
+        )
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/a.xhtml", doc_a)
+            z.writestr("OEBPS/b.xhtml", doc_b)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/toc.ncx", ncx)
+
+    def test_strips_only_unresolvable_hrefs(self):
+        self._build()
+        report = repair_epub(self.src, self.dst, strip_anchors=True)
+        self.assertEqual(report.fixes.get("broken_fragment_hrefs_stripped"), 2)
+        self.assertEqual(report.fixes.get("nonfile_scheme_hrefs_stripped"), 1)
+        self.assertEqual(report.fixes.get("ncx_fragments_stripped"), 1)
+        with zipfile.ZipFile(self.dst) as z:
+            b = z.read("OEBPS/b.xhtml").decode()
+            ncx = z.read("OEBPS/toc.ncx").decode()
+        # dead fragment refs lose the href, keep the anchor text byte-for-byte
+        self.assertIn('<a>cross</a>', b)
+        self.assertIn('<a>local</a>', b)
+        self.assertIn('<a>Cover</a>', b)
+        # every resolvable reference survives untouched
+        self.assertIn('<a href="a.xhtml#real">ok</a>', b)
+        self.assertIn('href="https://example.com/x?a=1&amp;b=2"', b)
+        # a wholly absent target document is not ours to touch
+        self.assertIn('<a href="absent.doc#x">dangling</a>', b)
+        # NCX falls back to the document target; absent targets untouched
+        self.assertIn('<content src="a.xhtml"/>', ncx)
+        self.assertIn('<content src="absent.xhtml#x"/>', ncx)
+
+    def test_anchor_text_conserved(self):
+        self._build()
+        import re as _re
+
+        with zipfile.ZipFile(self.src) as z:
+            before = _re.sub(r"<[^>]+>", "", z.read("OEBPS/b.xhtml").decode())
+        repair_epub(self.src, self.dst, strip_anchors=True)
+        with zipfile.ZipFile(self.dst) as z:
+            after = _re.sub(r"<[^>]+>", "", z.read("OEBPS/b.xhtml").decode())
+        self.assertEqual(before, after)
+
+    def test_opt_in(self):
+        self._build()
+        report = repair_epub(self.src, self.dst)
+        for key in (
+            "broken_fragment_hrefs_stripped",
+            "nonfile_scheme_hrefs_stripped",
+            "ncx_fragments_stripped",
+        ):
+            self.assertNotIn(key, report.fixes)
+
+
+class TestEncodeUrlSpacesEpub(unittest.TestCase):
+    """--encode-url-spaces: raw spaces in src/href attribute values are
+    percent-encoded across the package; archive entry names are untouched."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = Path(self.tmp.name) / "in.epub"
+        self.dst = Path(self.tmp.name) / "out.epub"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _build(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'unique-identifier="bookid">'
+            "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
+            "<dc:identifier id=\"bookid\">urn:uuid:U</dc:identifier>"
+            "</metadata>"
+            "<manifest>"
+            '<item href="a b.xhtml" id="a" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="a"/></spine>'
+            "</package>"
+        )
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
+            '<meta name="dtb:uid" content="urn:uuid:U"/></head>'
+            "<navMap><navPoint id=\"n1\" playOrder=\"1\">"
+            "<navLabel><text>A</text></navLabel>"
+            '<content src="a b.xhtml"/></navPoint></navMap></ncx>'
+        )
+        content = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            '</head><body><a href="a b.xhtml">x</a>'
+            '<img src="i 1.jpg" alt="i"/></body></html>'
+        )
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/a b.xhtml", content)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/toc.ncx", ncx)
+
+    def test_spaces_encoded_everywhere(self):
+        self._build()
+        report = repair_epub(self.src, self.dst, url_spaces=True)
+        self.assertEqual(report.fixes.get("url_spaces_encoded"), 4)
+        with zipfile.ZipFile(self.dst) as z:
+            self.assertIn("OEBPS/a b.xhtml", z.namelist())  # entry names untouched
+            opf = z.read("OEBPS/content.opf").decode()
+            ncx = z.read("OEBPS/toc.ncx").decode()
+            c = z.read("OEBPS/a b.xhtml").decode()
+        self.assertIn('href="a%20b.xhtml"', opf)
+        self.assertIn('src="a%20b.xhtml"', ncx)
+        self.assertIn('href="a%20b.xhtml"', c)
+        self.assertIn('src="i%201.jpg"', c)
+
+    def test_idempotent(self):
+        self._build()
+        repair_epub(self.src, self.dst, url_spaces=True)
+        dst2 = Path(self.tmp.name) / "out2.epub"
+        report = repair_epub(self.dst, dst2, url_spaces=True)
+        self.assertNotIn("url_spaces_encoded", report.fixes)
+
+    def test_opt_in(self):
+        self._build()
+        report = repair_epub(self.src, self.dst)
+        self.assertNotIn("url_spaces_encoded", report.fixes)
+
+
 if __name__ == "__main__":
     unittest.main()
