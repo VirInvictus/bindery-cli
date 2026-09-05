@@ -570,3 +570,26 @@ subprocess is gone, so the crash class no longer exists.)*
   degrades the same way rather than losing the repair. `uv.lock` moved to
   cquarry 1.9.0 in the same release, closing NEW-AUDIT Stage 1's pending
   note. Tests 240 → 244.)*
+
+## Phase 12: Top epubcheck error resolution from full-library sweep (proposed 2026-09-05)
+
+*Context: A diagnostic sweep of the full Calibre library on 2026-09-05 (`testing_facility/top500candidates/REPORT.md`) catalogued the top recurring error codes across all candidates: RSC-005 (164,302), RSC-020 (8,431), PKG-010 (4,112), RSC-007 (3,219), RSC-012 (1,940), and HTM-025 (800). Evaluating these against spec.md establishes which are safe to automate deterministically and which must remain rejected under the safety charter.*
+
+- [ ] **Opt-in missing resource pruning (`--prune-missing-resources`):**
+  - **PKG-010 (missing package resource):** When the OPF manifest lists an `<item>` whose file is absent from the archive, prune the orphaned declaration. Strictly scoped to non-spine assets (fonts, stylesheets, unused media); missing spine documents remain classified as damaged fragments and are never silently dropped.
+  - **RSC-007 (referenced resource not found):** When content documents reference absent external assets, prune dead `<link rel="stylesheet">` tags and strip `href` attributes from anchors targeting non-existent files. Missing `<img>` elements are pruned or replaced with their `alt` text under character conservation.
+- [ ] **Opt-in broken anchor stripping (`--strip-broken-anchors`):**
+  - **RSC-020 (fragment identifier not defined):** When an `href` points to a non-existent `#fragment` target, remove the `href` attribute rather than fabricating an ID. Inner anchor text is preserved byte-for-byte under character conservation.
+  - **RSC-012 (fragment points to wrong element):** For content anchors targeting illegal elements, strip the invalid fragment. For NCX `<content src="doc.xhtml#bad_id"/>` references, strip the fragment to point directly to the containing document, preserving chapter navigation.
+- [ ] **URI and entity normalization (HTM-025):**
+  - **Attribute ampersand escaping:** Ensure `transforms.escape_bare_amp` covers bare ampersands inside URL attributes (such as query strings `?a=1&b=2` converted to `?a=1&amp;b=2`).
+  - **Non-registered URI schemes:** Strip unresolvable proprietary or local URI schemes (e.g. `scrivcmt://`, local `file:///` paths) from anchor `href` attributes under `--strip-broken-anchors`, retaining visible prose.
+- [ ] **Fast sweep testing harness (`FastSweep.java` JVM parallelization):**
+  - **Objective:** Integrate parallel JVM validation sweeps directly into the testing/benchmarking suite to bypass Python subprocess I/O bottlenecks during massive 7,000+ book dry-runs.
+  - **Context:** Standard `epubcheck` execution in a Python `subprocess.run` loop takes ~3 seconds per book (6.5 hours for the library). The `FastSweepExtract.java` prototype proved that instantiating `com.adobe.epubcheck.api.EpubCheck` directly and routing `CheckingReport` to a `StringWriter` within a Java `parallelStream()` reduces this to minutes by sharing the JVM startup cost and saturating all CPU cores.
+  - **Implementation Details for Future Agents:**
+    1. Expand `scripts/FastSweep.java` (or merge `FastSweepExtract.java` into it) to parse CLI flags (e.g., `--mode=audit`, `--mode=extract`).
+    2. Write an integration wrapper in `bindery-cli` that compiles the Java file (targeting `--release 25`) and invokes it against a provided directory.
+    3. **Test Fixtures:** Use the sample candidate EPUBs pre-staged in `testing_facility/top500candidates/` (which includes confirmed instances of `RSC-005`, `RSC-020`, `PKG-010`, `RSC-007`, `RSC-012`, and `HTM-025`) to verify the Java AST parsing and error-code extraction before running it across the live library.
+
+Non-goals: No bulk repair of RSC-005 schema/content-model violations. With 164,302 instances, arbitrary schema repair violates the explicit non-goal in spec.md ("Fixing RSC-005 schema/content-model violations in bulk"). Restructuring arbitrary markup requires semantic human judgment; attempting to automate it risks silent content corruption, tag swallowing, or destroying valid styling. Specific, narrowly bounded RSC-005 sub-cases remain opt-in under their own flags (`--strip-epub3-attrs`, `--downgrade-epub3-tags`, `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`, `--add-img-alt`, `--fix-id-colons`); arbitrary bulk repair is rejected. No spine-item manifest pruning (missing spine documents indicate corrupt archives or broken fragments, not safe pruning candidates). No text deletion in anchor unwrapping (character conservation is absolute).

@@ -10,3 +10,4 @@ dist/
 # Ignore actual books used for testing to prevent IP leaks
 testing_facility/books_to_fix/*
 !testing_facility/books_to_fix/.gitkeep
+testing_facility/top500candidates/*.epub
