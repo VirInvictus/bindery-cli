@@ -47,7 +47,9 @@ def find_jar(explicit: str | None) -> Path:
     elif launcher := shutil.which("epubcheck"):
         m = _JAR_RE.search(Path(launcher).read_text())
         if not m:
-            sys.exit(f"error: cannot find a jar path in the epubcheck launcher {launcher}")
+            sys.exit(
+                f"error: cannot find a jar path in the epubcheck launcher {launcher}"
+            )
         jar = Path(os.path.expandvars(m.group(1))).expanduser()
     else:
         sys.exit("error: epubcheck not found; install it or pass --jar / EPUBCHECK_JAR")
@@ -80,9 +82,7 @@ def collect_paths(args: argparse.Namespace) -> list[str]:
         return [p.strip() for p in text.splitlines() if p.strip()]
     if not args.root.is_dir():
         sys.exit(f"error: not a directory: {args.root}")
-    return sorted(
-        str(p) for p in args.root.rglob("*") if p.suffix.lower() == ".epub"
-    )
+    return sorted(str(p) for p in args.root.rglob("*") if p.suffix.lower() == ".epub")
 
 
 def run(jar: Path, paths: list[str], mode: str) -> list[str]:
@@ -129,12 +129,21 @@ def summarize(lines: list[str]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("root", nargs="?", type=Path, help="directory to scan for .epub files")
+    ap.add_argument(
+        "root", nargs="?", type=Path, help="directory to scan for .epub files"
+    )
     ap.add_argument("--mode", choices=("audit", "extract"), default="audit")
     ap.add_argument("--from-file", help="read EPUB paths from this file ('-' = stdin)")
-    ap.add_argument("--jar", help="epubcheck.jar path (default: EPUBCHECK_JAR or the epubcheck launcher)")
+    ap.add_argument(
+        "--jar",
+        help="epubcheck.jar path (default: EPUBCHECK_JAR or the epubcheck launcher)",
+    )
     ap.add_argument("--out", type=Path, help="also write the raw output to this file")
-    ap.add_argument("--summary", action="store_true", help="aggregate extract-mode output into a per-code report")
+    ap.add_argument(
+        "--summary",
+        action="store_true",
+        help="aggregate extract-mode output into a per-code report",
+    )
     args = ap.parse_args()
     if not args.from_file and args.root is None:
         ap.error("a directory or --from-file is required")

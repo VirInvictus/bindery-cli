@@ -719,8 +719,8 @@ class TestPruneMissingResources(unittest.TestCase):
             '<?xml version="1.0"?>'
             '<package xmlns="http://www.idpf.org/2007/opf" '
             'unique-identifier="bookid">'
-            "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
-            "<dc:identifier id=\"bookid\">urn:uuid:U</dc:identifier>"
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
             "</metadata>"
             "<manifest>"
             '<item href="c1.xhtml" id="c1" media-type="application/xhtml+xml"/>'
@@ -742,7 +742,7 @@ class TestPruneMissingResources(unittest.TestCase):
             '<a href="c1.xhtml">kept</a>'
             '<img src="present.jpg" alt="p"/>'
             '<img src="gone1.jpg" alt="Figure 1"/>'
-            "<img src=\"gone2.jpg\"/>"
+            '<img src="gone2.jpg"/>'
             '<img src="gone3.jpg" alt="   "/>'
             "</body></html>"
         )
@@ -827,8 +827,8 @@ class TestStripBrokenAnchors(unittest.TestCase):
             '<?xml version="1.0"?>'
             '<package xmlns="http://www.idpf.org/2007/opf" '
             'unique-identifier="bookid">'
-            "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
-            "<dc:identifier id=\"bookid\">urn:uuid:U</dc:identifier>"
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
             "</metadata>"
             "<manifest>"
             '<item href="a.xhtml" id="a" media-type="application/xhtml+xml"/>'
@@ -840,7 +840,7 @@ class TestStripBrokenAnchors(unittest.TestCase):
         doc_a = (
             '<?xml version="1.0"?>'
             '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
-            "</head><body><p id=\"real\">target</p></body></html>"
+            '</head><body><p id="real">target</p></body></html>'
         )
         doc_b = (
             '<?xml version="1.0"?>'
@@ -884,9 +884,9 @@ class TestStripBrokenAnchors(unittest.TestCase):
             b = z.read("OEBPS/b.xhtml").decode()
             ncx = z.read("OEBPS/toc.ncx").decode()
         # dead fragment refs lose the href, keep the anchor text byte-for-byte
-        self.assertIn('<a>cross</a>', b)
-        self.assertIn('<a>local</a>', b)
-        self.assertIn('<a>Cover</a>', b)
+        self.assertIn("<a>cross</a>", b)
+        self.assertIn("<a>local</a>", b)
+        self.assertIn("<a>Cover</a>", b)
         # every resolvable reference survives untouched
         self.assertIn('<a href="a.xhtml#real">ok</a>', b)
         self.assertIn('href="https://example.com/x?a=1&amp;b=2"', b)
@@ -935,8 +935,8 @@ class TestEncodeUrlSpacesEpub(unittest.TestCase):
             '<?xml version="1.0"?>'
             '<package xmlns="http://www.idpf.org/2007/opf" '
             'unique-identifier="bookid">'
-            "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
-            "<dc:identifier id=\"bookid\">urn:uuid:U</dc:identifier>"
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
             "</metadata>"
             "<manifest>"
             '<item href="a b.xhtml" id="a" media-type="application/xhtml+xml"/>'
@@ -948,7 +948,7 @@ class TestEncodeUrlSpacesEpub(unittest.TestCase):
             '<?xml version="1.0"?>'
             '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
             '<meta name="dtb:uid" content="urn:uuid:U"/></head>'
-            "<navMap><navPoint id=\"n1\" playOrder=\"1\">"
+            '<navMap><navPoint id="n1" playOrder="1">'
             "<navLabel><text>A</text></navLabel>"
             '<content src="a b.xhtml"/></navPoint></navMap></ncx>'
         )

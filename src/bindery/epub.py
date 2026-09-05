@@ -618,6 +618,7 @@ def strip_ncx_broken_fragments(
     exist nowhere at all. A target absent from the archive entirely is left
     alone: that is the spine-integrity report's finding, not a repair.
     """
+
     def fix(part: str) -> tuple[str, int]:
         count = 0
 
