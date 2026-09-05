@@ -321,6 +321,55 @@ Three consequences worth stating, because they change existing plans:
 This is one plugin *shape* serving both tools, not one shared plugin: they are
 separate repos with separate licences and no dependency between them.
 
+**RESEARCH 2026-09-05 (against the calibre 9.14 reference clone, which matches the
+installed Calibre). The decision holds. Three corrections and a scoped spec; the
+plugin is approved to build (Brandon, 2026-09-05).**
+
+- The `on_import` contract is exactly as decided: `run(path)` returns a
+  replacement built with `temporary_file()`, Calibre swaps which path flows
+  downstream, and the original on disk is never touched. A raising plugin cannot
+  abort an import and cannot lose the file (Calibre falls back to the original),
+  but the failure is silent: tracebacks land only in Calibre's debug log. The
+  plugin therefore never raises and keeps its own log under
+  `calibre.constants.config_dir`.
+- Loader trap the decision missed: `supported_platforms` defaults to empty and
+  the loader rejects any plugin that declares no platforms. The plugin must set
+  `supported_platforms = ['linux']`, which also makes other OSes a
+  loader-enforced non-goal.
+- The hook also fires when a format is added to an existing book
+  (`db.add_format(..., run_hooks=True)`), so the plugin must be byte-idempotent.
+  The core pass already is (deterministic since v0.10.2).
+- The "both tools" wording is vacuous today: oceanstrip was absorbed at v0.12.0
+  and the standalone repo is gone. One plugin, in this repo, honoring the shape
+  claim retroactively.
+
+Scoped spec:
+
+- **Vendor slice**, generated at release from the tagged tree with a
+  byte-equality drift test: `transforms.py`, `epub.py`, `pagination.py`,
+  `watermark.py`, `reserialize.py` (~2,300 lines) plus a new plugin
+  `__init__.py`. `cli.py`/`library.py`/`audit.py`/`validate.py` stay out: they
+  carry tqdm, cquarry, vir-tui, and the epubcheck/JDK machinery, none of which
+  a plugin zip can carry (plugins cannot pip-install).
+- **Active fix set = the gate-safe default pass only**: the five well-formedness
+  transforms plus the NCX pipeline. All twelve structural repairs and the three
+  lossy strips stay CLI-only: their acceptance IS the epubcheck gate, which
+  cannot run inside Calibre (no jar, no JVM, and seconds-per-book latency).
+  Opt-in flags are never enabled by the plugin; nothing runs ungated.
+- **Behavior**: core pass on `*.epub` imports; zero fixes or any exception
+  returns the original path unchanged; the rewritten archive is re-opened and
+  `testzip()`-verified before it is handed back; one log line per book (fixed /
+  no fixes / refused / errored). Config via `site_customization` JSON
+  (`log`, `log_path`, `max_size_mb` refusal cap). No Qt config widget, no
+  `postimport` hook (that would write `metadata.db`, breaking the decision).
+- **Release**: `publish.yml` gains a job that regenerates the vendor slice from
+  the tag, runs the tests against it, zips it, and attaches
+  `BinderyRepair-v<VERSION>.zip` to the GitHub release beside the PyPI artifact.
+
+Open questions (Brandon): epubcheck-on-PATH experimental mode (default no, the
+latency ruling stands); plugin identity `Bindery Repair` / `bindery_repair`;
+size-cap default.
+
 
 ## Supplementary Phase (Based on Library Audit)
 Following a comprehensive epubcheck sweep of a 5,043-book Calibre library on 2026-08-22 (~3,228 candidates for repair), several recurring error schemas were identified; all have since shipped. (This section absorbs the one-off `BINDERY_REPORT.md`, retired in v0.17.0 — its performance notes live in the v0.13.0 patchnotes, and its findings are the checked items below.)
@@ -629,3 +678,41 @@ the underlying conditions are what the repairs target:
   gate that deserves its own decision, not a drive-by edit.
 
 Non-goals: No bulk repair of RSC-005 schema/content-model violations. With 164,302 instances, arbitrary schema repair violates the explicit non-goal in spec.md ("Fixing RSC-005 schema/content-model violations in bulk"). Restructuring arbitrary markup requires semantic human judgment; attempting to automate it risks silent content corruption, tag swallowing, or destroying valid styling. Specific, narrowly bounded RSC-005 sub-cases remain opt-in under their own flags (`--strip-epub3-attrs`, `--downgrade-epub3-tags`, `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`, `--add-img-alt`, `--fix-id-colons`); arbitrary bulk repair is rejected. No spine-item manifest pruning (missing spine documents indicate corrupt archives or broken fragments, not safe pruning candidates). No text deletion in anchor unwrapping (character conservation is absolute).
+
+## Phase 13: machine-readable audit + the acquisition run slices (proposed 2026-09-05)
+
+*Context: the acquisition pathway (`~/docs/Calibre Library/.claude/skills/`) is
+being promoted from agent-prose into first-class CLI subcommands across the lane.
+Brandon's design: `bindery run phase1` for the EPUB slice of pre-import vetting,
+`bindery run phase3` for the scoped post-import repair pass, with CalibreQuarry
+owning the orchestration (`cquarry run phase1/2/3`, its roadmap Phase 17) and the
+manifest that hands state between phases. The prerequisite on this side is a
+machine-readable audit; the run verbs wrap what already ships. No new repair
+classes, no behavior change to existing modes.*
+
+- [ ] **`audit --json FILE`**: per-file analyzer verdicts in the same shape
+      `library --json` already emits (audit is console-only today; the
+      subparser has no JSON flag). This is the contract every downstream
+      consumer of the phase-1 EPUB slice reads.
+- [ ] **`run phase1 DIR [--json OUT] [--apply-lossy] [--backup DIR]`**: the
+      EPUB slice in the phase-1 skill's documented order (corruption sweep,
+      epubcheck, content battery, monolithic, watermark dry-run,
+      repairability). Gated repair applies only under `--apply-lossy`, which is
+      the recorded lossy-strip consent; without it the verb is read-only.
+      Exit codes 0/1/2 per the `library` contract. No DRM scan, no duplicate
+      screen, no manifest assembly (CalibreQuarry's by the frontend split).
+- [ ] **`run phase3 --ids CSV [--json OUT]`**: wraps
+      `library --id ... --sweep --only all --apply --all --install-to-calibre`
+      with a pre/post summary and mechanically refuses unscoped library-wide
+      sweeps (encodes the phase-3 skill's step-10 scope warning as an exit 2
+      instead of a prose warning).
+- [ ] **Non-interactive contract**: every `run` verb takes
+      `--non-interactive`; prompts never fire off a TTY, and open questions
+      surface in the JSON as `decisions_needed` for the calling agent or user.
+- [ ] **Skill sync**: the phase-1 and phase-3 skills name the run verbs once
+      shipped. Floor, not ceiling, per the standing rule.
+
+Non-goals: no manifest format ownership (CalibreQuarry owns the
+`acquisition-manifest` schema and the orchestration; this repo emits reports
+and consumes id lists); no TUI beyond the existing audit rendering; no PDF/DJVU
+work (never this repo's charter).

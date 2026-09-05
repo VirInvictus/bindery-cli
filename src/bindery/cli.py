@@ -847,7 +847,7 @@ def build_parser() -> argparse.ArgumentParser:
     lib_group.add_argument(
         "--install-to-calibre",
         action="store_true",
-        help="with --apply, use calibredb to natively replace the format in the Calibre database instead of filesystem replace",
+        help="with --apply, re-register the format natively in metadata.db through cquarry's write module (remove + add in one transaction) instead of a bare filesystem replace",
     )
     shared_help = dummy.format_help().strip()
 
@@ -957,7 +957,7 @@ def build_parser() -> argparse.ArgumentParser:
     lib.add_argument(
         "--install-to-calibre",
         action="store_true",
-        help="with --apply, use calibredb to natively replace the format in the Calibre database instead of filesystem replace",
+        help="with --apply, re-register the format natively in metadata.db through cquarry's write module (remove + add in one transaction) instead of a bare filesystem replace",
     )
     lib.add_argument(
         "--id",

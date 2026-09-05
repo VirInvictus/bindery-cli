@@ -14,13 +14,13 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
 
 - **Minimal Dependencies.** Runtime deps are exactly: `tqdm` (progress/output),
   `vir-tui` (shared TUI rendering) and `cquarry` (read-only Calibre `metadata.db` access,
-  adopted in v0.16.0). `vir-tui` is PINNED to an exact commit in pyproject.toml
-  (bump deliberately); `cquarry` deliberately tracks `@main` since v0.19.0 so CI always
-  exercises the current library. `html5lib` remains the one approved
+  adopted in v0.16.0), pinned as PyPI ranges in pyproject.toml (`vir-tui>=2.2.0`,
+  `cquarry>=1.9.0`); `uv.lock` records the resolved versions. `html5lib` remains the one approved
   heavy-parsing exception (used only for the `--reserialize` fix, imported lazily so every
   other mode runs without it). Tests use the standard `unittest` framework. epubcheck is an
-  external CLI dependency, and `calibredb` is required for the `--install-to-calibre`
-  feature. Before adding any further Python package, stop and ask.
+  external CLI dependency expected on PATH; `--install-to-calibre` needs no external
+  binary, it re-registers the format through cquarry's write module (the calibredb
+  subprocess was retired in v0.24.0). Before adding any further Python package, stop and ask.
 - **Semantics-preserving transforms by default, everything else fenced behind a flag.**
   The always-on core is exactly five well-formedness fixes (prolog junk, duplicate
   `xmlns`, bare `&`, named entities, void self-closing) plus the NCX pipeline; every core
