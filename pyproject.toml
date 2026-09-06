@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "bindery-cli"
 version = "0.28.0"
-description = "High-speed EPUB repair surgeon with a persistent Java validation daemon, safe HTML unwrapping, and native Calibre integration."
+description = "Audit EPUB body text and repair broken EPUBs with deterministic, epubcheck-gated fixes; atomic in-place replacement in a Calibre library."
 readme = "README.md"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
