@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bindery-cli"
-version = "0.28.0"
+version = "0.29.0"
 description = "Audit EPUB body text and repair broken EPUBs with deterministic, epubcheck-gated fixes; atomic in-place replacement in a Calibre library."
 readme = "README.md"
 classifiers = [

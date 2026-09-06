@@ -1,4 +1,57 @@
 # bindery-cli Patch Notes
+## v0.29.0 (2026-09-06)
+
+### Phase 13: machine-readable audit and the acquisition run slices
+
+The acquisition pathway's EPUB steps are now first-class CLI surface. Nothing
+here adds a repair class or changes an existing mode; the new verbs compose
+what already ships, in the phase-1 and phase-3 skills' documented order.
+
+- **`audit --json FILE`**: the audit subcommand writes machine-readable
+  per-file verdicts in the `library --json` shape (mode/root/summary plus one
+  record per book), from all three modes: directory, library, and single-book.
+  Records carry a status (clean/problem/error) and per-analyzer verdicts
+  (problem/status/details); the always-on archive/spine verdicts appear OK
+  when they were silent, emptytext is omitted from a record when the archive
+  verdict owns the body-text story, and a scan error becomes its own record
+  shape. `--json` with `--id` accepts exactly one book id, because each
+  single-book run writes the file wholesale. This is the contract downstream
+  consumers of the phase-1 EPUB slice read.
+- **`run phase1 DIR [--json OUT] [--apply-lossy] [--backup DIR]`**: the
+  pre-import vetting slice over a directory of loose files, in the phase-1
+  skill's documented order: the audit battery (corruption sweep, content
+  battery, monolithic), then one fused repair sweep (epubcheck, watermark
+  detection, repairability; the skill's two sweeps collapse into one
+  epubcheck pass, with watermark hits read out of the per-book fix summary).
+  Read-only until `--apply-lossy`, which IS the recorded lossy-strip consent;
+  `--backup DIR` passes through (keep backups outside the vetted directory).
+  Exit codes 0/1/2 per the library contract; a consent question alone is not
+  trouble.
+- **`run phase3 --ids CSV [--json OUT]`**: the post-import scoped repair step,
+  run from the library directory: exactly `library --id --sweep --only all
+  --apply --all --install-to-calibre` plus a pre/post epubcheck summary over
+  the swept books. The phase-3 skill's step-10 scope warning is mechanized: an
+  unscoped library-wide call is refused with exit 2, never run by accident.
+  The verb drives the shipped library runner through the real parser, so its
+  flags cannot drift from the subcommand it wraps.
+- **Non-interactive contract**: both run verbs take `--non-interactive` and
+  never prompt (nothing in bindery prompts); open questions surface in the
+  JSON as `decisions_needed` entries: the `apply_lossy` consent question in a
+  read-only phase1, `manual_repair`/`investigate` for books left partial or
+  unreadable in phase3.
+- **Skill sync**: the phase-1 and phase-3 skills name the run verbs and the
+  machine-readable contracts (the skill files live in the library directory,
+  outside this repo).
+- **Dependencies**: vir-tui 2.3.0 folded into the lock; the pyproject floor
+  stays `vir-tui>=2.2.0` (additive bump at this release).
+- **Docs and hygiene**: CLAUDE.md's last surviving `calibredb add_format`
+  line retired (it contradicted the v0.24.0 subprocess removal and carried a
+  `-apply` typo); README's `--sweep` bullet and the pyproject description no
+  longer advertise the validation daemon's speedup, which never engages
+  because the daemon's classpath omits epubcheck's `lib/` dependencies (the
+  fix is a recorded gate-behavior decision, not a drive-by); `venv/` and
+  `.venv_ci/` are gitignored. Test count: 277 → 294.
+
 ## v0.28.0 (2026-09-05)
 
 ### Phase 12: repairs for the top epubcheck error codes

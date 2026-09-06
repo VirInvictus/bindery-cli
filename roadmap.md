@@ -736,8 +736,15 @@ classes, no behavior change to existing modes.*
       explicit and is recorded in the payload). decisions_needed entries: the
       apply_lossy consent question in a read-only phase1, manual_repair and
       investigate for partial/unreadable books in phase3.)*
-- [ ] **Skill sync**: the phase-1 and phase-3 skills name the run verbs once
+- [x] **Skill sync**: the phase-1 and phase-3 skills name the run verbs once
       shipped. Floor, not ceiling, per the standing rule.
+      *(Done for v0.29.0, 2026-09-06: the phase-1 skill's EPUB section names
+      `run phase1` as the one-verb wrapper (the fused sweep pays epubcheck
+      once; the JSON contract and `--apply-lossy` consent named) and the
+      phase-3 skill's step 10 names `run phase3` with the mechanized scope
+      refusal. The skill files live in the library directory, outside this
+      repo; per the floor rule their per-check commands still stand on their
+      own.)*
 
 Non-goals: no manifest format ownership (CalibreQuarry owns the
 `acquisition-manifest` schema and the orchestration; this repo emits reports
