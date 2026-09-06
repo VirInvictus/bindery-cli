@@ -706,3 +706,73 @@ class TestAuditIdCommaLists(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("#1", out)
         self.assertIn("#2", out)
+
+
+class TestAuditJsonWiring(unittest.TestCase):
+    """The audit --json flag must exist on the console-script subparser and
+    reach the audit runners. Same bug class as the v0.19.2 --id gap: a
+    documented flag the `bindery` entry point never registered."""
+
+    def test_flag_parses_and_defaults_off(self):
+        parser = build_parser()
+        self.assertIsNone(parser.parse_args(["audit", "content"]).json)
+        args = parser.parse_args(["audit", "content", "--json", "out.json"])
+        self.assertEqual(args.json, "out.json")
+
+    def test_json_reaches_run_directory(self):
+        # end to end: one clean book, the report lands and parses
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            with zipfile.ZipFile(root / "t.epub", "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr(
+                    "META-INF/container.xml",
+                    '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>',
+                )
+                z.writestr(
+                    "content.opf",
+                    '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+                    '<item id="c1" href="text.xhtml" media-type="application/xhtml+xml"/>'
+                    '</manifest><spine><itemref idref="c1"/></spine></package>',
+                )
+                z.writestr(
+                    "text.xhtml",
+                    "<html><body><p>" + "prose here. " * 300 + "</p></body></html>",
+                )
+            out = root / "report.json"
+            buf = io.StringIO()
+            with redirect_stdout(buf), redirect_stderr(buf):
+                rc = main(["audit", "emptytext", td, "--json", str(out)])
+            self.assertEqual(rc, 0)
+            data = json.loads(out.read_text())
+        self.assertEqual(data["mode"], "audit")
+        self.assertEqual(len(data["books"]), 1)
+
+    def test_json_reaches_run_audit_library(self):
+        with mock.patch("bindery.cli.run_audit_library", return_value=0) as run:
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                main(["audit", "content", "--json", "report.json"])
+        self.assertEqual(run.call_args.kwargs.get("json_path"), "report.json")
+
+    def test_json_reaches_run_single(self):
+        with mock.patch("bindery.cli.run_single", return_value=0) as run:
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                main(["audit", "all", "--id", "1234", "--json", "report.json"])
+        self.assertEqual(run.call_args.kwargs.get("json_path"), "report.json")
+
+    def test_json_with_multiple_ids_is_refused(self):
+        # Each run_single writes the report wholesale; two ids would silently
+        # leave only the second book's file behind.
+        with mock.patch("bindery.cli.run_single", return_value=0) as run:
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                rc = main(["audit", "all", "--id", "1,2", "--json", "report.json"])
+        self.assertEqual(rc, 2)
+        self.assertIn("exactly one", err.getvalue())
+        run.assert_not_called()

@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 import pathlib
 import tempfile
@@ -1073,3 +1074,202 @@ class TestSpineIntegrity(unittest.TestCase):
         self.assertIn("FLAG   monolithic", text)
         self.assertIn("max doc", text)
         self.assertIn("FRAGMENT spine", text)
+
+
+class TestAuditJson(unittest.TestCase):
+    """audit --json: per-file analyzer verdicts in the library --json shape.
+    The phase-1 EPUB slice reads this file, so every verdict the console
+    renders must arrive in the payload: clean analyzers as OK, flagged ones
+    as problem verdicts, scan errors as their own record shape."""
+
+    CONTAINER = TestEmptyTextScan.CONTAINER
+    OPF = TestEmptyTextScan.OPF
+
+    def _epub(self, tmp, name, body):
+        import zipfile as zf
+
+        p = pathlib.Path(tmp) / name
+        with zf.ZipFile(p, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", self.CONTAINER)
+            z.writestr("content.opf", self.OPF)
+            z.writestr("text.xhtml", f"<html><body>{body}</body></html>")
+        return p
+
+    def test_directory_mode_clean_and_flagged(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._epub(tmp, "good.epub", "<p>" + "Real prose here. " * 1500 + "</p>")
+            self._epub(tmp, "stub.epub", "<p><img src='cover.png'/></p>")
+            out = pathlib.Path(tmp) / "report.json"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = audit.run_directory(
+                    pathlib.Path(tmp), ["emptytext"], 2000, 20000, json_path=out
+                )
+            data = json.loads(out.read_text())
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["mode"], "audit")
+        self.assertEqual(data["analyzers"], ["emptytext"])
+        self.assertEqual(data["summary"]["scanned"], 2)
+        self.assertEqual(data["summary"]["problems"], 1)
+        self.assertEqual(data["summary"]["errors"], 0)
+        books = {pathlib.Path(b["path"]).name: b for b in data["books"]}
+        good = books["good.epub"]
+        stub = books["stub.epub"]
+        # the clean book carries the OK verdict, so a consumer can tell
+        # "scanned and clean" from "not selected"
+        self.assertEqual(good["status"], "clean")
+        self.assertEqual(good["verdicts"]["emptytext"]["status"], "OK")
+        self.assertFalse(good["verdicts"]["emptytext"]["problem"])
+        # the always-on archive/spine verdicts are silent-but-present
+        self.assertEqual(good["verdicts"]["archive"]["status"], "OK")
+        self.assertEqual(good["verdicts"]["spine"]["status"], "OK")
+        self.assertEqual(stub["status"], "problem")
+        self.assertEqual(stub["verdicts"]["emptytext"]["status"], "EMPTY")
+        self.assertTrue(stub["verdicts"]["emptytext"]["problem"])
+        self.assertTrue(stub["verdicts"]["emptytext"]["details"])
+
+    def test_directory_mode_corrupt_owns_the_body_text_story(self):
+        import contextlib
+        import io
+        import struct
+        import zipfile as zf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._epub(tmp, "t.epub", "<html><body><p>real prose</p></body></html>")
+            with zf.ZipFile(p) as z:
+                offset = z.getinfo("text.xhtml").header_offset
+            with open(p, "r+b") as f:
+                f.seek(offset + 26)
+                nlen, elen = struct.unpack("<HH", f.read(4))
+                f.seek(offset + 30 + nlen + elen + 10)
+                byte = f.read(1)
+                f.seek(-1, os.SEEK_CUR)
+                f.write(bytes([byte[0] ^ 0xFF]))
+            out = pathlib.Path(tmp) / "report.json"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = audit.run_directory(
+                    pathlib.Path(tmp), ["emptytext"], 2000, 20000, json_path=out
+                )
+            data = json.loads(out.read_text())
+        self.assertEqual(rc, 1)
+        (book,) = data["books"]
+        self.assertEqual(book["verdicts"]["archive"]["status"], "CORRUPT")
+        self.assertTrue(book["verdicts"]["archive"]["problem"])
+        # emptytext has no verdict when the archive owns the story
+        self.assertNotIn("emptytext", book["verdicts"])
+
+    def test_directory_mode_scan_error_is_its_own_record(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._epub(tmp, "good.epub", "<p>prose</p>")
+            (pathlib.Path(tmp) / "garbage.epub").write_bytes(b"not a zip")
+            out = pathlib.Path(tmp) / "report.json"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = audit.run_directory(
+                    pathlib.Path(tmp), ["emptytext"], 2000, 20000, json_path=out
+                )
+            data = json.loads(out.read_text())
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["summary"]["errors"], 1)
+        books = {b["status"]: b for b in data["books"]}
+        err = books["error"]
+        self.assertIn("error", err)
+        self.assertEqual(err["verdicts"], {})
+
+    def test_single_mode_writes_one_record(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as td:
+            root = TestRunSingle._library(self, pathlib.Path(td))
+            out = pathlib.Path(td) / "report.json"
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = audit.run_single(1, ["content"], 2000, 20000, json_path=out)
+            finally:
+                os.chdir(old)
+            data = json.loads(out.read_text())
+        self.assertEqual(rc, 0)
+        (book,) = data["books"]
+        self.assertEqual(book["id"], 1)
+        self.assertEqual(book["title"], "T")
+        self.assertEqual(book["status"], "clean")
+        self.assertEqual(book["verdicts"]["content"]["status"], "OK")
+
+    def test_library_mode_writes_per_book_records(self):
+        import contextlib
+        import io
+        import sqlite3
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            root.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(root / "metadata.db")
+            conn.executescript(
+                """
+                CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, sort TEXT,
+                    author_sort TEXT, timestamp TEXT, pubdate TEXT, has_cover INT,
+                    last_modified TEXT, series_index REAL DEFAULT 1.0, path TEXT, uuid TEXT);
+                CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+                CREATE TABLE books_authors_link (id INTEGER PRIMARY KEY, book INT, author INT);
+                CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT, link TEXT);
+                CREATE TABLE books_tags_link (id INTEGER PRIMARY KEY, book INT, tag INT);
+                CREATE TABLE languages (id INTEGER PRIMARY KEY, lang_code TEXT, link TEXT);
+                CREATE TABLE books_languages_link (id INTEGER PRIMARY KEY, book INT, lang_code INT);
+                CREATE TABLE data (id INTEGER PRIMARY KEY, book INT, format TEXT,
+                    name TEXT, uncompressed_size INT);
+                """
+            )
+            conn.execute(
+                "INSERT INTO books (id,title,sort,path) VALUES (1,'T','T','A/T (1)')"
+            )
+            conn.execute("INSERT INTO authors (id,name) VALUES (1,'Author')")
+            conn.execute("INSERT INTO books_authors_link (book,author) VALUES (1,1)")
+            conn.execute(
+                "INSERT INTO data (book,format,name) VALUES (1,'EPUB','T - Author')"
+            )
+            conn.commit()
+            conn.close()
+            book_dir = root / "A" / "T (1)"
+            book_dir.mkdir(parents=True)
+            with zipfile.ZipFile(book_dir / "T - Author.epub", "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", self.CONTAINER)
+                z.writestr("content.opf", self.OPF)
+                z.writestr(
+                    "text.xhtml",
+                    "<html><body><p>"
+                    + ("ordinary prose sentence here. " * 60)
+                    + "</p></body></html>",
+                )
+            out = root / "report.json"
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = audit.run_library(["content"], 2000, 20000, json_path=out)
+            finally:
+                os.chdir(old)
+            data = json.loads(out.read_text())
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["summary"]["scanned"], 1)
+        (book,) = data["books"]
+        self.assertEqual(book["id"], 1)
+        self.assertEqual(book["path"], str(book_dir / "T - Author.epub"))
+        self.assertEqual(book["status"], "clean")
+        self.assertEqual(book["verdicts"]["content"]["status"], "OK")
+        self.assertEqual(book["verdicts"]["archive"]["status"], "OK")
+        self.assertEqual(book["verdicts"]["spine"]["status"], "OK")

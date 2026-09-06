@@ -690,10 +690,16 @@ manifest that hands state between phases. The prerequisite on this side is a
 machine-readable audit; the run verbs wrap what already ships. No new repair
 classes, no behavior change to existing modes.*
 
-- [ ] **`audit --json FILE`**: per-file analyzer verdicts in the same shape
+- [x] **`audit --json FILE`**: per-file analyzer verdicts in the same shape
       `library --json` already emits (audit is console-only today; the
       subparser has no JSON flag). This is the contract every downstream
       consumer of the phase-1 EPUB slice reads.
+      *(Shipped in v0.29.0. All three modes write it: directory, library,
+      and single-book. The always-on archive/spine verdicts appear OK when
+      they were silent; emptytext is omitted from a record when the archive
+      verdict owns the body-text story; a scan error becomes its own record
+      shape (`status: "error"`). `--json` with `--id` accepts exactly one id,
+      because each single-book run writes the file wholesale.)*
 - [ ] **`run phase1 DIR [--json OUT] [--apply-lossy] [--backup DIR]`**: the
       EPUB slice in the phase-1 skill's documented order (corruption sweep,
       epubcheck, content battery, monolithic, watermark dry-run,

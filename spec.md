@@ -291,6 +291,14 @@ bumps `books.last_modified`, and cleans link tables before tag deletion). THIN e
 advisories stay untagged; already-tagged books are skipped; a missing file is a scan error, not a
 silent skip.
 
+`--json FILE` (v0.29.0) writes the same verdicts machine-readably, in the `library --json`
+shape: one record per file with a `status` (`clean`, `problem`, or `error`) and per-analyzer
+verdicts (`problem`, `status`, `details`); the always-on archive/spine verdicts appear OK when
+they were silent, emptytext is omitted when the archive verdict owns the book's body-text story,
+and a scan error becomes its own record (`status: "error"`, an `error` message, no verdicts).
+All three modes write it (directory, library, and single-book); `--json` with `--id` accepts
+exactly one book id, since each single-book run writes the file wholesale.
+
 ## Out of scope (non-goals)
 
 - Fixing RSC-005 schema/content-model violations in bulk.
