@@ -21,6 +21,7 @@ from .audit import (
     DEFAULT_MAX_DOC_CHARS,
     DEFAULT_MIN_CHARS,
     DEFAULT_THIN_CHARS,
+    resolve_library_root,
     run_directory,
     run_single,
 )
@@ -654,6 +655,318 @@ def run_repair(args) -> int:
     return 0
 
 
+def _library_argv(argv: list[str]) -> argparse.Namespace:
+    """Parse a constructed argv through the real subparser so a run verb
+    drives the shipped library runner with exactly the flags a user's
+    equivalent command would carry."""
+    return build_parser().parse_args(argv)
+
+
+def _load_json_file(path: Path) -> dict:
+    return json.loads(path.read_text())
+
+
+# Repair outcomes that mean a phase-1 book is in trouble: the gate rejected the
+# candidate repair, the oracle failed, the file could not be read, or the book
+# improved but still will not open (partial). A plain reject is a normal, good
+# outcome for the repair sweep itself, but in a vetting report it is trouble:
+# the book ships as-is and needs eyes before import.
+_PHASE1_REPAIR_TROUBLE = frozenset({"reject", "partial"})
+_PHASE1_REPAIR_ERROR = frozenset({"error", "unreadable"})
+
+
+def _phase1_status(audit_rec: dict | None, repair_rec: dict | None) -> str:
+    if audit_rec is not None and audit_rec.get("status") == "error":
+        return "error"
+    if repair_rec is not None and repair_rec["status"] in _PHASE1_REPAIR_ERROR:
+        return "error"
+    if repair_rec is not None and repair_rec["status"] in _PHASE1_REPAIR_TROUBLE:
+        return "problem"
+    if audit_rec is not None and audit_rec.get("status") == "problem":
+        return "problem"
+    return "clean"
+
+
+def _run_phase1_audit(root: Path) -> tuple[list[dict], int]:
+    """Stage 1: the read-only audit battery (corruption sweep, content
+    battery, monolithic) exactly as `bindery audit all DIR` runs it, with the
+    report captured through its own --json payload in a temp file."""
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "audit.json"
+        rc = run_directory(
+            root, list(ALL), DEFAULT_MIN_CHARS, DEFAULT_THIN_CHARS, json_path=out
+        )
+        records = _load_json_file(out)["books"] if out.exists() else []
+    return records, rc
+
+
+def _repair_sweep(argv: list[str]) -> tuple[dict, int]:
+    """Drive the shipped library runner and capture its --json payload."""
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "repair.json"
+        rc = run_library(_library_argv(argv + ["--json", str(out)]))
+        payload = _load_json_file(out) if out.exists() else {}
+    return payload, rc
+
+
+def _phase1_decisions(books: list[dict], apply: bool) -> list[dict]:
+    """Open questions a human would be asked, for the calling agent. The run
+    verbs never prompt; --non-interactive only declares what is already
+    true off a TTY."""
+    decisions: list[dict] = []
+    if not apply:
+        pending: list[str] = []
+        watermarked: list[str] = []
+        for b in books:
+            r = b["repair"]
+            if r is None:
+                continue
+            summary = r.get("summary") or ""
+            if "stripped_watermarks" in summary or "dropped_marker" in summary:
+                watermarked.append(b["path"])
+            if r["status"] in ("accept", "partial"):
+                pending.append(b["path"])
+        if pending or watermarked:
+            decisions.append(
+                {
+                    "decision": "apply_lossy",
+                    "detail": (
+                        f"{len(pending)} book(s) have gate-accepted repairs "
+                        f"pending ({len(watermarked)} watermarked); this run "
+                        "was read-only. Re-run with --apply-lossy to record "
+                        "the lossy-strip consent and apply."
+                    ),
+                    "books": sorted(set(pending + watermarked)),
+                }
+            )
+    return decisions
+
+
+def run_phase1(args) -> int:
+    root = Path(args.path).expanduser()
+    if not root.is_dir():
+        print(f"error: not a directory: {root}", file=sys.stderr)
+        return 1
+    if not next(iter_epubs(root), None):
+        print(f"error: no .epub files under {root}", file=sys.stderr)
+        return 1
+    apply = args.apply_lossy
+    mode = "APPLY-LOSSY" if apply else "READ-ONLY"
+    print(f"Bindery run phase1 ({mode}): {root}\n")
+
+    print(
+        "== stage 1/2: audit battery (corruption sweep, content battery, monolithic) =="
+    )
+    audit_records, audit_rc = _run_phase1_audit(root)
+
+    print(
+        "\n== stage 2/2: gated repair sweep (epubcheck, watermarks, repairability) =="
+    )
+    argv = ["library", str(root), "--sweep", "--only", "all", "--all"]
+    if apply:
+        argv += ["--apply"]
+        if args.backup:
+            argv += ["--backup", args.backup]
+    repair_payload, repair_rc = _repair_sweep(argv)
+
+    rep_by_key = {
+        str(Path(r["path"]).resolve()): r for r in repair_payload.get("books", [])
+    }
+    books: list[dict] = []
+    for arec in audit_records:
+        key = str(Path(arec["path"]).resolve())
+        rrec = rep_by_key.pop(key, None)
+        books.append(
+            {
+                "path": arec["path"],
+                "audit": arec,
+                "repair": rrec,
+                "status": _phase1_status(arec, rrec),
+            }
+        )
+    # A book the repair sweep saw but the audit's case-sensitive rglob missed
+    # (a hand-added Book.EPUB) still lands in the report.
+    for rrec in rep_by_key.values():
+        books.append(
+            {
+                "path": rrec["path"],
+                "audit": None,
+                "repair": rrec,
+                "status": _phase1_status(None, rrec),
+            }
+        )
+
+    decisions = _phase1_decisions(books, apply)
+    trouble = sum(1 for b in books if b["status"] != "clean")
+
+    print("\n========== PHASE 1 SUMMARY ==========")
+    print(
+        f"books: {len(books)}  clean: {sum(1 for b in books if b['status'] == 'clean')}"
+        f"  problem: {sum(1 for b in books if b['status'] == 'problem')}"
+        f"  error: {sum(1 for b in books if b['status'] == 'error')}"
+    )
+    if decisions:
+        print("decisions needed:")
+        for d in decisions:
+            print(f"  - {d['decision']}: {d['detail']}")
+    else:
+        print("decisions needed: none")
+
+    if args.json:
+        payload = {
+            "mode": "phase1",
+            "root": str(root),
+            "non_interactive": bool(getattr(args, "non_interactive", False)),
+            "apply_lossy": apply,
+            "summary": {
+                "books": len(books),
+                "clean": sum(1 for b in books if b["status"] == "clean"),
+                "problem": sum(1 for b in books if b["status"] == "problem"),
+                "error": sum(1 for b in books if b["status"] == "error"),
+                "repair": repair_payload.get("summary", {}),
+            },
+            "decisions_needed": decisions,
+            "books": books,
+        }
+        Path(args.json).expanduser().write_text(json.dumps(payload, indent=2) + "\n")
+
+    # Exit codes per the library contract: a flagged or rejected book is
+    # trouble (2), a broken invocation is (1), an all-clean run is (0).
+    if repair_rc == 1:
+        return 1
+    if trouble or audit_rc != 0 or repair_rc != 0:
+        return 2
+    return 0
+
+
+def _phase3_decisions(books: list[dict]) -> list[dict]:
+    decisions: list[dict] = []
+    partial = [b["path"] for b in books if b["status"] == "partial"]
+    if partial:
+        decisions.append(
+            {
+                "decision": "manual_repair",
+                "detail": (
+                    f"{len(partial)} book(s) improved but still have fatals; "
+                    "manual repair or re-source needed."
+                ),
+                "books": partial,
+            }
+        )
+    errored = [b["path"] for b in books if b["status"] in ("error", "unreadable")]
+    if errored:
+        decisions.append(
+            {
+                "decision": "investigate",
+                "detail": f"{len(errored)} book(s) could not be read or validated.",
+                "books": errored,
+            }
+        )
+    return decisions
+
+
+def _pre_post_summary(books: list[dict]) -> tuple[dict, dict]:
+    """Sum epubcheck counts over the swept books, before vs after."""
+
+    def total(key: str, field: str) -> int:
+        return sum(
+            (b[key] or {}).get(field, 0) for b in books if b.get(key) is not None
+        )
+
+    before = {f: total("before", f) for f in ("fatals", "errors", "warnings")}
+    after = {f: total("after", f) for f in ("fatals", "errors", "warnings")}
+    return before, after
+
+
+def run_phase3(args) -> int:
+    ids_csv = (getattr(args, "ids", "") or "").strip()
+    if not ids_csv or set(ids_csv) <= {","}:
+        # The phase-3 skill's step-10 scope warning, mechanized: a library-wide
+        # sweep is a dedicated hours-long task, never a verb call. Exit 2, not
+        # a prose warning an agent can skip.
+        print(
+            "refused: run phase3 is scoped by --ids; an unscoped library-wide "
+            "sweep is a dedicated long task (hours), not a verb call. Pass the "
+            "batch's comma-separated book ids.",
+            file=sys.stderr,
+        )
+        return 2
+    root = resolve_library_root()
+    if root is None:
+        print(
+            "error: no metadata.db next to this script or in the current "
+            "directory. Run from the library directory.",
+            file=sys.stderr,
+        )
+        return 1
+    scoped = _epubs_for_ids(root, ids_csv)
+    if not scoped:
+        print(
+            f"error: no scoped books resolved from --ids {ids_csv!r} in {root}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"Bindery run phase3: {len(scoped)} scoped book(s) in {root}\n")
+    argv = [
+        "library",
+        str(root),
+        "--id",
+        ids_csv,
+        "--sweep",
+        "--only",
+        "all",
+        "--all",
+        "--apply",
+        "--install-to-calibre",
+    ]
+    repair_payload, repair_rc = _repair_sweep(argv)
+    books = repair_payload.get("books", [])
+    before, after = _pre_post_summary(books)
+    decisions = _phase3_decisions(books)
+
+    print("\n========== PHASE 3 SUMMARY ==========")
+    print(f"scoped book(s): {len(scoped)}  swept: {len(books)}")
+    print(
+        f"before: {before['fatals']}f/{before['errors']}e/{before['warnings']}w"
+        f"  after: {after['fatals']}f/{after['errors']}e/{after['warnings']}w"
+    )
+    summary = repair_payload.get("summary", {})
+    print(
+        f"applied: {summary.get('applied', 0)}  nochange: "
+        f"{summary.get('nochange', 0)}  clean-skipped: "
+        f"{max(0, len(scoped) - len(books))}"
+    )
+    if decisions:
+        print("decisions needed:")
+        for d in decisions:
+            print(f"  - {d['decision']}: {d['detail']}")
+    else:
+        print("decisions needed: none")
+
+    if args.json:
+        payload = {
+            "mode": "phase3",
+            "root": str(root),
+            "ids": ids_csv,
+            "non_interactive": bool(getattr(args, "non_interactive", False)),
+            "summary": {
+                "scoped": len(scoped),
+                "swept": len(books),
+                "before": before,
+                "after": after,
+                "repair": summary,
+            },
+            "decisions_needed": decisions,
+            "books": books,
+        }
+        Path(args.json).expanduser().write_text(json.dumps(payload, indent=2) + "\n")
+
+    if repair_rc == 1:
+        return 1
+    return 2 if repair_rc != 0 else 0
+
+
 def _add_repair_flags(p: argparse.ArgumentParser) -> None:
     """The fix-selection and gate flags shared by both subcommands."""
     p.add_argument(
@@ -1003,6 +1316,77 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_repair_flags(lib)
     lib.set_defaults(func=run_library)
+
+    run = sub.add_parser(
+        "run",
+        help="the acquisition run slices: phase-1 pre-import vetting, phase-3 "
+        "post-import scoped repair (the run verbs wrap shipped behavior; no "
+        "new repair classes)",
+    )
+    run_sub = run.add_subparsers(dest="run_cmd", required=True)
+
+    p1 = run_sub.add_parser(
+        "phase1",
+        help="the EPUB pre-import vetting slice over a directory of loose "
+        "files: corruption sweep, epubcheck, content battery, monolithic, "
+        "watermark detection, repairability. Read-only without --apply-lossy",
+    )
+    p1.add_argument("path")
+    p1.add_argument(
+        "--json",
+        metavar="FILE",
+        help="write a machine-readable report of the run to FILE "
+        "(per-book audit verdicts, repair outcome, decisions_needed)",
+    )
+    p1.add_argument(
+        "--apply-lossy",
+        dest="apply_lossy",
+        action="store_true",
+        help="apply gate-accepted repairs (the --all set, lossy strips "
+        "included); this IS the recorded lossy-strip consent. Without it the "
+        "verb is read-only",
+    )
+    p1.add_argument(
+        "--backup",
+        metavar="DIR",
+        help="with --apply-lossy, mirror originals into DIR before replacing "
+        "(backups belong OUTSIDE the vetted directory)",
+    )
+    p1.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="declare the caller is not a TTY: run verbs never prompt, open "
+        "questions surface in the JSON as decisions_needed",
+    )
+    p1.set_defaults(func=run_phase1)
+
+    p3 = run_sub.add_parser(
+        "phase3",
+        help="the post-import scoped repair sweep: library --id <ids> --sweep "
+        "--only all --apply --all --install-to-calibre with a pre/post "
+        "summary. Refuses unscoped library-wide sweeps (exit 2); run from "
+        "the library directory",
+    )
+    p3.add_argument(
+        "--ids",
+        default="",
+        metavar="IDS",
+        help="comma-separated Calibre book ids for this batch (REQUIRED in "
+        "practice: the verb mechanically refuses an unscoped sweep)",
+    )
+    p3.add_argument(
+        "--json",
+        metavar="FILE",
+        help="write a machine-readable report of the run to FILE "
+        "(pre/post counts, per-book outcome, decisions_needed)",
+    )
+    p3.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="declare the caller is not a TTY: run verbs never prompt, open "
+        "questions surface in the JSON as decisions_needed",
+    )
+    p3.set_defaults(func=run_phase3)
     return ap
 
 

@@ -776,3 +776,242 @@ class TestAuditJsonWiring(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("exactly one", err.getvalue())
         run.assert_not_called()
+
+
+def _phase1_book(path: Path, broken: bool) -> None:
+    """A realistic loose EPUB: proper container/OPF/NCX, >2000 chars of body
+    text so the audit battery stays silent on it. `broken` leaves an unclosed
+    <p> that only --reserialize can repair (epubcheck fatal, audit-clean)."""
+    container = (
+        '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        '<rootfiles><rootfile full-path="content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+    opf = (
+        '<package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        "<dc:title>T</dc:title><dc:language>en</dc:language>"
+        '<dc:identifier id="id">x</dc:identifier></metadata>'
+        '<manifest><item id="c1" href="t.xhtml" '
+        'media-type="application/xhtml+xml"/>'
+        '<item id="ncx" href="t.ncx" media-type="application/x-dtbncx+xml"/>'
+        '</manifest><spine toc="ncx"><itemref idref="c1"/></spine></package>'
+    )
+    ncx = (
+        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+        '<head><meta name="dtb:uid" content="x"/></head>'
+        "<docTitle><text>T</text></docTitle><navMap>"
+        '<navPoint id="n1" playOrder="1"><navLabel><text>C1</text></navLabel>'
+        '<content src="t.xhtml"/></navPoint></navMap></ncx>'
+    )
+    if broken:
+        body = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title>'
+            "</head><body><p>"
+            + ("First paragraph continues here. " * 50)
+            + "<p>"
+            + ("Second paragraph continues here. " * 50)
+            + "</body></html>"
+        )
+    else:
+        body = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title>'
+            "</head><body><p>"
+            + ("A clean prose sentence stands here. " * 90)
+            + "</p></body></html>"
+        )
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr("META-INF/container.xml", container)
+        z.writestr("content.opf", opf)
+        z.writestr("t.ncx", ncx)
+        z.writestr("t.xhtml", body)
+
+
+class TestRunPhase1(unittest.TestCase):
+    """run phase1: the pre-import vetting slice. Read-only without
+    --apply-lossy; the lossy-strip consent is that flag and nothing else;
+    consent questions surface as decisions_needed, never as prompts."""
+
+    def test_readonly_run_decides_but_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _phase1_book(root / "broken.epub", broken=True)
+            _phase1_book(root / "clean.epub", broken=False)
+            jout = root / "phase1.json"
+            results = [
+                CheckResult(2, 0, 0),  # sweep broken: fatal, selected
+                CheckResult(0, 0, 0),  # sweep clean: skipped
+                CheckResult(0, 0, 0),  # 'after' for broken (before reused)
+            ]
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("bindery.cli.epubcheck_available", return_value=True),
+                mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = main(["run", "phase1", td, "--json", str(jout)])
+            data = json.loads(jout.read_text())
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["mode"], "phase1")
+        self.assertFalse(data["apply_lossy"])
+        # a consent question is not a defect: both books read clean, but the
+        # repairable one is held in decisions_needed for the caller
+        statuses = {b["path"]: b["status"] for b in data["books"]}
+        self.assertEqual(set(statuses.values()), {"clean"})
+        (decision,) = data["decisions_needed"]
+        self.assertEqual(decision["decision"], "apply_lossy")
+        self.assertIn("broken.epub", " ".join(decision["books"]))
+        self.assertIn("decisions needed", out.getvalue())
+
+    def test_apply_lossy_is_the_consent_and_applies_with_backup(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _phase1_book(root / "broken.epub", broken=True)
+            _phase1_book(root / "clean.epub", broken=False)
+            bdir = root / "backups"
+            jout = root / "phase1.json"
+            results = [
+                CheckResult(2, 0, 0),
+                CheckResult(0, 0, 0),
+                CheckResult(0, 0, 0),
+            ]
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("bindery.cli.epubcheck_available", return_value=True),
+                mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = main(
+                    [
+                        "run",
+                        "phase1",
+                        td,
+                        "--apply-lossy",
+                        "--backup",
+                        str(bdir),
+                        "--json",
+                        str(jout),
+                    ]
+                )
+            data = json.loads(jout.read_text())
+            # the consent applied the repair and the backup captured the
+            # original; read the files before the tmp context deletes them
+            backup_names = [p.name for p in bdir.rglob("*.epub")]
+            with zipfile.ZipFile(next(p for p in bdir.rglob("broken.epub"))) as z:
+                self.assertIn(b"<p>", z.read("t.xhtml"))
+            with zipfile.ZipFile(root / "broken.epub") as z:
+                repaired = z.read("t.xhtml").decode()
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["apply_lossy"])
+        self.assertEqual(data["decisions_needed"], [])
+        self.assertEqual(data["summary"]["repair"]["applied"], 1)
+        self.assertEqual(backup_names, ["broken.epub"])
+        self.assertEqual(repaired.count("<p>"), repaired.count("</p>"))
+
+    def test_usage_errors(self):
+        with tempfile.TemporaryDirectory() as td:
+            empty = Path(td) / "empty"
+            empty.mkdir()
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(main(["run", "phase1", str(empty)]), 1)
+                self.assertEqual(main(["run", "phase1", str(Path(td) / "nope")]), 1)
+        self.assertIn("no .epub", err.getvalue())
+
+    def test_non_interactive_flag_wiring(self):
+        args = build_parser().parse_args(["run", "phase1", "/tmp", "--non-interactive"])
+        self.assertTrue(args.non_interactive)
+        self.assertFalse(args.apply_lossy)
+        p3 = build_parser().parse_args(
+            ["run", "phase3", "--ids", "1", "--non-interactive"]
+        )
+        self.assertTrue(p3.non_interactive)
+
+
+class TestRunPhase3(unittest.TestCase):
+    """run phase3: the post-import scoped repair sweep. The phase-3 skill's
+    step-10 scope warning is mechanized: no --ids, no sweep, exit 2."""
+
+    def _library(self, root):
+        return TestLibraryIdScoping._library(self, root)
+
+    def test_unscoped_sweep_is_refused_with_exit_2(self):
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            self.assertEqual(main(["run", "phase3"]), 2)
+            self.assertEqual(main(["run", "phase3", "--ids", ","]), 2)
+        self.assertIn("refused", err.getvalue())
+
+    def test_missing_library_is_a_usage_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            empty = Path(td) / "nowhere"
+            empty.mkdir()
+            old = os.getcwd()
+            os.chdir(empty)
+            try:
+                err = io.StringIO()
+                with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                    rc = main(["run", "phase3", "--ids", "1"])
+            finally:
+                os.chdir(old)
+        self.assertEqual(rc, 1)
+        self.assertIn("metadata.db", err.getvalue())
+
+    def test_scoped_run_applies_into_the_library(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._library(Path(td))
+            # book 1 must give the repair engine something to fix: an unclosed
+            # <p> that only --reserialize repairs (a nochange book never
+            # reaches validation, so it would never apply)
+            broken = root / "A" / "One (1)" / "One - Author.epub"
+            with zipfile.ZipFile(broken, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr(
+                    "META-INF/container.xml",
+                    '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>',
+                )
+                z.writestr(
+                    "content.opf",
+                    '<package xmlns="http://www.idpf.org/2007/opf">'
+                    '<manifest><item id="c1" href="t.xhtml" '
+                    'media-type="application/xhtml+xml"/></manifest>'
+                    '<spine><itemref idref="c1"/></spine></package>',
+                )
+                z.writestr(
+                    "t.xhtml",
+                    "<html><body><p>"
+                    + ("prose prose prose " * 20)
+                    + "<p>more</body></html>",
+                )
+            jout = root / "phase3.json"
+            results = [
+                CheckResult(1, 0, 0),  # sweep book 1: fatal, selected
+                CheckResult(0, 0, 0),  # 'after' (before reused)
+            ]
+            out, err = io.StringIO(), io.StringIO()
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                with (
+                    mock.patch("bindery.cli.epubcheck_available", return_value=True),
+                    mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                    redirect_stdout(out),
+                    redirect_stderr(err),
+                ):
+                    rc = main(["run", "phase3", "--ids", "1", "--json", str(jout)])
+            finally:
+                os.chdir(old)
+            data = json.loads(jout.read_text())
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["mode"], "phase3")
+        self.assertEqual(data["summary"]["scoped"], 1)
+        self.assertEqual(data["summary"]["before"]["fatals"], 1)
+        self.assertEqual(data["summary"]["after"]["fatals"], 0)
+        self.assertEqual(data["summary"]["repair"]["applied"], 1)
+        self.assertEqual(data["decisions_needed"], [])
+        self.assertIn("PHASE 3 SUMMARY", out.getvalue())

@@ -299,6 +299,30 @@ and a scan error becomes its own record (`status: "error"`, an `error` message, 
 All three modes write it (directory, library, and single-book); `--json` with `--id` accepts
 exactly one book id, since each single-book run writes the file wholesale.
 
+## Run verbs (acquisition slices)
+
+`bindery run phase1 DIR [--json FILE] [--apply-lossy] [--backup DIR] [--non-interactive]`
+composes the shipped read-only audit battery (corruption sweep, content battery,
+monolithic) with the gated repair sweep (epubcheck, watermark detection,
+repairability) over one directory of loose files, in the phase-1 skill's
+documented order. It introduces no new repair classes: every fix, gate, and
+safety net is the shipped one. The verb is read-only until `--apply-lossy` is
+passed, and that flag is the recorded lossy-strip consent; `--backup DIR`
+mirrors originals before any replacement. Consent questions never block the
+verb: they surface as `decisions_needed` entries in the JSON (never prompts),
+and `--non-interactive` declares that contract for callers. Exit codes per the
+library contract: 0 clean, 1 usage, 2 when any book is flagged, rejected,
+unreadable, or failed epubcheck; a consent question alone is not trouble.
+
+`bindery run phase3 --ids IDS [--json FILE] [--non-interactive]` (run from the
+library directory) is exactly `library --id IDS --sweep --only all --apply
+--all --install-to-calibre` plus a pre/post epubcheck summary over the swept
+books. It is the post-import apply step by design: the batch was vetted in
+phase 1, the epubcheck gate still governs every replacement, and the atomic
+replacement contract is untouched. The scope refusal is mechanical: no `--ids`,
+no sweep, exit 2 (a library-wide sweep is a dedicated hours-long task, never a
+verb call). Books left partial or unreadable surface as `decisions_needed`.
+
 ## Out of scope (non-goals)
 
 - Fixing RSC-005 schema/content-model violations in bulk.
