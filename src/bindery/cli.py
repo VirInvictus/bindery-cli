@@ -210,6 +210,51 @@ def _sweep_select(epubs, only: str, root: Path, checks: dict, *, quiet: bool):
         yield epub
 
 
+def _sweep_select_parallel(
+    epubs, only: str, root: Path, checks: dict, *, quiet: bool, workers: int
+):
+    """--workers N: k concurrent epubcheck workers over the sweep pass.
+
+    epubcheck runs in a subprocess that releases the GIL, so threads
+    parallelize the oracle honestly (this pass measured ~4.4 s/book on the
+    2026-08-27 full-library walk). Books are checked in windows of `workers`;
+    each window is consumed (and its keepers yielded) before the next one is
+    submitted, so a --limit still stops the sweep after at most one window of
+    overshoot instead of checking the whole tree. Within a window, results are
+    applied in input order, so the candidate set and every emitted line match
+    the serial sweep. The repair phase stays serial: that is where the shared
+    workdir and the atomic-replacement contract live."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    todo = list(epubs)
+    if not todo:
+        return
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        done_count = 0
+        progress = (
+            None if quiet else tqdm(total=len(todo), desc="Sweeping", unit="book")
+        )
+        for start in range(0, len(todo), workers):
+            window = todo[start : start + workers]
+            futures = [ex.submit(run_epubcheck, epub) for epub in window]
+            for epub, fut in zip(window, futures, strict=True):
+                c = fut.result()
+                done_count += 1
+                if not quiet:
+                    tqdm.write(f"[sweep] {epub.relative_to(root)}", file=sys.stderr)
+                    progress.update(1)
+                if c is not None:
+                    checks[epub] = c
+                if only == "fatals":
+                    keep = c is None or c.fatals > 0
+                else:  # only == "all": skip clean books
+                    keep = c != CheckResult(0, 0, 0)
+                if keep:
+                    yield epub
+        if progress is not None:
+            progress.close()
+
+
 # Everything a run did not (or could not) auto-repair; the --manual-list export.
 _MANUAL_STATUSES = frozenset(
     {"nochange", "equal", "partial", "reject", "error", "unreadable"}
@@ -353,11 +398,31 @@ def run_library(args) -> int:
         all_epubs = list(iter_epubs(root))
     audit_hits: list[Path] = []
     checks: dict[Path, CheckResult] = {}
-    if args.sweep:
-        iterator = (
-            all_epubs if args.quiet else tqdm(all_epubs, desc="Sweeping", unit="book")
+    workers = getattr(args, "workers", 1)
+    if workers is None:
+        workers = 1
+    if workers < 1:
+        print(f"error: --workers must be >= 1, got {workers}", file=sys.stderr)
+        return 1
+    if not args.sweep and workers > 1:
+        print(
+            "note: --workers applies to the --sweep candidate pass; ignored here.",
+            file=sys.stderr,
         )
-        selected = _sweep_select(iterator, args.only, root, checks, quiet=args.quiet)
+    if args.sweep:
+        if workers > 1:
+            selected = _sweep_select_parallel(
+                all_epubs, args.only, root, checks, quiet=args.quiet, workers=workers
+            )
+        else:
+            iterator = (
+                all_epubs
+                if args.quiet
+                else tqdm(all_epubs, desc="Sweeping", unit="book")
+            )
+            selected = _sweep_select(
+                iterator, args.only, root, checks, quiet=args.quiet
+            )
     else:
         selected = _select(all_epubs, args.only, audit, audit_hits)
     if args.limit is not None:
@@ -1308,6 +1373,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lib.add_argument(
         "--limit", type=int, help="process at most N candidates (for sampling)"
+    )
+    lib.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help="concurrent epubcheck workers for the --sweep candidate pass "
+        "(default 1: serial, unchanged). The repair phase stays serial",
     )
     lib.add_argument(
         "--quiet",

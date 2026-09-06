@@ -1,4 +1,20 @@
 # bindery-cli Patch Notes
+## v0.30.0 (2026-09-06)
+
+### Phase 8 stretch: concurrent sweep workers
+
+- **`library --workers N`**: the `--sweep` candidate pass runs through N
+  concurrent epubcheck workers (default 1: serial, byte-for-byte unchanged).
+  epubcheck runs in a subprocess that releases the GIL, so threads parallelize
+  the oracle honestly; this is the pass that measured ~4.4 s/book on the
+  2026-08-27 full-library walk (5,070 EPUBs ≈ 6 hours serial). Books are
+  checked in windows of N consumed in input order, so the candidate set, the
+  before-measurements, and every emitted line match the serial sweep, and
+  `--limit` stays lazy within one window of overshoot. The repair phase stays
+  serial on purpose: that is where the shared workdir and the
+  atomic-replacement contract live. Without `--sweep`, `--workers` is a
+  no-op (with a note); counts below 1 are a usage error.
+
 ## v0.29.0 (2026-09-06)
 
 ### Phase 13: machine-readable audit and the acquisition run slices
