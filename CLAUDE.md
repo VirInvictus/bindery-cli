@@ -51,8 +51,10 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   visible (they clear errors), so a run with no measurable improvement is a noop and
   nothing is applied. Changing either bar means re-running the library dry run.
 - **Library writes are sacred.** Replacement must stay atomic (temp in same dir, then
-  `os.replace`), touch only the `.epub`, preserve mode, and be dry-run by default. Calibre integrations should seamlessly swap formats using `calibredb add_format -replace`.
-  Never write to the library without `-apply`. Test every change on `/tmp` copies first.
+  `os.replace`), touch only the `.epub`, preserve mode, and be dry-run by default.
+  Calibre format installation goes through cquarry's write module (`--install-to-calibre`;
+  the calibredb subprocess was retired in v0.24.0). Never write to the library without
+  `--apply`. Test every change on `/tmp` copies first.
 
 ## Layout
 
