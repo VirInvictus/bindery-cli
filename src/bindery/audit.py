@@ -55,6 +55,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import json
 import os
 import re
 import sys
@@ -1564,12 +1565,64 @@ def _spine_sections(hits, advisory) -> int:
 ALL: tuple[str, ...] = ("content", "pagenumbers", "emptytext", "ocr", "monolithic")
 
 
+def _record_verdict(
+    record: dict, key: str, verdict: tuple[bool, str, list[str]]
+) -> None:
+    """Fold one analyzer verdict into a book's audit --json record."""
+    problem, status, lines = verdict
+    record["verdicts"][key] = {
+        "problem": problem,
+        "status": status,
+        "details": list(lines),
+    }
+    if problem:
+        record["status"] = "problem"
+
+
+def write_audit_json(
+    json_path: str | Path,
+    records: list[dict],
+    *,
+    root: Path,
+    selected: list[str],
+    min_chars: int,
+    thin_chars: int,
+    max_doc_chars: int,
+    scanned: int,
+    error_count: int,
+) -> None:
+    """Emit the machine-readable audit report (audit --json FILE).
+
+    Same shape as library --json: mode/root/summary plus one record per file
+    carrying per-analyzer verdicts (problem/status/details). This is the
+    contract every downstream consumer of the phase-1 EPUB slice reads.
+    """
+    payload = {
+        "mode": "audit",
+        "root": str(root),
+        "analyzers": list(selected),
+        "thresholds": {
+            "min_chars": min_chars,
+            "thin_chars": thin_chars,
+            "max_doc_chars": max_doc_chars,
+        },
+        "summary": {
+            "scanned": scanned,
+            "problems": sum(1 for r in records if r["status"] == "problem"),
+            "errors": error_count,
+        },
+        "books": records,
+    }
+    Path(json_path).expanduser().write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def run_library(
     selected: list[str],
     min_chars: int,
     thin_chars: int,
     tag: str | None = None,
     max_doc_chars: int = DEFAULT_MAX_DOC_CHARS,
+    json_path: str | Path | None = None,
 ) -> int:
     # The scan loop below reuses `tag` for its per-book display column; keep
     # the --tag argument under a distinct name so it survives that shadowing.
@@ -1633,15 +1686,26 @@ def run_library(
     spine_hits: list[tuple] = []
     spine_advisory: list[tuple] = []
     errors: list[tuple] = []
+    json_records: list[dict] = []
     scanned = 0
 
     for book_id, title, full in ui.tqdm(epubs, desc=ui.info("Scanning library")):
         tags = booktags.get(book_id, [])
         tag = tags[0] if tags else "?"
+        record = {
+            "id": book_id,
+            "title": title,
+            "path": str(full),
+            "status": "clean",
+            "verdicts": {},
+        }
+        json_records.append(record)
         try:
             book = load_book(full)
         except Exception as e:
             errors.append((book_id, title, tag, f"{type(e).__name__}: {e}"))
+            record["status"] = "error"
+            record["error"] = f"{type(e).__name__}: {e}"
             continue
         scanned += 1
         corrupt_r = analyze_corrupt(book)
@@ -1649,11 +1713,18 @@ def run_library(
             corrupt_hits.append(
                 (book_id, title, tag, corrupt_r["n"], corrupt_r["first"])
             )
+            _record_verdict(record, "archive", _corrupt_verdict(corrupt_r))
+        else:
+            _record_verdict(record, "archive", (False, "OK", []))
         spine_r = spine_integrity(book)
         if spine_r["class"] == "fragment":
             spine_hits.append((book_id, title, tag, spine_r))
+            _record_verdict(record, "spine", _spine_verdict(spine_r))
         elif spine_r["class"] != "ok":
             spine_advisory.append((book_id, title, tag, spine_r))
+            _record_verdict(record, "spine", _spine_verdict(spine_r))
+        else:
+            _record_verdict(record, "spine", (False, "OK", []))
 
         if "content" in selected:
             r = analyze_content(book)
@@ -1673,11 +1744,13 @@ def run_library(
                     )
                 else:
                     signature_hits.append((book_id, title, tag, expected, detail))
+            _record_verdict(record, "content", _content_dir(r))
 
         if "pagenumbers" in selected:
             r = analyze_pagenumbers(book)
             if is_defective(r):
                 pagenum_found.append((book_id, title, tag, r))
+            _record_verdict(record, "pagenumbers", _pagenum_dir(r))
 
         if "emptytext" in selected and not corrupt_r["n"]:
             r = analyze_emptytext(book)
@@ -1688,16 +1761,21 @@ def run_library(
                 partial_hits.append((book_id, title, tag, r))
             elif verdict == "THIN":
                 thin_hits.append((book_id, title, tag, r))
+            # skipped wholesale when the archive verdict owns the book's
+            # body-text story, so the record carries no emptytext key there
+            _record_verdict(record, "emptytext", _empty_dir(r, min_chars, thin_chars))
 
         if "ocr" in selected:
             r = analyze_ocr(book)
             if is_ocr_damaged(r):
                 ocr_found.append((book_id, title, tag, r))
+            _record_verdict(record, "ocr", _ocr_dir(r))
 
         if "monolithic" in selected:
             r = analyze_monolithic(book)
             if is_monolithic(r, max_doc_chars):
                 mono_hits.append((book_id, title, tag, r))
+            _record_verdict(record, "monolithic", _monolithic_dir(r, max_doc_chars))
 
     print(f"Scanned {scanned} EPUBs in {library_root}\n")
     rc = 0
@@ -1730,6 +1808,19 @@ def run_library(
             print(f"  #{book_id} [{tag}] {title}\n    {msg}")
         print()
         rc |= 1
+
+    if json_path is not None:
+        write_audit_json(
+            json_path,
+            json_records,
+            root=library_root,
+            selected=selected,
+            min_chars=min_chars,
+            thin_chars=thin_chars,
+            max_doc_chars=max_doc_chars,
+            scanned=scanned,
+            error_count=len(errors),
+        )
 
     if audit_tag:
         rc |= _apply_audit_tag(
@@ -1838,6 +1929,7 @@ def run_directory(
     min_chars: int,
     thin_chars: int,
     max_doc_chars: int = DEFAULT_MAX_DOC_CHARS,
+    json_path: str | Path | None = None,
 ) -> int:
     if not directory.is_dir():
         print(f"ERROR: {directory} is not a directory.")
@@ -1851,7 +1943,10 @@ def run_directory(
     multi = len(selected) > 1
     problems = 0
     errors = 0
+    json_records: list[dict] = []
     for path in ui.tqdm(epubs, desc=ui.info("Scanning directory")):
+        record: dict = {"path": str(path), "status": "clean", "verdicts": {}}
+        json_records.append(record)
         try:
             book = load_book(path)
         except Exception as e:
@@ -1859,6 +1954,8 @@ def run_directory(
                 f"  {YELLOW}ERROR {RESET} {path.name}\n      {type(e).__name__}: {e}"
             )
             errors += 1
+            record["status"] = "error"
+            record["error"] = f"{type(e).__name__}: {e}"
             continue
 
         verdicts = []
@@ -1898,6 +1995,16 @@ def run_directory(
                 problems += 1
             verdicts.append(("spine", problem, status, lines))
 
+        # JSON record: the display verdicts, then the always-on archive/spine
+        # verdicts backfilled OK when they were silent. emptytext stays absent
+        # when the archive verdict owns the book's body-text story.
+        for key, problem, status, lines in verdicts:
+            _record_verdict(record, key, (problem, status, lines))
+        if "archive" not in record["verdicts"]:
+            _record_verdict(record, "archive", (False, "OK", []))
+        if "spine" not in record["verdicts"]:
+            _record_verdict(record, "spine", (False, "OK", []))
+
         if multi:
             ui.tqdm.write(f"  {path.name}")
             for key, problem, status, lines in verdicts:
@@ -1912,6 +2019,19 @@ def run_directory(
             for ln in lines:
                 ui.tqdm.write(f"      {ln}")
     print()
+
+    if json_path is not None:
+        write_audit_json(
+            json_path,
+            json_records,
+            root=directory,
+            selected=selected,
+            min_chars=min_chars,
+            thin_chars=thin_chars,
+            max_doc_chars=max_doc_chars,
+            scanned=len(epubs) - errors,
+            error_count=errors,
+        )
 
     if problems == 0 and errors == 0:
         print(f"{GREEN}{BOLD}CLEAN{RESET}: no problems in {len(epubs)} file(s).")
@@ -1930,6 +2050,7 @@ def run_single(
     thin_chars: int,
     tag: str | None = None,
     max_doc_chars: int = DEFAULT_MAX_DOC_CHARS,
+    json_path: str | Path | None = None,
 ) -> int:
     """Audit one library book by id — cquarry's single-entity fetch.
 
@@ -1972,6 +2093,27 @@ def run_single(
         book = load_book(path)
     except Exception as e:
         print(f"ERROR reading {path.name}: {type(e).__name__}: {e}")
+        if json_path is not None:
+            write_audit_json(
+                json_path,
+                [
+                    {
+                        "id": book_id,
+                        "title": title,
+                        "path": str(path),
+                        "status": "error",
+                        "error": f"{type(e).__name__}: {e}",
+                        "verdicts": {},
+                    }
+                ],
+                root=library_root,
+                selected=selected,
+                min_chars=min_chars,
+                thin_chars=thin_chars,
+                max_doc_chars=max_doc_chars,
+                scanned=0,
+                error_count=1,
+            )
         return 1
 
     tag_display = tags[0] if tags else "?"
@@ -2016,6 +2158,32 @@ def run_single(
         if problem:
             problems += 1
         verdicts.append(("spine", problem, status, lines))
+
+    record: dict = {
+        "id": book_id,
+        "title": title,
+        "path": str(path),
+        "status": "clean",
+        "verdicts": {},
+    }
+    for key, problem, status, lines in verdicts:
+        _record_verdict(record, key, (problem, status, lines))
+    if "archive" not in record["verdicts"]:
+        _record_verdict(record, "archive", (False, "OK", []))
+    if "spine" not in record["verdicts"]:
+        _record_verdict(record, "spine", (False, "OK", []))
+    if json_path is not None:
+        write_audit_json(
+            json_path,
+            [record],
+            root=library_root,
+            selected=selected,
+            min_chars=min_chars,
+            thin_chars=thin_chars,
+            max_doc_chars=max_doc_chars,
+            scanned=1,
+            error_count=0,
+        )
 
     for key, problem, status, lines in verdicts:
         if multi:
@@ -2089,6 +2257,13 @@ def main() -> int:
         help="library mode only: tag every flagged book via cquarry's opt-in "
         "write path (Calibre must be closed; audit itself stays read-only)",
     )
+    parser.add_argument(
+        "--json",
+        metavar="FILE",
+        default=None,
+        help="write a machine-readable report (per-file analyzer verdicts, "
+        "library --json shape) to FILE; with --id, exactly one book id",
+    )
     args = parser.parse_args()
     ui.print_header("bindery audit - Execution")
     selected = list(ALL) if args.mode == "all" else [args.mode]
@@ -2096,11 +2271,15 @@ def main() -> int:
         if args.directory:
             print("ERROR: --id audits a library book; drop the directory argument.")
             return 2
+        id_list = [s.strip() for s in str(args.id).split(",") if s.strip()]
+        if args.json and len(id_list) != 1:
+            print(
+                "ERROR: --json with --id supports exactly one book id.",
+                file=sys.stderr,
+            )
+            return 2
         rc = 0
-        for raw in str(args.id).split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
+        for raw in id_list:
             try:
                 bid = int(raw)
             except ValueError:
@@ -2114,6 +2293,7 @@ def main() -> int:
                 args.thin_chars,
                 tag=args.tag,
                 max_doc_chars=args.max_doc_chars,
+                json_path=args.json,
             )
         return rc
     if args.directory:
@@ -2123,6 +2303,7 @@ def main() -> int:
             args.min_chars,
             args.thin_chars,
             max_doc_chars=args.max_doc_chars,
+            json_path=args.json,
         )
     return run_library(
         selected,
@@ -2130,6 +2311,7 @@ def main() -> int:
         args.thin_chars,
         tag=args.tag,
         max_doc_chars=args.max_doc_chars,
+        json_path=args.json,
     )
 
 

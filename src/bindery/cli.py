@@ -803,11 +803,17 @@ def run_audit_cmd(args: argparse.Namespace) -> int:
         if args.path:
             print("ERROR: --id audits a library book; drop the directory argument.")
             return 2
+        id_list = [s.strip() for s in str(args.id).split(",") if s.strip()]
+        if args.json and len(id_list) != 1:
+            # Each run_single writes the file wholesale; two ids would leave
+            # only the second book's report behind with no warning.
+            print(
+                "ERROR: --json with --id supports exactly one book id.",
+                file=sys.stderr,
+            )
+            return 2
         rc = 0
-        for raw in str(args.id).split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
+        for raw in id_list:
             try:
                 bid = int(raw)
             except ValueError:
@@ -821,6 +827,7 @@ def run_audit_cmd(args: argparse.Namespace) -> int:
                 args.thin_chars,
                 tag=args.tag,
                 max_doc_chars=max_doc,
+                json_path=args.json,
             )
         return rc
     if args.path:
@@ -830,9 +837,15 @@ def run_audit_cmd(args: argparse.Namespace) -> int:
             args.min_chars,
             args.thin_chars,
             max_doc_chars=max_doc,
+            json_path=args.json,
         )
     return run_audit_library(
-        selected, args.min_chars, args.thin_chars, tag=args.tag, max_doc_chars=max_doc
+        selected,
+        args.min_chars,
+        args.thin_chars,
+        tag=args.tag,
+        max_doc_chars=max_doc,
+        json_path=args.json,
     )
 
 
@@ -918,6 +931,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="audit library book(s) by Calibre id — one id or a comma-separated "
         "list (fetched via cquarry's single-entity get_book; cannot be "
         "combined with a directory)",
+    )
+    audit.add_argument(
+        "--json",
+        metavar="FILE",
+        default=None,
+        help="write a machine-readable report of the run to FILE: one record "
+        "per book with per-analyzer verdicts (problem/status/details), in the "
+        "library --json shape; with --id, exactly one book id",
     )
     audit.set_defaults(func=run_audit_cmd)
 
