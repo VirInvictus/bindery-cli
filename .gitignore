@@ -14,3 +14,8 @@ testing_facility/top500candidates/*.epub
 
 # Compiled Java scratch (FastSweep harness)
 *.class
+
+# Local virtualenvs (each carries its own auto-generated inner .gitignore,
+# which is the only reason they were invisible until now)
+venv/
+.venv_ci/
