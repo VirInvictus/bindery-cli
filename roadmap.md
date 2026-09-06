@@ -715,7 +715,7 @@ classes, no behavior change to existing modes.*
       Exit codes 0/1/2 per the `library` contract. No DRM scan, no duplicate
       screen, no manifest assembly (CalibreQuarry's by the frontend split).
       *(Shipped in v0.29.0. Two composed stages: the audit battery through its
-      own --json payload, then ONE fused repair sweep with the --all set — the
+      own --json payload, then ONE fused repair sweep with the --all set: the
       skill ran watermark detection and repairability as two sweeps, the verb
       pays epubcheck once and reads watermark hits out of the per-book fix
       summary. Read-only until --apply-lossy; --backup passes through (keep
@@ -732,7 +732,7 @@ classes, no behavior change to existing modes.*
       the real parser, so its flags cannot drift from the subcommand it wraps.
       The pre/post summary sums before/after epubcheck counts over the swept
       books; books left partial or unreadable surface as decisions_needed.
-      The verb is the apply step by design — the batch was vetted in phase 1,
+      The verb is the apply step by design: the batch was vetted in phase 1,
       and the gate plus the atomic-replacement contract still govern every
       write.)*
 - [x] **Non-interactive contract**: every `run` verb takes
