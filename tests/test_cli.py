@@ -1015,3 +1015,125 @@ class TestRunPhase3(unittest.TestCase):
         self.assertEqual(data["summary"]["repair"]["applied"], 1)
         self.assertEqual(data["decisions_needed"], [])
         self.assertIn("PHASE 3 SUMMARY", out.getvalue())
+
+
+class TestSweepWorkers(unittest.TestCase):
+    """--workers N: concurrent epubcheck workers over the --sweep candidate
+    pass (Phase 8 stretch). Default 1 is the serial sweep; N > 1 must select
+    the same candidates in the same order, reuse the sweep result as the
+    book's before-measurement, and keep --limit lazy within one window of
+    overshoot."""
+
+    def test_flag_defaults_to_one(self):
+        parser = build_parser()
+        self.assertEqual(parser.parse_args(["library", "/tmp"]).workers, 1)
+        self.assertEqual(
+            parser.parse_args(["library", "/tmp", "--workers", "4"]).workers, 4
+        )
+
+    def test_invalid_worker_count_is_a_usage_error(self):
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            rc = main(["library", "/tmp", "--workers", "0", "--no-validate"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--workers", err.getvalue())
+
+    def test_parallel_sweep_selects_like_the_serial_one(self):
+        # a path-keyed oracle: threads complete in any order, but every
+        # book's result is pinned to the book, so determinism survives
+        def oracle(path):
+            return (
+                CheckResult(1, 0, 0) if path.name == "a.epub" else CheckResult(0, 0, 0)
+            )
+
+        with tempfile.TemporaryDirectory() as td:
+            for name in ("a", "b", "c"):
+                build(Path(td) / f"{name}.epub")
+            jout = Path(td) / "report.json"
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("bindery.cli.epubcheck_available", return_value=True),
+                mock.patch("bindery.cli.run_epubcheck", side_effect=oracle),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = main(
+                    [
+                        "library",
+                        td,
+                        "--sweep",
+                        "--only",
+                        "fatals",
+                        "--workers",
+                        "3",
+                        "--json",
+                        str(jout),
+                    ]
+                )
+            data = json.loads(jout.read_text())
+        self.assertEqual(rc, 0)
+        statuses = {Path(b["path"]).name: b["status"] for b in data["books"]}
+        self.assertEqual(list(statuses), ["a.epub"])
+        # the sweep result was reused as the before-measurement and the gate
+        # accepted the no-op-fix candidate exactly as the serial sweep would
+        self.assertEqual(statuses["a.epub"], "accept")
+        self.assertEqual(data["summary"]["accepted"], 1)
+
+    def test_limit_stays_lazy_within_one_window(self):
+        checked: list[str] = []
+
+        def oracle(path):
+            checked.append(path.name)
+            return CheckResult(1, 0, 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            for name in ("a", "b", "c", "d", "e"):
+                build(Path(td) / f"{name}.epub")
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("bindery.cli.epubcheck_available", return_value=True),
+                mock.patch("bindery.cli.run_epubcheck", side_effect=oracle),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = main(
+                    [
+                        "library",
+                        td,
+                        "--sweep",
+                        "--only",
+                        "all",
+                        "--limit",
+                        "1",
+                        "--workers",
+                        "2",
+                    ]
+                )
+        self.assertEqual(rc, 0)
+        # the first window (a, b) is checked; the keeper limit of 1 stops the
+        # sweep there: at most one window of overshoot, never the whole tree.
+        # (2 sweep calls + 1 after-validation on the candidate: the fixture's
+        # &nbsp; always gives the core pass a fix, so the candidate validates.)
+        self.assertEqual(len(checked), 3)
+
+    def test_serial_limit_checks_exactly_the_limit(self):
+        checked: list[str] = []
+
+        def oracle(path):
+            checked.append(path.name)
+            return CheckResult(1, 0, 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            for name in ("a", "b", "c", "d", "e"):
+                build(Path(td) / f"{name}.epub")
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("bindery.cli.epubcheck_available", return_value=True),
+                mock.patch("bindery.cli.run_epubcheck", side_effect=oracle),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = main(["library", td, "--sweep", "--only", "all", "--limit", "1"])
+        self.assertEqual(rc, 0)
+        # 1 sweep call + 1 after-validation on the single candidate
+        self.assertEqual(len(checked), 2)
