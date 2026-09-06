@@ -73,9 +73,11 @@ uv tool install "bindery-cli[reserialize]"             # incl. --reserialize
 
 ## Usage
 
-Three verbs: `bindery repair` fixes a single EPUB epubcheck-gated, `bindery audit`
-reports content flaws without touching anything, and `bindery library` sweeps a Calibre
-library tree (dry run by default; `--apply` replaces accepted books atomically in place).
+Four verbs: `bindery repair` fixes a single EPUB epubcheck-gated, `bindery audit`
+reports content flaws without touching anything, `bindery library` sweeps a Calibre
+library tree (dry run by default; `--apply` replaces accepted books atomically in place),
+and `bindery run` composes the acquisition pathway's EPUB slices (phase-1 pre-import
+vetting, phase-3 scoped post-import repair) for a calling agent.
 The sections below take each in turn.
 
 ## Auditing
@@ -181,6 +183,41 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - A per-book progress line goes to stderr (stdout stays a clean report); `--quiet` suppresses it. A corrupt or unreadable book is reported and skipped, never aborting the sweep.
 - Exit codes: 0 for a clean sweep, 1 for a usage error, 2 when any book was rejected, unreadable, or failed epubcheck (for scripts and cron).
 - `repair` refuses to overwrite an existing output file unless `--force` is given.
+
+## Run slices
+
+`bindery run` wraps the acquisition pathway's EPUB steps as verbs. They add no
+repair classes of their own: they compose the shipped audit and library runners
+in the documented order, and both speak `--json` for a calling agent.
+
+**`run phase1 DIR`** is the pre-import vetting slice for a directory of loose
+files: the audit battery (corruption sweep, content battery, monolithic) in one
+decompression pass per book, then the gated repair sweep (epubcheck, watermark
+detection, repairability) over the same directory. The verb is read-only until
+`--apply-lossy` is passed, and that flag IS the recorded lossy-strip consent;
+`--backup DIR` mirrors originals first (keep backups outside the vetted
+directory). Consent questions never block the verb: a read-only run that finds
+repairable books records an `apply_lossy` entry in the JSON's
+`decisions_needed` instead of prompting, and `--non-interactive` declares that
+contract for callers. Exit codes per the `library` contract: 0 clean, 1 usage,
+2 when any book is flagged, rejected, unreadable, or failed epubcheck (a
+consent question alone is not trouble).
+
+```sh
+bindery run phase1 ~/Downloads --json phase1-report.json               # read-only
+bindery run phase1 ~/Downloads --apply-lossy --backup /tmp/phase1-backups
+```
+
+**`run phase3 --ids IDS`** (from the library directory) is the post-import
+scoped repair sweep: exactly `library --id IDS --sweep --only all --apply --all
+--install-to-calibre` plus a pre/post epubcheck summary. It mechanically
+refuses an unscoped library-wide sweep with exit 2 (a full-library sweep is a
+dedicated hours-long task, never a verb call), and books left partial or
+unreadable surface as `decisions_needed` in the JSON.
+
+```sh
+cd ~/docs/Calibre\ Library && bindery run phase3 --ids 5071,5072 --json phase3-report.json
+```
 
 ## Companion scripts
 

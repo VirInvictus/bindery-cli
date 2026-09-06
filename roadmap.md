@@ -700,21 +700,42 @@ classes, no behavior change to existing modes.*
       verdict owns the body-text story; a scan error becomes its own record
       shape (`status: "error"`). `--json` with `--id` accepts exactly one id,
       because each single-book run writes the file wholesale.)*
-- [ ] **`run phase1 DIR [--json OUT] [--apply-lossy] [--backup DIR]`**: the
+- [x] **`run phase1 DIR [--json OUT] [--apply-lossy] [--backup DIR]`**: the
       EPUB slice in the phase-1 skill's documented order (corruption sweep,
       epubcheck, content battery, monolithic, watermark dry-run,
       repairability). Gated repair applies only under `--apply-lossy`, which is
       the recorded lossy-strip consent; without it the verb is read-only.
       Exit codes 0/1/2 per the `library` contract. No DRM scan, no duplicate
       screen, no manifest assembly (CalibreQuarry's by the frontend split).
-- [ ] **`run phase3 --ids CSV [--json OUT]`**: wraps
+      *(Shipped in v0.29.0. Two composed stages: the audit battery through its
+      own --json payload, then ONE fused repair sweep with the --all set — the
+      skill ran watermark detection and repairability as two sweeps, the verb
+      pays epubcheck once and reads watermark hits out of the per-book fix
+      summary. Read-only until --apply-lossy; --backup passes through (keep
+      backups outside the vetted directory). A consent question is not an
+      error: it lands in decisions_needed and the exit code stays on the
+      library contract.)*
+- [x] **`run phase3 --ids CSV [--json OUT]`**: wraps
       `library --id ... --sweep --only all --apply --all --install-to-calibre`
       with a pre/post summary and mechanically refuses unscoped library-wide
       sweeps (encodes the phase-3 skill's step-10 scope warning as an exit 2
       instead of a prose warning).
-- [ ] **Non-interactive contract**: every `run` verb takes
+      *(Shipped in v0.29.0. Run from the library directory (cwd-resolved like
+      audit library mode). The verb drives the shipped library runner through
+      the real parser, so its flags cannot drift from the subcommand it wraps.
+      The pre/post summary sums before/after epubcheck counts over the swept
+      books; books left partial or unreadable surface as decisions_needed.
+      The verb is the apply step by design — the batch was vetted in phase 1,
+      and the gate plus the atomic-replacement contract still govern every
+      write.)*
+- [x] **Non-interactive contract**: every `run` verb takes
       `--non-interactive`; prompts never fire off a TTY, and open questions
       surface in the JSON as `decisions_needed` for the calling agent or user.
+      *(Shipped in v0.29.0 with the verbs themselves. Nothing in a run verb
+      prompts (none ever did; the flag makes the orchestrator contract
+      explicit and is recorded in the payload). decisions_needed entries: the
+      apply_lossy consent question in a read-only phase1, manual_repair and
+      investigate for partial/unreadable books in phase3.)*
 - [ ] **Skill sync**: the phase-1 and phase-3 skills name the run verbs once
       shipped. Floor, not ceiling, per the standing rule.
 
