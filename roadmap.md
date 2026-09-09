@@ -609,6 +609,58 @@ hand-rolled zipfile sweep.
 *(Fixed in v0.23.1; RETIRED entirely by Phase 11 in v0.24.0 — the calibredb
 subprocess is gone, so the crash class no longer exists.)*
 
+### watermark anchored pass can delete whole paragraphs of real prose (2026-09-08 sweep)
+**Bug in `--strip-watermarks`:** the anchored stamp regex
+`<a\b[^>]*?oceanofpdf[^>]*?>.*?</a>` is DOTALL with no tag budget, so an
+unclosed stamp anchor (exactly the kind of broken book this tool repairs)
+swallows everything up to the next unrelated `</a>`, and when no pure wrapper
+exists the fallback deletes the entire match. Demonstrated: two paragraphs of
+real content vanish with count 1; the output is well-formed with equal or
+fewer fatals, so the `no_worse` bar accepts it. `watermark.py:207-213`.
+**Fix:** require the anchored match to be tag-free (or stamp-length visible
+text) before falling back to whole-match deletion; anything larger goes to
+`decisions_needed` for manual repair. *(Unfixed as of the 2026-09-08 sweep.)*
+
+### roman-numeral detector reads ordinary English words as page numbers (2026-09-08 sweep)
+**Bug in `--strip-pagination`:** `_ROMAN_RE = [ivxlcdm]{2,7}\Z` (IGNORECASE)
+matches words like `mid`, `dim`, `mix`, `lid`, `civil` (`number_value("mid")
+= 1499`), so a standalone `<p>mid</p>` followed by a lowercase-starting
+paragraph is a confident page-number hit and is deleted and merged away.
+epubcheck is blind to deleted text, so `no_worse` passes. `pagination.py:44`,
+`70-78`, `180-184`.
+**Fix:** require uppercase romans, or validate with a strict roman grammar
+(`M?(D?C{0,3}|C[MD])(X?L{0,3}|L?X{0,3})(I?V{0,3}|V?I{0,3})`). *(Unfixed as of
+the 2026-09-08 sweep.)*
+
+### install_format can write a wrong size into metadata.db for stray files (2026-09-08 sweep)
+**Bug in `library --apply --install-to-calibre` without `--id`:**
+`iter_epubs` yields uncatalogued stray `.epub` files inside book dirs; the
+resolver returns None, the `(id)` directory-name guess fires, and the
+remove+add batch re-registers the catalogued format name with the stray
+file's size. Demonstrated on a synthetic library: the catalogued 999-byte
+file untouched on disk while `data` recorded 8123 bytes. Silent,
+order-dependent catalog corruption; a stale `(N)` directory for a deleted
+book instead raises an uncaught `TypeError` at the `book["path"]` access.
+`library.py:169-231`.
+**Fix:** when the id came from the directory guess, verify the target
+matches the DB's book path and format name before the batch; otherwise save
+in place and warn without touching the row, and catch the `TypeError` path.
+*(Unfixed as of the 2026-09-08 sweep.)*
+
+### EPUB2-targeted structural fixes fire on EPUB3 books under --all (2026-09-08 sweep)
+**Bug in `--strip-epub3-attrs` / `--downgrade-epub3-tags` via the run verbs
+and `--all`:** neither fix checks `package@version`, so every EPUB3 book in
+the sweep gets `epub:type`/`aria-label`/`page-progression-direction` stripped
+and EPUB3 tags downgraded. Two demonstrated outcomes: (a) a repairable EPUB3
+book gains a net-new error from stripping `epub:type="toc"` off the nav and
+the whole repair is rejected as a regression; (b) a legal count-neutral
+`epub:type="chapter"` is silently removed because the gate only sees
+epubcheck counts. phase1 and phase3 always pass `--all`.
+`epub.py:251-260`, `903-937`, `957-967`; `cli.py:830`, `976-987`.
+**Fix:** gate both fixes on the package version carried in `opf_text`, or
+make them finding-driven (only strip what the before-pass epubcheck flagged).
+*(Unfixed as of the 2026-09-08 sweep.)*
+
 ## Phase 11: Migrate install-to-calibre to native cquarry API (proposed 2026-08-31)
 
 *Context: `bindery library --install-to-calibre` currently shells out to the external `calibredb add_format` CLI binary. This is fragile (it crashed on 2026-08-31 due to a non-existent `--replace` flag) and bypasses the transaction and trigger-safety guarantees built into the `cquarry` library. Since bindery-cli already imports `cquarry` for path resolution, it should adopt the native write module.*
@@ -757,3 +809,259 @@ Non-goals: no manifest format ownership (CalibreQuarry owns the
 `acquisition-manifest` schema and the orchestration; this repo emits reports
 and consumes id lists); no TUI beyond the existing audit rendering; no PDF/DJVU
 work (never this repo's charter).
+
+## Phase 14: hardening backlog from the 2026-09-08 audit sweep (proposed 2026-09-08, digging only)
+
+*Context: a five-agent adversarial sweep of the whole repo (repair pipeline,
+audit, CLI/library/validate, tests and scripts, docs). No code was changed;
+every finding below was demonstrated against the shipped code, most with a
+live run. The four sharpest bugs are written up under Bug Reports above; this
+phase is the rest of the backlog. Nothing here is committed work: it is the
+map of what the sweep found, for when work resumes.*
+
+*Verification postscript (2026-09-08, an independent second batch re-derived
+the five sharpest claims; all five CONFIRMED, with scoping notes): the
+watermark loss is invisible to `no_worse` and can even clear a fatal, so the
+book ships as a success; the window is the standalone `--strip-watermarks`
+flag (the anchorless pass never fallback-deletes, and under `--all`
+`--reserialize` closes the anchor first). The roman deletion needs a
+120+ char prose neighbor (`PROSE_MIN`) and a lowercase-starting continuation
+paragraph, and no test acknowledges word-shaped romans. The `install_format`
+exposure is exactly directory-mode `--apply --install-to-calibre`; phase3
+passes `--id` and is not exposed. The `fix_id_colons` dangling NCX ref
+survives the gate whenever colon fixes outnumber NCX references (the minimal
+1:1 case is refused as a noop), and the phantom count additionally triggers
+the re-encode that the untouched-file guard exists to prevent. The EPUB3
+hard reject needs a clean book; in already-error books the attribute strip
+can be net-neutral and ships silently.*
+
+### Repair-pipeline correctness
+
+- [ ] **Anchor attribute-name regexes to real start tags.** Three findings
+      share one root cause: bare attribute-name regexes that are not
+      quote-aware and not tag-anchored. `strip_invalid_value` matches the
+      `value` in `data-value="42"` (the `\b` matches between `-` and `v`)
+      and rewrites it to a malformed `<span  data->`
+      (`transforms.py:375`); `_EPUB3_ATTR_RE` is not anchored to tags at all,
+      so `strip_epub3_attributes` deletes visible prose like
+      `Use epub:type="chapter" here` down to `Use here` (`epub.py:245-248`),
+      contradicting that fix's own docstring. Reuse the quote-aware
+      start-tag matcher + protected-span machinery the module already has,
+      and a `(?<![\w:.-])value` lookbehind.
+- [ ] **Make `fix_id_colons` consistent and honest.** It rewrites fragments
+      of external URLs (`http://example.com/page#sec:1` becomes `#sec_1`,
+      breaking the link; `transforms.py:524`, `536`, docstring at 509 claims
+      otherwise) and rewrites colon-bearing `data-id`/`xml:id`; it never
+      translates the NCX's `content src` fragments, so renaming
+      manufactures dangling NCX refs end to end
+      (`epub.py:976-979` vs the NCX branch at `873-901`); and it counts
+      every matched `id` attribute even when no colon was replaced, so
+      byte-identical reruns report phantom changes (`transforms.py:513-516`).
+- [ ] **Run anchor stripping last and protect CDATA/comments everywhere.**
+      `strip_broken_anchors`' id snapshot predates `unwrap_block_in_inline`
+      and `unwrap_illegal_tags`, which can delete ids the snapshot thinks
+      exist (`epub.py:980-997`); `strip_broken_tags` and
+      `unwrap_illegal_tags` are not wrapped in the module's own
+      protected-span machinery, so they edit inside CDATA (rendered text)
+      and comments (`transforms.py:444-450`, `619-623`).
+- [ ] **Stop re-encoding non-UTF-8 documents.** Any fix that fires on a
+      windows-1252 or UTF-16 document decodes with `replace` and re-encodes
+      UTF-8, materializing mojibake under an XML declaration that still
+      names the old encoding; usually well-formed, so the gate cannot see
+      it (`epub.py:874`, `902`, `939`, `1027`). Detect and skip with a
+      report entry, per the project's manual-repair philosophy.
+- [ ] **Scope `--reserialize` to HTML roots.** A broken non-HTML `.xml`
+      sidecar gets html5lib's HTML algorithm and comes back
+      html/body-wrapped with `ns0:` prefixes, structurally rewritten while
+      staying well-formed (`epub.py:938`, `reserialize.py:39-42`). Require
+      an `html` root (or manifest media-type) before rebuilding.
+- [ ] **Smaller repair papercuts:** `fix_ncx_playorder` can rewrite
+      `playOrder="N"`-shaped text inside nav labels (unanchored pattern,
+      `transforms.py:326-328`); mimetype fixes land in `report.fixes`
+      without incrementing `files_changed` (`epub.py:837-840`);
+      `fix_manifest_ids` is a silent count-0 no-op on single-quoted OPFs
+      (`epub.py:59`); `css_protected_tags` misses namespaced
+      (`svg|st`) and functional (`:is(st, w)`) selectors, and doesn't scan
+      `.xpgt` templates (`transforms.py:419-421`, `epub.py:790-794`); the
+      watermark `_norm` doesn't unescape entities so `OceanofPDF.com&nbsp;`
+      stamps are missed; drop_duplicate_xmlns/strip_prolog_junk edit inside
+      comments; the archive comment field is dropped by the rewrite.
+
+### audit.py correctness
+
+- [ ] **Read nav/NCX inside the open zip and resolve NCX srcs against the
+      NCX's own directory.** The post-close `_read` of a manifest-declared
+      but absent nav/NCX poisons `Book.corrupt`, so an otherwise healthy
+      book with a leftover `toc.ncx` manifest entry is branded CORRUPT
+      "re-source" (`audit.py:252-272`, `_read` at `173-177`). And `full()`
+      resolves NCX `content src` against the OPF's directory, not the NCX's,
+      so a spec-compliant nested NCX counts every target absent and can
+      reach the FRAGMENT "quarantine" alarm (`audit.py:187`, `205-213`,
+      `249`, `263-272`). Also `html.unescape` captured ToC hrefs, which are
+      currently compared raw against archive names (`audit.py:258`, `268-272`).
+- [ ] **Make archive/spine first-class in library mode.** `run_library`'s
+      report loop iterates the content-analyzer tuple only, so the
+      `archive`/`spine` branches and their section builders are dead code:
+      a CRC-corrupt book prints `emptytext CLEAN` and exits 0 in library
+      mode while directory mode says CORRUPT and exits 1, contradicting the
+      v0.22.0 "its own verdict in every mode" promise (`audit.py:1565`,
+      `1783-1803`, `1520-1558`).
+- [ ] **Harden the edges of the record pipeline:** a failed `--json` write
+      raises after the scan and loses the whole run's summary and exit code
+      (`audit.py:1616`, `2023-2043`); `--tag` tags books whose content hits
+      the run itself marked expected-foreign (`audit.py:1830-1832` vs the
+      rc filter); a decoded-href vs stored-name spine miss silently reads
+      as EMPTY on a book full of prose, with no diagnostic
+      (`audit.py:219`); DRM-encrypted entries report as CORRUPT
+      "re-source" instead of their own status (`audit.py:173-177`); the
+      broken-span heuristic treats duplicate trailing numbers
+      (`part1a/part1b/part2`) and duplicate spine itemrefs as FRAGMENT
+      (`audit.py:1066-1079`).
+- [ ] **Delete the dead surfaces:** `audit.main()` + its argparse block
+      duplicate `cli.run_audit_cmd` (`audit.py:2212-2315`);
+      `analyze_brokentags` is unreachable (`audit.py:1260-1274`); duplicate
+      imports at the top of the file; and standalone `audit <dir>` silently
+      skips uppercase `.EPUB` files (`audit.py:1937`).
+- [ ] **Smaller audit papercuts:** `_Blocks.handle_endtag` pops the stack
+      top regardless of which tag closed, so mis-nested blockquotes lose
+      their in_quote guard (`audit.py:739-743`); nav selection matches
+      `data-nav` by substring (`audit.py:196`); tagging failure can surface
+      an undocumented exit 3 (`audit.py:2203-2208`); the JSON `analyzers`
+      list omits the always-on archive/spine verdicts and the console
+      problem counter can disagree with `summary.problems`
+      (`audit.py:1603`); `--min-chars`/`--thin-chars` are not validated
+      against each other; duplicate zip entries silently resolve last-wins
+      with no note in the record.
+
+### Apply-path and oracle safety
+
+- [ ] **Move the write-back inside the per-book exception isolation.**
+      `make_backup`/`atomic_replace`/`install_format` sit bare in the
+      sweep loop, so an ENOSPC or EACCES partway through a multi-hour run
+      aborts raw with no summary, no JSON, and no record of what was
+      already applied (`cli.py:498-508` vs `544-557`). Wrap the block,
+      record an error Outcome, and still emit the report; a run journal
+      (one line per applied book, resumable) is the stronger version.
+- [ ] **Drive the exit code from partial books.** The documented contract
+      says exit 2 means "ran fine but some books are in trouble", but
+      partial books land in `still_fatal` and return 0, in both `library`
+      and phase3, while phase1 maps partial to problem/exit 2; the layers
+      disagree and scripts can miss trouble (`cli.py:260`, `526-534`, `634`,
+      `1030-1032`).
+- [ ] **Give backups overwrite protection and keep them out of the
+      candidate set.** `make_backup` clobbers an existing backup, so a
+      second `--apply` destroys the only copy of the author original
+      (`library.py:37-41`); a `--backup` dir inside the library root gets
+      its `.epub`-named copies swept as candidates on the next run
+      (`library.py:29-34`). Refuse overwrite (or rotate) and reject an
+      in-tree backup path.
+- [ ] **Make `--workers` parallelism real and bound the daemon.** The
+      epubcheck daemon holds its lock across the whole blocking
+      round-trip, so every worker serializes behind it and `--workers N`
+      degrades to serial exactly when epubcheck is present
+      (`validate.py:155-169`, `cli.py:213-255`); the daemon path ignores
+      `timeout` entirely, so a JVM hang hangs the sweep forever
+      (`validate.py:196`); a dead daemon never resets `_proc`, so every
+      later book reads as `error` for the life of the process
+      (`validate.py:160-170`); a failed daemon start leaks its
+      `/tmp/bindery-daemon-*` workdir and retries the javac compile per
+      book (`validate.py:130-153`); and `--only ncx` crashes with a raw
+      RuntimeError on encrypted archives because `_select` probes outside
+      the exception net (`epub.py:688`, `cli.py:184`).
+- [ ] **Smaller apply papercuts:** `--limit -1` and a missing
+      `--audit` file raise tracebacks instead of usage errors
+      (`cli.py:434`, `373`); the fresh-format branch of `install_format`
+      registers the format under the name `repaired`
+      (`library.py:223-230`); phase1 ignores `--backup` without
+      `--apply-lossy` silently; the lossy override can upgrade a noop to
+      partial in the still-fatal listing (conservative direction only).
+
+### Tests
+
+- [ ] **Add the missing direct tests for the safety contract:** `gate()` and
+      `no_worse()` have zero direct tests (the subtle fatal-fixing
+      error-unmasking branch is asserted nowhere); `_EpubcheckDaemon` is
+      completely untested (and hides the no-reset liveness bug above);
+      `--strip-broken-tags` has zero tests anywhere despite being one of
+      the three named lossy strips; `--strip-watermarks`' gated apply path
+      has no analogue of the pagination gate test; `fix_ncx_playorder`
+      (core, always-on) is untested; `atomic_replace`'s failure path
+      (temp cleaned, target untouched, re-raise) has no failure-injection
+      test; `--install-to-calibre` CLI wiring and library-mode `--tag`
+      end-to-end are untested.
+- [ ] **Clean the weak 2%:** delete the three mid-file
+      `if __name__ == "__main__": unittest.main()` blocks
+      (`test_audit.py:806`, `:943`; `test_cli.py:475`) that make direct
+      file runs silently skip ~40 tests; drop the constant-assertion
+      `test_all_tuple_has_ocr`; consolidate the verbatim-duplicated
+      roman/number implementations and their twin test classes (audit copy
+      lacks pagination's year exclusion, which is its own question);
+      remove the dead `sys.argv` patches in three CLI tests; strengthen or
+      delete `test_non_interactive_flag_wiring` (asserts argparse, not the
+      runner); de-alias the `pagenum`/`emptytext`/`ocr` module aliases.
+- [ ] **Add a ruff step to run_tests.sh** so the local loop matches CI
+      (`uvx ruff check . && uvx ruff format --check .`), and note the
+      html5lib-dependent tests silently skip without uv.
+
+### Scripts and repo hygiene
+
+- [ ] **Retire the subsumed find_* diagnostics.** All ten `scripts/find_*.py`
+      detection wedges became shipped flags with tests
+      (the css one says so in its own docstring port note); keeping both
+      copies means future behavior changes land in one only. Delete (git
+      preserves) or move to an attic note; also delete `sweep.sh` and
+      `FastSweepExtract.java` (superseded by `fast_sweep.py --mode=extract`
+      and `FastSweep.java`), keeping `fast_sweep.py` + `FastSweep.java`
+      (a live, different tool: one JVM saturated across cores vs the
+      library sweep's N subprocesses). The untracked `.class` files are
+      local build leftovers; already gitignored.
+- [ ] **Decide what test_facility/ is.** It carries 10 tracked commercial
+      EPUBs (muse-of-nightmares, last-man-out, etc.; only leaves-of-grass is
+      public domain), a second never-run "suite" of bare functions that
+      `unittest discover` reports as 0 tests, and it mutates the tracked
+      books in place. `.gitignore`'s own comment says books are ignored to
+      prevent IP leaks, but that rule only covers `testing_facility/`;
+      `test_facility/` predates it. At minimum stop tracking the EPUBs and
+      delete or properly convert the dead suite; stripping them from
+      history is the thorough option (repo is public).
+- [ ] **Mention validate.py's Java epubcheck daemon in the docs.** It is
+      the first oracle tried at runtime, it compiles `_DAEMON_JAVA`
+      (`validate.py:73-105`) into a tempdir, and nothing in README/spec
+      admits it exists; it is also the scariest untested code in the repo.
+
+### Documentation (drift is real but narrow)
+
+- [ ] **Reconcile spec.md with the shipped opt-ins.** The contract's
+      non-goals forbid exactly what `--reserialize` (v0.3.0, the lone
+      html5lib dependency) and `--strip-bad-attrs` (v0.4.0) do, and neither
+      has a spec section; the OPF half of `--fix-ids` is missing;
+      "the OPF is left untouched" is true only of the default pass; the
+      NCX sentence at spec.md:52-53 is garbled (a dangling "to the OPF
+      unique identifier" tail). A contributor reading spec.md first would
+      conclude two shipped flags violate the charter.
+- [ ] **Fix the exit-code contract.** README and spec document usage
+      errors as exit 1, but argparse-level misuse exits 2 (the same code
+      as "book in trouble"); either a custom parser exit or updated docs.
+- [ ] **README completeness:** document `--min-chars`, `--thin-chars`,
+      `--max-doc-chars`, and `--limit` in the flag reference; fix the
+      `--only fatals` bullet to "needs `--audit` or `--sweep`" (it
+      currently contradicts the `--sweep` bullet one line over).
+- [ ] **CLAUDE.md's exception taxonomy** lists twelve structural repairs
+      and three lossy strips but omits the four safe opt-ins
+      (`--fix-ids`, `--add-img-alt`, `--strip-bad-attrs`,
+      `--escape-unknown-entities`), which reads as a complete inventory.
+
+### Completeness verdict from the sweep
+
+*The engine is close to complete for its charter: the five-fixture core is
+solid under adversarial attack (zip machinery, splice engine, entity
+handling, and the gate all held), the suite is fast, deterministic, and about
+95% load-bearing, and the docs are truthful everywhere except spec.md's
+never-absorbed v0.3/v0.4 era. The gap between "almost as complete as it can
+be" and "done" is one coherent theme, not scattered work: several opt-in
+repairs trust their regexes where they should trust the parse (the
+anchored-tag cluster), the audit's newest machinery (archive/spine) is not
+wired into every mode it promises, and the apply path's failure modes (crash
+mid-run, backup clobber, daemon stall) are unpadded. Fix the four Bug
+Reports entries and the anchored-regex cluster before any further features;
+everything else is backlog, not danger.*
