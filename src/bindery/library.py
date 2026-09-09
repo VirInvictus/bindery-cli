@@ -148,9 +148,9 @@ def install_format(
     With a book id, the repaired file is placed in the book's directory —
     an atomic replace over the catalogued file when one exists (same path,
     same ``data.name``; Calibre's layout never changes) — and the ``data``
-    row follows through ``WritableCalibreDB``: ``remove_format`` +
-    ``add_format`` in one ``batch()`` when the format exists (``add_format``
-    refuses duplicates by design), a fresh ``add_format`` otherwise. The
+    row follows through ``WritableCalibreDB``: ``set_format`` (cquarry
+    1.17's sanctioned remove+add in one transaction) when the format
+    exists, a fresh ``add_format`` otherwise. The
     row's size stays truthful and the book lands in ``metadata_dirtied``, so
     Calibre regenerates its sidecar .opf. Files are the caller's
     responsibility in cquarry; they are placed here, atomically, before the
@@ -210,11 +210,12 @@ def install_format(
             if row is not None:
                 atomic_replace(target, new_file)
                 placed = True
-                with wdb.batch():
-                    wdb.remove_format(int(calibre_id), "EPUB")
-                    wdb.add_format(
-                        int(calibre_id), "EPUB", row["name"], new_file.stat().st_size
-                    )
+                # cquarry 1.17's set_format is the sanctioned remove+add;
+                # the explicit two-call batch this used to compose is
+                # retired with it.
+                wdb.set_format(
+                    int(calibre_id), "EPUB", row["name"], new_file.stat().st_size
+                )
             else:
                 book = wdb.conn.execute(
                     "SELECT path FROM books WHERE id = ?", (int(calibre_id),)

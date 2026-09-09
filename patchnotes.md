@@ -1,4 +1,17 @@
 # bindery-cli Patch Notes
+## v0.31.0 (2026-09-09)
+
+### Cascade: install through cquarry 1.17's set_format
+
+- **`--install-to-calibre` replaces the format row through
+  `WritableCalibreDB.set_format`** (cquarry 1.17's sanctioned remove+add
+  in one transaction) instead of composing `remove_format` + `add_format`
+  in a `batch()` by hand. Same contract as before: same `data.name`,
+  truthful size, OPF-resync queue, and a database failure still degrades
+  to the in-place save with a warning. The cquarry floor moves from
+  >=1.9.0 to **>=1.17.0** (`uv.lock` re-resolved), and the failure-mode
+  test now injects through `set_format`.
+
 ## v0.30.0 (2026-09-06)
 
 ### Phase 8 stretch: concurrent sweep workers

@@ -203,17 +203,18 @@ class TestInstallFormat(unittest.TestCase):
 
     def test_replace_survives_a_database_error(self):
         # A database failure must never lose the repair: the file is saved in
-        # place and the warning says the row is stale. add_format fails after
-        # the batch's remove_format, so the whole batch rolls back.
+        # place and the warning says the row is stale. set_format (cquarry
+        # 1.17's sanctioned remove+add) fails and rolls its own transaction
+        # back, so the old row survives untouched.
         import contextlib
         import io
 
-        with mock.patch("cquarry.write.WritableCalibreDB.add_format") as m:
+        with mock.patch("cquarry.write.WritableCalibreDB.set_format") as m:
             m.side_effect = sqlite3.OperationalError("database is locked")
             with contextlib.redirect_stderr(io.StringIO()):
                 install_format(self.epub, self.new, CalibreIdResolver(self.root))
         self.assertEqual(self.epub.read_bytes(), b"REPAIRED")
-        # the batch rolled back: the old row survives untouched
+        # set_format rolled back: the old row survives untouched
         self.assertEqual(self._rows(), [("EPUB", "Title - Author", 10)])
 
     def test_guess_fallback_uses_calibre_dbpath(self):

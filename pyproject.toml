@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bindery-cli"
-version = "0.30.0"
+version = "0.31.0"
 description = "Audit EPUB body text and repair broken EPUBs with deterministic, epubcheck-gated fixes; atomic in-place replacement in a Calibre library."
 readme = "README.md"
 classifiers = [
@@ -27,7 +27,7 @@ authors = [
 dependencies = [
   "tqdm",
   "vir-tui>=2.2.0",
-  "cquarry>=1.9.0",
+  "cquarry>=1.17.0",
 ]
 
 [project.optional-dependencies]

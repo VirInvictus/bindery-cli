@@ -4,7 +4,7 @@ requires-python = ">=3.14"
 
 [[package]]
 name = "bindery-cli"
-version = "0.30.0"
+version = "0.31.0"
 source = { editable = "." }
 dependencies = [
     { name = "cquarry" },
@@ -19,7 +19,7 @@ reserialize = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cquarry", specifier = ">=1.9.0" },
+    { name = "cquarry", specifier = ">=1.17.0" },
     { name = "html5lib", marker = "extra == 'reserialize'", specifier = ">=1.1" },
     { name = "tqdm" },
     { name = "vir-tui", specifier = ">=2.2.0" },
@@ -37,11 +37,11 @@ wheels = [
 
 [[package]]
 name = "cquarry"
-version = "1.9.0"
+version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/37/50/ce20ce828d0836e229735c4297bb3761aa69c2d98949c7199a0f8dd1995b/cquarry-1.9.0.tar.gz", hash = "sha256:9d10644cdef161be466e4bdfa3a6c7a4a863ffd902fdc1148ca7a8dc68458871", size = 134894, upload-time = "2026-09-02T21:45:12.036Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/6b/e2c80511bf62e3b008c52d47a05b29e43e2782614cf211aadc8c965a2be1/cquarry-1.17.0.tar.gz", hash = "sha256:07ec6c43ebc11f8921645a963373537ef4808985c88ad885de5dfc05ba08d737", size = 197288, upload-time = "2026-09-09T21:48:07.208Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/8a/f10ca4563be8e16034374c3f01fc2c61386defeee10c7f3bee08f678a0fd/cquarry-1.9.0-py3-none-any.whl", hash = "sha256:ffc200eeab39a21a8952c3944ad3739e9c80f03bc8bdd6a3ecf8b2487d3c38a3", size = 53911, upload-time = "2026-09-02T21:45:10.649Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/5f/90f6fe1c24a3ce8616cb377cbedee3dfb82c4eca84cbb1ec8b02a7034cb1/cquarry-1.17.0-py3-none-any.whl", hash = "sha256:f01c5b4ecb0863c78379e9fc899fd0da7d2518e815ed2a9000acec09cbea054b", size = 70998, upload-time = "2026-09-09T21:48:05.798Z" },
 ]
 
 [[package]]
