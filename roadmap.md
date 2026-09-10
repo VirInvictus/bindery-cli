@@ -1332,6 +1332,12 @@ everything else is backlog, not danger.*
 
 ## Phase 15: completeness spot-check analyzer (proposed 2026-09-10, from the phase-1 skill's own doctrine)
 
+*(RAISED with Brandon 2026-09-10, batched with the session-start raises;
+recommendation: APPROVE. Execution is gated on that go; the proposal
+below is filed and costed. The Redwall run it names is a ready-made
+fixture set, and the analyzer is one more member of the audit's existing
+single-decompression-pass battery.)*
+
 *The phase-1 skill's step 2 has a judgment step with no tool owner: the
 completeness spot-check ("sample early, middle, and late pages ... read the
 LAST content page to confirm it reaches real back matter rather than cutting

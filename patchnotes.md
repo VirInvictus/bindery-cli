@@ -1,4 +1,101 @@
 # bindery-cli Patch Notes
+## v0.33.0 (2026-09-10)
+
+### Phase 14 hardening: the apply path, the audit, and the safety contract's tests
+
+The rest of the 2026-09-08 audit sweep's backlog, in the same shape as
+v0.32.0: every fix confirmed against current code first, each with its
+regression test.
+
+**Apply-path and oracle safety**
+
+- **A failed write can no longer abort a sweep raw.** The backup,
+  replace, and install calls sat bare in the loop, so an ENOSPC or
+  EACCES partway through a multi-hour run died with a traceback and no
+  record. Failures are now error Outcomes; the summary and JSON always
+  land, and exit 2 says scripts should look.
+- **Backups rotate and stay out of the candidate set.** A second
+  `--apply` used to clobber the first backup (the only copy of the
+  author original); backups now rotate (`book.epub.bak2`, `.bak3`, ...).
+  A `--backup` directory inside the library root is refused (its copies
+  would be swept as candidates on the next run).
+- **`--workers N` parallelism is real.** With epubcheck present, every
+  worker serialized behind the daemon's one pipe. The daemon is now a
+  bounded pool sized by `--workers` (default 1: the old behavior), a
+  busy pool falls back to subprocesses instead of blocking, every
+  roundtrip is bounded by the caller's timeout, and a daemon that dies
+  or wedges is torn down and never retried — one failed attempt exhausts
+  the pool so the sweep degrades to pure subprocess checks instead of
+  respawning a JVM per book. Measured: 8 books, 4 workers, two ~10s
+  waves. The evidence for the recorded daemon-classpath decision grew:
+  this machine's javac (27-ea) and java (25) cannot load each other's
+  classes, so the daemon has never served a count here, and when forced
+  to run its counts diverge from the CLI JSON oracle (243 vs 4 on one
+  book) — enabling it would change gate outcomes.
+- **Smaller apply papercuts:** `--limit < 1` and a missing `--audit`
+  file are usage errors, not tracebacks; the fresh-format install
+  registers the catalogued file's own name instead of `repaired`; and
+  phase1 notes the dry-run `--backup` no-op instead of ignoring it.
+
+**audit.py correctness**
+
+- **ToC accounting reads inside the open zip,** a declared-but-absent
+  nav/NCX no longer poisons `Book.corrupt` (a healthy book with a
+  leftover `toc.ncx` entry is not a damaged archive), NCX `content src`
+  resolves against the NCX's own directory (a nested NCX counted every
+  target absent), and ToC hrefs are entity-decoded before comparison.
+- **Archive and spine verdicts are first-class in library mode.** Their
+  sections were dead code in the library report loop: a CRC-corrupt book
+  printed `emptytext CLEAN` and exited 0 there while directory mode said
+  CORRUPT and exited 1. Both modes now agree.
+- **The record pipeline's edges hold:** a failed `--json` write becomes a
+  trouble exit instead of a post-scan traceback; `--tag` skips
+  expected-foreign content findings; an unresolvable spine itemref is
+  counted into the emptytext detail instead of silently reading EMPTY;
+  DRM-encrypted entries get their own ENCRYPTED verdict
+  ("not repairable, skip") instead of CORRUPT re-source; and
+  part1a/part1b/part2-style spines no longer read as a broken span.
+- **Dead surfaces removed** (a duplicate argparse CLI, an unreachable
+  analyzer, duplicated imports) and directory mode catches uppercase
+  `.EPUB` like the library walk always did.
+- **Seven audit papercuts** closed: the block-stack pop now matches the
+  closing tag, the nav property matches whole tokens (`data-nav` is not
+  the nav), exit 3 is documented, the JSON analyzers list includes the
+  always-on verdicts, the console problem counter counts books like
+  `summary.problems`, `--min-chars` above `--thin-chars` is a usage
+  error, and duplicate archive entries are counted instead of resolving
+  last-wins in silence.
+
+**Tests, hygiene, and docs**
+
+- **Direct tests for the safety contract:** gate()/no_worse() including
+  the error-unmasking branch, the watermark gated-apply path,
+  atomic_replace failure injection (temp cleaned, target untouched,
+  re-raise), `--install-to-calibre` wiring, and library-mode `--tag` end
+  to end through cquarry's write path. Suite grew 342 → 381.
+- **The weak two percent cleaned:** mid-file `__main__` blocks,
+  constant-assertion tests, and module aliases gone; the
+  non-interactive wiring is asserted through the real runner's JSON.
+- **run_tests.sh runs CI's exact ruff pins** before the suite, so the
+  local loop fails where CI fails.
+- **Repo hygiene:** the ten subsumed `scripts/find_*.py` wedges plus
+  `sweep.sh` and `FastSweepExtract.java` are retired (git keeps them);
+  the ten commercial EPUBs in `test_facility/` are untracked
+  (forward-only, files stay on disk) and the dead never-run suite there
+  is deleted.
+- **Docs:** the daemon is admitted to exist (README gate section, spec
+  gate section) with its bounding and fail-safe fallback; README's
+  `--sweep` bullet stopped describing the fixed classpath bug as current;
+  the exit-code contract documents argparse's own exit 2 and the partial
+  book divergence; CLAUDE.md's exception taxonomy names the safe
+  opt-ins group.
+
+**Recorded for Brandon (unchanged, evidence sharpened):** the daemon
+classpath decision, the exit-code-from-partial-books decision (both
+options written into its roadmap box; unifying on "trouble" is the
+recommendation), and the spec.md reconciliation draft (the non-goals
+vs. the shipped opt-ins, ready to apply on a go).
+
 ## v0.32.0 (2026-09-10)
 
 ### The four Bug Reports fixes (2026-09-08 sweep) and the anchored-attribute cluster
