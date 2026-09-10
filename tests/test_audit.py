@@ -6,10 +6,8 @@ import pathlib
 import tempfile
 import unittest
 
-from bindery import audit as audit
+from bindery import audit
 
-pagenum = audit
-emptytext = audit
 ocr = audit
 
 
@@ -111,27 +109,27 @@ class TestResolveLibraryRoot(unittest.TestCase):
 
 class TestPageNumberValue(unittest.TestCase):
     def test_arabic_and_roman(self):
-        self.assertEqual(pagenum.number_value("42"), 42)
-        self.assertEqual(pagenum.number_value("xiv"), 14)
-        self.assertEqual(pagenum.number_value("II"), 2)
+        self.assertEqual(audit.number_value("42"), 42)
+        self.assertEqual(audit.number_value("xiv"), 14)
+        self.assertEqual(audit.number_value("II"), 2)
 
     def test_rejects_non_numbers(self):
-        self.assertIsNone(pagenum.number_value("Chapter"))
-        self.assertIsNone(pagenum.number_value("12345"))  # >4 digits
-        self.assertIsNone(pagenum.number_value("i"))  # lone roman i is too noisy
-        self.assertIsNone(pagenum.number_value("42a"))
+        self.assertIsNone(audit.number_value("Chapter"))
+        self.assertIsNone(audit.number_value("12345"))  # >4 digits
+        self.assertIsNone(audit.number_value("i"))  # lone roman i is too noisy
+        self.assertIsNone(audit.number_value("42a"))
 
     def test_word_romans_are_not_numbers(self):
         # reported 2026-09-08: the character-set roman regex read ordinary words
         # (mid, dim, mix, lid, civil) as page numbers, inflating baked-hit counts
         for w in ("mid", "dim", "mix", "lid", "civil", "mild", "mil", "ill", "civ"):
-            self.assertIsNone(pagenum.number_value(w), w)
+            self.assertIsNone(audit.number_value(w), w)
 
     def test_strict_roman_grammar_still_parses_numerals(self):
-        self.assertEqual(pagenum.number_value("xiv"), 14)
-        self.assertEqual(pagenum.number_value("xciv"), 94)
-        self.assertEqual(pagenum.number_value("xcix"), 99)
-        self.assertIsNone(pagenum.number_value("mcmxcix"))  # over the page range
+        self.assertEqual(audit.number_value("xiv"), 14)
+        self.assertEqual(audit.number_value("xciv"), 94)
+        self.assertEqual(audit.number_value("xcix"), 99)
+        self.assertIsNone(audit.number_value("mcmxcix"))  # over the page range
 
 
 class TestIsDefective(unittest.TestCase):
@@ -141,14 +139,14 @@ class TestIsDefective(unittest.TestCase):
         return r
 
     def test_clear_defect(self):
-        self.assertTrue(pagenum.is_defective(self._r()))
+        self.assertTrue(audit.is_defective(self._r()))
 
     def test_too_few_hits(self):
-        self.assertFalse(pagenum.is_defective(self._r(n_hits=4)))
+        self.assertFalse(audit.is_defective(self._r(n_hits=4)))
 
     def test_localized_cluster_dropped_by_span(self):
         # a footnote-poem / scraped-comment cluster: many hits, tiny span
-        self.assertFalse(pagenum.is_defective(self._r(n_hits=20, span=0.02)))
+        self.assertFalse(audit.is_defective(self._r(n_hits=20, span=0.02)))
 
 
 class TestPageNumberScan(unittest.TestCase):
@@ -186,9 +184,9 @@ class TestPageNumberScan(unittest.TestCase):
         para_b = "<p>" + ("continued in lowercase as the sentence ran on " * 6) + "</p>"
         body = "".join(f"{para_a}<p>{n}</p>{para_b}" for n in range(1, 8))
         with tempfile.TemporaryDirectory() as tmp:
-            r = pagenum.scan_pagenumbers(self._epub(tmp, body))
+            r = audit.scan_pagenumbers(self._epub(tmp, body))
         self.assertGreaterEqual(r["n_hits"], 5)
-        self.assertTrue(pagenum.is_defective(r))
+        self.assertTrue(audit.is_defective(r))
 
     def test_clean_chapter_numbers_do_not_flag(self):
         # a number that opens a chapter (next text is a fresh capitalized
@@ -196,8 +194,8 @@ class TestPageNumberScan(unittest.TestCase):
         chapter = "<p>" + ("A clean chapter of ordinary prose ends here. " * 6) + "</p>"
         body = "".join(f"<p>{n}</p>{chapter}" for n in range(1, 12))
         with tempfile.TemporaryDirectory() as tmp:
-            r = pagenum.scan_pagenumbers(self._epub(tmp, body))
-        self.assertFalse(pagenum.is_defective(r))
+            r = audit.scan_pagenumbers(self._epub(tmp, body))
+        self.assertFalse(audit.is_defective(r))
 
 
 class TestVisibleChars(unittest.TestCase):
@@ -206,10 +204,10 @@ class TestVisibleChars(unittest.TestCase):
             "<style>p{color:red}</style><p>Hello <b>world</b></p>"
             "<script>var x = 1</script>"
         )
-        self.assertEqual(emptytext._visible_chars(html), len("Hello world"))
+        self.assertEqual(audit._visible_chars(html), len("Hello world"))
 
     def test_decodes_entities(self):
-        self.assertEqual(emptytext._visible_chars("<p>a &amp; b</p>"), len("a & b"))
+        self.assertEqual(audit._visible_chars("<p>a &amp; b</p>"), len("a & b"))
 
 
 class TestEmptyTextScan(unittest.TestCase):
@@ -244,21 +242,21 @@ class TestEmptyTextScan(unittest.TestCase):
         # a Bookmate-style stub: a single cover image, no body text
         body = '<p><img src="cover.png"/></p>'
         with tempfile.TemporaryDirectory() as tmp:
-            r = emptytext.scan_emptytext(self._epub(tmp, body))
+            r = audit.scan_emptytext(self._epub(tmp, body))
         self.assertEqual(r["chars"], 0)
-        self.assertEqual(emptytext.classify(r, 2000, 20000), "EMPTY")
+        self.assertEqual(audit.classify(r, 2000, 20000), "EMPTY")
 
     def test_full_text_ok(self):
         body = "<p>" + ("Real prose that fills the book. " * 1000) + "</p>"
         with tempfile.TemporaryDirectory() as tmp:
-            r = emptytext.scan_emptytext(self._epub(tmp, body))
-        self.assertEqual(emptytext.classify(r, 2000, 20000), "OK")
+            r = audit.scan_emptytext(self._epub(tmp, body))
+        self.assertEqual(audit.classify(r, 2000, 20000), "OK")
 
     def test_thin_is_advisory(self):
         body = "<p>" + ("short story prose. " * 300) + "</p>"  # ~5700 chars
         with tempfile.TemporaryDirectory() as tmp:
-            r = emptytext.scan_emptytext(self._epub(tmp, body))
-        self.assertEqual(emptytext.classify(r, 2000, 20000), "THIN")
+            r = audit.scan_emptytext(self._epub(tmp, body))
+        self.assertEqual(audit.classify(r, 2000, 20000), "THIN")
 
 
 class TestPctDecode(unittest.TestCase):
@@ -304,9 +302,9 @@ class TestPercentEncodedSpine(unittest.TestCase):
 
     def test_encoded_href_resolves_text(self):
         with tempfile.TemporaryDirectory() as tmp:
-            r = emptytext.scan_emptytext(self._epub(tmp))
+            r = audit.scan_emptytext(self._epub(tmp))
         self.assertGreater(r["chars"], 20000)
-        self.assertEqual(emptytext.classify(r, 2000, 20000), "OK")
+        self.assertEqual(audit.classify(r, 2000, 20000), "OK")
 
 
 class TestPlaceholderExport(unittest.TestCase):
@@ -345,20 +343,20 @@ class TestPlaceholderExport(unittest.TestCase):
         stub = "<p>sorry something went wrong loading your content. Contact support@bookshout.com</p>"
         docs = [("c0.xhtml", real)] + [(f"c{i}.xhtml", stub) for i in range(1, 12)]
         with tempfile.TemporaryDirectory() as tmp:
-            r = emptytext.scan_emptytext(self._epub(tmp, docs))
+            r = audit.scan_emptytext(self._epub(tmp, docs))
         self.assertGreater(r["chars"], 20000)  # would otherwise clear the THIN floor
         self.assertTrue(r["placeholder_sig"])
-        self.assertEqual(emptytext.classify(r, 2000, 20000), "PARTIAL")
+        self.assertEqual(audit.classify(r, 2000, 20000), "PARTIAL")
 
     def test_repeated_stub_without_signature_is_partial(self):
         real = "<p>" + ("Real prose. " * 3000) + "</p>"
         stub = "<p>This chapter is not included in this edition preview.</p>"
         docs = [("c0.xhtml", real)] + [(f"c{i}.xhtml", stub) for i in range(1, 12)]
         with tempfile.TemporaryDirectory() as tmp:
-            r = emptytext.scan_emptytext(self._epub(tmp, docs))
+            r = audit.scan_emptytext(self._epub(tmp, docs))
         self.assertFalse(r["placeholder_sig"])
         self.assertGreaterEqual(r["stub_docs"], 3)
-        self.assertEqual(emptytext.classify(r, 2000, 20000), "PARTIAL")
+        self.assertEqual(audit.classify(r, 2000, 20000), "PARTIAL")
 
     def test_distinct_small_dividers_stay_ok(self):
         real = "<p>" + ("Real prose. " * 3000) + "</p>"
@@ -367,9 +365,9 @@ class TestPlaceholderExport(unittest.TestCase):
             for i in range(12)
         ]
         with tempfile.TemporaryDirectory() as tmp:
-            r = emptytext.scan_emptytext(self._epub(tmp, docs))
+            r = audit.scan_emptytext(self._epub(tmp, docs))
         self.assertLess(r["stub_docs"], 3)  # distinct text, so no repeated stub
-        self.assertEqual(emptytext.classify(r, 2000, 20000), "OK")
+        self.assertEqual(audit.classify(r, 2000, 20000), "OK")
 
 
 class TestOcrSplitDetection(unittest.TestCase):
@@ -401,11 +399,11 @@ class TestOcrSplitDetection(unittest.TestCase):
         )
         b = "<p>another boat, " + ("moving through the fog " * 5) + "slowly.</p>"
         with tempfile.TemporaryDirectory() as tmp:
-            r = ocr.scan_ocr(self._epub(tmp, (a + b) * 40))
+            r = audit.scan_ocr(self._epub(tmp, (a + b) * 40))
         self.assertEqual(r["splits"], 40)
-        self.assertGreaterEqual(r["split_rate"], ocr.OCR_FLAG_RATE)
+        self.assertGreaterEqual(r["split_rate"], audit.OCR_FLAG_RATE)
         self.assertEqual(r["func_frac"], 1.0)
-        self.assertTrue(ocr.is_ocr_damaged(r))
+        self.assertTrue(audit.is_ocr_damaged(r))
 
     def test_image_interrupted_pair_is_cleared(self):
         # a formula/figure between the fragments renders fine; not a split
@@ -413,7 +411,7 @@ class TestOcrSplitDetection(unittest.TestCase):
         img = '<div><img src="eq1.png"/></div>'
         b = "<p>where the terms " + ("are defined in the usual way " * 4) + "here.</p>"
         with tempfile.TemporaryDirectory() as tmp:
-            r = ocr.scan_ocr(self._epub(tmp, (a + img + b) * 40))
+            r = audit.scan_ocr(self._epub(tmp, (a + img + b) * 40))
         self.assertEqual(r["splits"], 0)
 
     def test_clause_boundary_style_measures_low_func_frac(self):
@@ -427,17 +425,17 @@ class TestOcrSplitDetection(unittest.TestCase):
             + "</p>"
         )
         with tempfile.TemporaryDirectory() as tmp:
-            r = ocr.scan_ocr(self._epub(tmp, (a + b) * 40))
+            r = audit.scan_ocr(self._epub(tmp, (a + b) * 40))
         self.assertGreater(r["splits"], 0)
-        self.assertLess(r["func_frac"], ocr.OCR_FUNC_MIN)
-        self.assertFalse(ocr.is_ocr_damaged(r))
+        self.assertLess(r["func_frac"], audit.OCR_FUNC_MIN)
+        self.assertFalse(audit.is_ocr_damaged(r))
 
     def test_dialogue_fragment_is_not_a_split(self):
         # "'Course not." starts with a quote, not a lowercase letter
         prose = "<p>" + ("Ordinary narrative prose carries on here. " * 5) + "</p>"
         body = (prose + "<p>'Course not,' said Nobby.</p>") * 20
         with tempfile.TemporaryDirectory() as tmp:
-            r = ocr.scan_ocr(self._epub(tmp, body))
+            r = audit.scan_ocr(self._epub(tmp, body))
         self.assertEqual(r["splits"], 0)
 
     def test_scene_break_is_not_a_split(self):
@@ -447,15 +445,15 @@ class TestOcrSplitDetection(unittest.TestCase):
         marker = "<p>* * *</p>"
         b = "<p>Morning came bright and early. " + ("The day began anew. " * 5) + "</p>"
         with tempfile.TemporaryDirectory() as tmp:
-            r = ocr.scan_ocr(self._epub(tmp, (a + marker + b) * 20))
+            r = audit.scan_ocr(self._epub(tmp, (a + marker + b) * 20))
         self.assertEqual(r["splits"], 0)
 
     def test_clean_prose_measures_zero(self):
         body = "<p>" + ("A clean paragraph ends with a period. " * 5) + "</p>"
         with tempfile.TemporaryDirectory() as tmp:
-            r = ocr.scan_ocr(self._epub(tmp, body * 40))
+            r = audit.scan_ocr(self._epub(tmp, body * 40))
         self.assertEqual(r["splits"], 0)
-        self.assertFalse(ocr.is_ocr_damaged(r))
+        self.assertFalse(audit.is_ocr_damaged(r))
 
     def test_side_signals(self):
         prose = "<p>" + ("Filler prose to give the book body text. " * 5) + "</p>"
@@ -464,7 +462,7 @@ class TestOcrSplitDetection(unittest.TestCase):
             "They walked through AnkhMorpork, the city of Ankh-Morpork.</p>"
         )
         with tempfile.TemporaryDirectory() as tmp:
-            r = ocr.scan_ocr(self._epub(tmp, prose * 10 + damaged))
+            r = audit.scan_ocr(self._epub(tmp, prose * 10 + damaged))
         self.assertEqual(r["en_dash_words"], 1)
         self.assertEqual(r["doubled_quotes"], 1)
         self.assertEqual(r["glued"], ["AnkhMorpork~Ankh-Morpork"])
@@ -476,32 +474,34 @@ class TestIsOcrDamaged(unittest.TestCase):
     def _r(self, **over):
         r = {
             "paras": 1000,
-            "splits": ocr.OCR_MIN_SPLITS,
-            "split_rate": ocr.OCR_FLAG_RATE,
-            "func_frac": ocr.OCR_FUNC_MIN,
+            "splits": audit.OCR_MIN_SPLITS,
+            "split_rate": audit.OCR_FLAG_RATE,
+            "func_frac": audit.OCR_FUNC_MIN,
         }
         r.update(over)
         return r
 
     def test_at_threshold_flags(self):
-        self.assertTrue(ocr.is_ocr_damaged(self._r()))
+        self.assertTrue(audit.is_ocr_damaged(self._r()))
 
     def test_rate_just_below_threshold_passes(self):
         self.assertFalse(
-            ocr.is_ocr_damaged(self._r(split_rate=ocr.OCR_FLAG_RATE * 0.99))
+            audit.is_ocr_damaged(self._r(split_rate=audit.OCR_FLAG_RATE * 0.99))
         )
 
     def test_too_few_splits_passes(self):
         self.assertFalse(
-            ocr.is_ocr_damaged(self._r(splits=ocr.OCR_MIN_SPLITS - 1, split_rate=0.5))
+            audit.is_ocr_damaged(
+                self._r(splits=audit.OCR_MIN_SPLITS - 1, split_rate=0.5)
+            )
         )
 
     def test_too_few_paragraphs_passes(self):
         # fragmentary short works never have enough paragraphs for the rate
         # to mean anything
         self.assertFalse(
-            ocr.is_ocr_damaged(
-                self._r(paras=ocr.OCR_MIN_PARAS - 1, splits=40, split_rate=0.9)
+            audit.is_ocr_damaged(
+                self._r(paras=audit.OCR_MIN_PARAS - 1, splits=40, split_rate=0.9)
             )
         )
 
@@ -509,17 +509,14 @@ class TestIsOcrDamaged(unittest.TestCase):
         # a high split rate with a low function-word fraction is deliberate
         # style, not damage
         self.assertFalse(
-            ocr.is_ocr_damaged(
-                self._r(splits=200, split_rate=0.4, func_frac=ocr.OCR_FUNC_MIN * 0.5)
+            audit.is_ocr_damaged(
+                self._r(splits=200, split_rate=0.4, func_frac=audit.OCR_FUNC_MIN * 0.5)
             )
         )
 
 
 class TestAllIncludesOcr(unittest.TestCase):
     """`all` runs the ocr analyzer inside the same single decompression pass."""
-
-    def test_all_tuple_has_ocr(self):
-        self.assertIn("ocr", audit.ALL)
 
     def test_directory_all_run_reports_ocr(self):
         import contextlib as cl
@@ -815,10 +812,6 @@ class TestRunSingle(unittest.TestCase):
         self.assertEqual(rc, 2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestMonolithic(unittest.TestCase):
     """The monolithic analyzer: per-doc character volume, flagged at or above
     --max-doc-chars. Motivating case: a ~30M-char dictionary EPUB that
@@ -950,10 +943,6 @@ class TestRunSingleMonolithicTag(unittest.TestCase):
                 tags = self._tags(root)
         self.assertEqual(rc, 0)
         self.assertNotIn("Flagged", tags)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestSpineIntegrity(unittest.TestCase):

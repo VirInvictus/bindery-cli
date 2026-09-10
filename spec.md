@@ -294,6 +294,10 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
   reported and counted as `unreadable`; it never aborts the rest of the sweep.
 - The `library` exit code is 0 for a clean sweep, 1 for a usage error, and 2 when any
   book was rejected, unreadable, or failed epubcheck, so scripts can detect trouble.
+  Argparse-level misuse (unknown flag, malformed argument) exits 2 before the tool's
+  own validation runs; the tool's own usage validations exit 1. A `partial` book
+  (improved but still fatal) is reported for manual follow-up and does not fail the
+  run; `run phase1` counts it as trouble.
 - With `--sweep`, `--workers N` runs the candidate-selection epubcheck pass through N
   concurrent workers (default 1: serial, unchanged). Books are checked in windows of N
   consumed in input order, so the candidate set and the before-measurements are identical

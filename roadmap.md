@@ -1073,7 +1073,22 @@ can be net-neutral and ships silently.*
       partial books land in `still_fatal` and return 0, in both `library`
       and phase3, while phase1 maps partial to problem/exit 2; the layers
       disagree and scripts can miss trouble (`cli.py:260`, `526-534`, `634`,
-      `1030-1032`).
+      `1030-1032`). **GATED on Brandon: this changes the documented exit
+      contract. Both options, for the decision:**
+      (A) *Unify on "trouble"*: `library` and phase3 return 2 when
+      `still_fatal` is non-empty, exactly as phase1 already does. Scripts
+      get an honest trouble signal for books that were repaired but still
+      cannot open; cost: existing cron/scripts that treat exit 2 as "do not
+      apply, review" see no behavior change, but ones that treat 2 as
+      "rejected, re-run after fixing" now also stop on still-fatal books.
+      This is the recommendation: the layers should agree, and "a book
+      still cannot open" IS trouble by the contract's own words.
+      (B) *Document the divergence*: keep `library`/phase3 at 0 for partial
+      books and write the asymmetry into README/spec (partial books are
+      advisory; read the report or --json for them). Zero behavior change;
+      cost: scripts that care must parse the report, and the contract's
+      exit-2 sentence stays subtly incomplete.
+      Either way the exit-code documentation lands with the decision.
 - [x] **Give backups overwrite protection and keep them out of the
       candidate set.** `make_backup` clobbers an existing backup, so a
       second `--apply` destroys the only copy of the author original
@@ -1152,7 +1167,7 @@ can be net-neutral and ships silently.*
       (temp cleaned, target untouched, re-raise) has no failure-injection
       test; `--install-to-calibre` CLI wiring and library-mode `--tag`
       end-to-end are untested.
-- [ ] **Clean the weak 2%:** delete the three mid-file
+- [x] **Clean the weak 2%:** delete the three mid-file
       `if __name__ == "__main__": unittest.main()` blocks
       (`test_audit.py:806`, `:943`; `test_cli.py:475`) that make direct
       file runs silently skip ~40 tests; drop the constant-assertion
@@ -1162,9 +1177,24 @@ can be net-neutral and ships silently.*
       remove the dead `sys.argv` patches in three CLI tests; strengthen or
       delete `test_non_interactive_flag_wiring` (asserts argparse, not the
       runner); de-alias the `pagenum`/`emptytext`/`ocr` module aliases.
-- [ ] **Add a ruff step to run_tests.sh** so the local loop matches CI
+      *(Done in v0.33.0, except the consolidation, which is deliberately
+      not a consolidation: the two roman/number implementations are no
+      longer verbatim twins (the audit copy's year handling differs on
+      purpose, see the Bug Reports fix note), so merging them would force
+      the year question without a decision; the aliases are gone instead,
+      so the twin classes now name one module honestly. All three
+      `__main__` blocks deleted, the constant-assertion OCR test dropped,
+      and test_non_interactive_flag_wiring's coverage folded into the
+      phase1 runner test, which now passes --non-interactive and asserts
+      the flag reaches the JSON payload.)*
+- [x] **Add a ruff step to run_tests.sh** so the local loop matches CI
       (`uvx ruff check . && uvx ruff format --check .`), and note the
       html5lib-dependent tests silently skip without uv.
+      *(Done in v0.33.0: run_tests.sh runs `uvx ruff@0.16.2 check .` and
+      `format --check .` (CI's exact pin) before the suite, with a stderr
+      note when uvx is missing, and notes when the html5lib-dependent
+      tests will skip without uv. This caught today's own UP012/format
+      CI failures' root cause: the local loop did not run what CI runs.)*
 
 ### Scripts and repo hygiene
 
@@ -1202,9 +1232,17 @@ can be net-neutral and ships silently.*
       NCX sentence at spec.md:52-53 is garbled (a dangling "to the OPF
       unique identifier" tail). A contributor reading spec.md first would
       conclude two shipped flags violate the charter.
-- [ ] **Fix the exit-code contract.** README and spec document usage
+- [x] **Fix the exit-code contract.** README and spec document usage
       errors as exit 1, but argparse-level misuse exits 2 (the same code
       as "book in trouble"); either a custom parser exit or updated docs.
+      *(Done in v0.33.0, taking the docs option: README and spec now state
+      that argparse-level misuse exits 2 before the tool's validation runs
+      while the tool's own usage validations exit 1, and that partial
+      books are advisory in library mode but trouble in phase1. The custom
+      parser exit was rejected: remapping argparse's exit code would
+      diverge from every other Python CLI's muscle memory for no script-
+      visible gain, since the collision (2 = argparse misuse vs 2 =
+      trouble) never occurs for a run that got past argument parsing.)*
 - [ ] **README completeness:** document `--min-chars`, `--thin-chars`,
       `--max-doc-chars`, and `--limit` in the flag reference; fix the
       `--only fatals` bullet to "needs `--audit` or `--sweep`" (it

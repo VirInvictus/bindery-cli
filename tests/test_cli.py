@@ -472,10 +472,6 @@ class TestAuditIdWiring(unittest.TestCase):
         run.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestUnreadableReasons(unittest.TestCase):
     """The sweep's `unreadable` bucket splits by disease: a CRC-broken
     download (re-source) must be distinguishable from a DRM'd or truncated
@@ -951,11 +947,22 @@ class TestRunPhase1(unittest.TestCase):
                 redirect_stdout(out),
                 redirect_stderr(err),
             ):
-                rc = main(["run", "phase1", td, "--json", str(jout)])
+                rc = main(
+                    [
+                        "run",
+                        "phase1",
+                        td,
+                        "--json",
+                        str(jout),
+                        "--non-interactive",
+                    ]
+                )
             data = json.loads(jout.read_text())
         self.assertEqual(rc, 0)
         self.assertEqual(data["mode"], "phase1")
         self.assertFalse(data["apply_lossy"])
+        # the runner (not just the parser) carries the flag into the payload
+        self.assertTrue(data["non_interactive"])
         # a consent question is not a defect: both books read clean, but the
         # repairable one is held in decisions_needed for the caller
         statuses = {b["path"]: b["status"] for b in data["books"]}
