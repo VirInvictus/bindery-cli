@@ -31,6 +31,7 @@ from .transforms import (
     fix_id_colons,
     fix_missing_title,
     outside_protected_map,
+    strip_attrs_in_start_tags,
     strip_broken_tags,
     strip_invalid_attributes,
     strip_invalid_value,
@@ -260,8 +261,39 @@ def strip_epub3_attributes(text: str) -> tuple[str, int]:
     none of them carries visible content. The set is fixed and documented:
     extend it only with a named epubcheck finding, never speculatively, so a
     reader-legitimate attribute can never be swept up by accident.
+
+    The edit is anchored to real start tags and never touches CDATA sections
+    or comments, so prose that merely mentions ``epub:type="chapter"`` and
+    protected-span content are left exactly as written.
     """
-    return _EPUB3_ATTR_RE.subn("", text)
+    return strip_attrs_in_start_tags(text, _EPUB3_ATTR_RE)
+
+
+_PACKAGE_VERSION_RE = re.compile(
+    r"""<package\b[^>]*?\bversion=(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE
+)
+
+
+def package_version(opf_text: str | None) -> int | None:
+    """The major version of the OPF ``<package>`` element, or None.
+
+    The EPUB2-targeted structural fixes (the RSC-005 attribute scrub and the
+    EPUB3 element downgrade) are licensed by this: their target defects exist
+    only in packages declared below EPUB 3, and firing them on an EPUB3 book
+    strips legal attributes and downgrades legal elements (reported
+    2026-09-08). An absent or unparseable version licenses nothing: the fix
+    would be unmoored from its charter.
+    """
+    if opf_text is None:
+        return None
+    m = _PACKAGE_VERSION_RE.search(opf_text)
+    if m is None:
+        return None
+    raw = m.group(1) if m.group(1) is not None else m.group(2)
+    try:
+        return int(raw.split(".")[0])
+    except ValueError:
+        return None
 
 
 # The EPUB3/HTML5 semantic elements an EPUB2 (XHTML 1.1) document cannot
@@ -771,6 +803,15 @@ def repair_epub(
         opf = _locate_opf(zin)
         opf_text = zin.read(opf).decode("utf-8", "replace") if opf else None
         uid = opf_unique_id(opf_text) if opf_text is not None else None
+        # The EPUB2-targeted structural fixes are licensed by the package
+        # version: on an EPUB3 book they strip legal epub:type/aria attributes
+        # and downgrade legal semantic elements (under --all, every EPUB3 book
+        # in a sweep took that damage; reported 2026-09-08). An unknown
+        # version licenses nothing.
+        pkg_major = package_version(opf_text)
+        if pkg_major is None or pkg_major >= 3:
+            strip_epub3_attrs = False
+            downgrade_epub3 = False
         # Running-header detection and the page-layer decision need the whole book, so
         # collect content text once up front. Only when the lossy strip is requested.
         runheads: set[str] = set()

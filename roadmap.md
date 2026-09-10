@@ -687,7 +687,14 @@ epubcheck counts. phase1 and phase3 always pass `--all`.
 `epub.py:251-260`, `903-937`, `957-967`; `cli.py:830`, `976-987`.
 **Fix:** gate both fixes on the package version carried in `opf_text`, or
 make them finding-driven (only strip what the before-pass epubcheck flagged).
-*(Unfixed as of the 2026-09-08 sweep.)*
+*(Fixed in v0.32.0, taking the version-gate option: both fixes are licensed
+by `package_version(opf_text)` and are inert on EPUB 3 packages and when no
+version can be read. This kills both demonstrated outcomes: the repairable
+EPUB3 book no longer gains a net-new error from a stripped nav `epub:type`,
+and the legal count-neutral `epub:type="chapter"` survives. The finding-
+driven alternative was rejected because it would still silently mutate legal
+markup whenever an unrelated finding existed; the gate keeps EPUB3 books
+byte-identical.)*
 
 ## Phase 11: Migrate install-to-calibre to native cquarry API (proposed 2026-08-31)
 
@@ -865,7 +872,7 @@ can be net-neutral and ships silently.*
 
 ### Repair-pipeline correctness
 
-- [ ] **Anchor attribute-name regexes to real start tags.** Three findings
+- [x] **Anchor attribute-name regexes to real start tags.** Three findings
       share one root cause: bare attribute-name regexes that are not
       quote-aware and not tag-anchored. `strip_invalid_value` matches the
       `value` in `data-value="42"` (the `\b` matches between `-` and `v`)
@@ -876,6 +883,13 @@ can be net-neutral and ships silently.*
       contradicting that fix's own docstring. Reuse the quote-aware
       start-tag matcher + protected-span machinery the module already has,
       and a `(?<![\w:.-])value` lookbehind.
+      *(Done in v0.32.0: `strip_epub3_attributes` now runs through the new
+      `transforms.strip_attrs_in_start_tags`, which anchors the edit on the
+      module's quote-aware `_START_TAG_RE` and never touches CDATA/comments;
+      `strip_invalid_value` gained the `(?<![\w:.-])value` lookbehind, so
+      `data-value`, `xvalue`, and `xml:value` all survive untouched. Tests
+      pin the prose-mention case, CDATA/comment protection, multi-line start
+      tags, and the lookalike attribute names.)*
 - [ ] **Make `fix_id_colons` consistent and honest.** It rewrites fragments
       of external URLs (`http://example.com/page#sec:1` becomes `#sec_1`,
       breaking the link; `transforms.py:524`, `536`, docstring at 509 claims

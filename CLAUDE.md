@@ -34,7 +34,14 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
     minimal content. v0.14–v0.16 ran these unconditionally, which broke this rule;
     v0.17.0 restored it. `--unwrap-illegal-tags` additionally protects any illegal-tag
     name that an EPUB stylesheet styles as an element selector (`css_protected_tags`,
-    book-wide, inline `<style>` blocks included).
+    book-wide, inline `<style>` blocks included). The two EPUB2-targeted fixes
+    (`--strip-epub3-attrs`, `--downgrade-epub3-tags`) are additionally gated on the
+    package version in the OPF (`package_version()`): inert on EPUB 3 books and when
+    no version can be read, since their target defects only exist below EPUB 3; the
+    attribute scrub is anchored to real start tags via
+    `transforms.strip_attrs_in_start_tags` (prose mentioning the attributes and
+    CDATA/comment content are preserved), and `strip_invalid_value` matches the
+    attribute name with a `(?<![\w:.-])value` lookbehind so `data-value` survives.
   * **Lossy strips** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`;
     pagination.py, watermark.py): remove only what a converter injected (page numbers,
     running headers, leaked tags, watermarks), fenced behind character conservation, tag

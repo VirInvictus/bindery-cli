@@ -354,6 +354,29 @@ def unwrap_block_in_inline(s: str) -> tuple[str, int]:
     return s, n
 
 
+def strip_attrs_in_start_tags(s: str, attr_re: re.Pattern[str]) -> tuple[str, int]:
+    """Remove attribute occurrences matching `attr_re`, but only inside real
+    start tags, and never inside a CDATA section or comment.
+
+    A bare attribute-name regex run over whole-document text also matches prose
+    like ``Use epub:type="chapter" here``; anchoring on the quote-aware
+    start-tag matcher and running outside the protected spans confines the
+    edit to actual markup attributes.
+    """
+    count = 0
+
+    def scrub_tag(m: re.Match) -> str:
+        nonlocal count
+        tag, n = attr_re.subn("", m.group(0))
+        count += n
+        return tag
+
+    def run(text: str) -> tuple[str, int]:
+        return _START_TAG_RE.sub(scrub_tag, text), count
+
+    return outside_protected_map(s, run)
+
+
 @_outside_protected
 def strip_invalid_value(s: str) -> tuple[str, int]:
     """Strip misplaced `value="..."` attributes from non-form elements.
@@ -372,7 +395,8 @@ def strip_invalid_value(s: str) -> tuple[str, int]:
         return f"<{tag} {before}{after}>"
 
     s, n = re.subn(
-        r'<(div|span|p|a|img|h[1-6]|ul|li|meta|table|tr|td|th)(\s+[^>]*\b)?value\s*=\s*(["\'][^"\']*["\'])([^>]*)>',
+        r"<(div|span|p|a|img|h[1-6]|ul|li|meta|table|tr|td|th)"
+        r'(\s+[^>]*\b)?(?<![\w:.-])value\s*=\s*(["\'][^"\']*["\'])([^>]*)>',
         repl,
         s,
         flags=re.IGNORECASE,

@@ -14,6 +14,7 @@ from bindery.epub import (
     fix_pagelist_class,
     ncx_uid_mismatch,
     opf_unique_id,
+    package_version,
     repair_epub,
     strip_epub3_attributes,
     strip_page_map,
@@ -276,11 +277,49 @@ class TestStripEpub3Attrs(unittest.TestCase):
         out, n = strip_epub3_attributes(text)
         self.assertEqual((out, n), (text, 0))
 
+    def test_prose_mentioning_the_attributes_survives(self):
+        # reported 2026-09-08: the unanchored regex deleted visible prose like
+        # `Use epub:type="chapter" here` down to `Use here`, contradicting the
+        # fix's own docstring. Only real start tags are edited.
+        text = '<p>Use epub:type="chapter" here, readers.</p>'
+        out, n = strip_epub3_attributes(text)
+        self.assertEqual((out, n), (text, 0))
+
+    def test_cdata_and_comments_are_protected(self):
+        text = '<p><![CDATA[if (x) epub:type="chapter"]]></p><!-- aria-label="old" -->'
+        out, n = strip_epub3_attributes(text)
+        self.assertEqual((out, n), (text, 0))
+
+    def test_multi_line_start_tag_is_still_scrubbed(self):
+        text = '<section\n  epub:type="chapter"\n  aria-label="c">\n<p>x</p></section>'
+        out, n = strip_epub3_attributes(text)
+        self.assertEqual(n, 2)
+        self.assertNotIn("epub:type", out)
+        self.assertIn("<p>x</p>", out)
+
+
+class TestPackageVersion(unittest.TestCase):
+    """The EPUB2-targeted fixes are licensed by the package version."""
+
+    def test_parses_major(self):
+        self.assertEqual(package_version('<package version="2.0"/>'), 2)
+        self.assertEqual(package_version("<package version='3.0.1'/>"), 3)
+        self.assertEqual(package_version('<package version="1.2"/>'), 1)
+
+    def test_unknown_is_none(self):
+        self.assertIsNone(package_version(None))
+        self.assertIsNone(package_version("<package/>"))
+        self.assertIsNone(package_version('<package version="x.y"/>'))
+
     def test_opt_in_via_repair_epub(self):
+        # the package declares EPUB 2: that declaration is what licenses the
+        # scrub (an EPUB3 package keeps its legal attributes; see the
+        # version-gate test below)
         opf = (
             '<?xml version="1.0"?>'
             '<package xmlns="http://www.idpf.org/2007/opf" '
-            'unique-identifier="bookid" page-progression-direction="ltr">'
+            'version="2.0" unique-identifier="bookid" '
+            'page-progression-direction="ltr">'
             "<metadata/><spine/></package>"
         )
         content = (
@@ -304,6 +343,56 @@ class TestStripEpub3Attrs(unittest.TestCase):
         self.assertNotIn("page-progression-direction", opf_out)
         self.assertNotIn("epub:type", c_out)
         self.assertIn("<p>x</p>", c_out)
+
+    def test_epub3_package_is_not_scrubbed(self):
+        # reported 2026-09-08: the EPUB2-targeted fixes fired on every book
+        # under --all, stripping a legal epub:type="toc" off an EPUB3 nav and
+        # silently removing a legal epub:type="chapter". The package version
+        # gates them: EPUB 3 keeps its attributes.
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'version="3.0" unique-identifier="bookid">'
+            "<metadata/><spine/></package>"
+        )
+        content = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml">'
+            '<body epub:type="chapter" aria-label="c"><p>x</p></body></html>'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", content)
+            report = repair_epub(src, dst, strip_epub3_attrs=True)
+            self.assertNotIn("epub3_attrs_stripped", report.fixes)
+            with zipfile.ZipFile(dst) as z:
+                c_out = z.read("OEBPS/c1.xhtml").decode()
+        self.assertIn('epub:type="chapter"', c_out)
+        self.assertIn('aria-label="c"', c_out)
+
+    def test_unknown_package_version_licenses_nothing(self):
+        # a missing or unparseable package version leaves the EPUB2-targeted
+        # fixes unlicensed: EPUB2-ness must be proven, not assumed
+        for opf in (
+            '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf">'
+            "<metadata/><spine/></package>",
+            '<?xml version="1.0"?><package version="x.y"><metadata/></package>',
+        ):
+            with tempfile.TemporaryDirectory() as td:
+                src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+                with zipfile.ZipFile(src, "w") as z:
+                    z.writestr("mimetype", "application/epub+zip")
+                    z.writestr("OEBPS/content.opf", opf)
+                    z.writestr(
+                        "OEBPS/c1.xhtml",
+                        '<html xmlns="http://www.w3.org/1999/xhtml">'
+                        '<body epub:type="chapter"><p>x</p></body></html>',
+                    )
+                report = repair_epub(src, dst, strip_epub3_attrs=True)
+                self.assertNotIn("epub3_attrs_stripped", report.fixes)
 
 
 class TestDowngradeEpub3Tags(unittest.TestCase):
@@ -345,11 +434,17 @@ class TestDowngradeEpub3Tags(unittest.TestCase):
             '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
             "<body><figure>cap</figure></body></html>"
         )
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'version="2.0" unique-identifier="b"><metadata/><spine/></package>'
+        )
         for sheet, expect_downgraded in ((None, True), ("figure { margin: 0 }", False)):
             with tempfile.TemporaryDirectory() as td:
                 src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
                 with zipfile.ZipFile(src, "w") as z:
                     z.writestr("mimetype", "application/epub+zip")
+                    z.writestr("OEBPS/content.opf", opf)
                     z.writestr("OEBPS/c1.xhtml", content)
                     if sheet:
                         z.writestr("OEBPS/s.css", sheet)

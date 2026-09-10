@@ -105,7 +105,9 @@ part of the default pipeline:
 - **`--strip-epub3-attrs`**: scrub the EPUB3-only attributes epubcheck rejects on an
   EPUB2 package — `page-progression-direction`, `epub:type`, `aria-label` (a fixed,
   documented set; extend only with a named epubcheck finding). Rendering is unchanged,
-  and reader-legitimate lookalikes (`type`, the wider aria family) survive.
+  and reader-legitimate lookalikes (`type`, the wider aria family) survive. The edit is
+  anchored to real start tags and never touches CDATA sections or comments, so prose
+  that merely mentions `epub:type="chapter"` is preserved.
 - **`--downgrade-epub3-tags`**: downgrade EPUB3/HTML5 semantic elements to their EPUB2
   equivalents — `figure`/`section` to `div`, `figcaption` to `p` — keeping existing
   classes and appending the semantic name (`class="figure"`) as the styling hook.
@@ -113,6 +115,12 @@ part of the default pipeline:
   (`css_protected_tags`/`style_block_tags` are parameterized over the tag set), so
   styled formatting can never be silently destroyed; a protected book keeps its
   RSC-005 findings, which is the honest outcome.
+
+Both EPUB2-targeted fixes are gated on the package version carried in the OPF: they
+fire on EPUB 2 packages (major version 2 or 1) and are inert on EPUB 3 packages and
+when no version can be read, where their target defects do not exist and firing them
+would strip legal attributes and downgrade legal elements (the 2026-09-08 sweep found
+every EPUB3 book in an `--all` sweep taking exactly that damage).
 - **`--unwrap-illegal-tags`**: delete `<st> <sentence> <o> <w> <pagebreak>` tags outright,
   inner text preserved. Its CSS precondition is enforced by the library itself:
   `transforms.css_protected_tags` scans every stylesheet entry in the book (nested at-rules

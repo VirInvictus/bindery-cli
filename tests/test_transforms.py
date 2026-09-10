@@ -414,6 +414,26 @@ class TestStructuralRepairsAreOptIn(unittest.TestCase):
                 self.assertGreaterEqual(n, 1)
 
 
+class TestStripInvalidValue(unittest.TestCase):
+    def test_misplaced_value_is_stripped(self):
+        out, n = strip_invalid_value('<li class="x" value="7">text</li>')
+        self.assertEqual(n, 1)
+        self.assertNotIn("value=", out)
+
+    def test_data_value_is_not_value(self):
+        # reported 2026-09-08: the old pattern's \b matched between `-` and
+        # `v`, so the `value` inside data-value="42" was stripped, leaving a
+        # malformed <span  data-> behind
+        text = '<span data-value="42">x</span>'
+        out, n = strip_invalid_value(text)
+        self.assertEqual((out, n), (text, 0))
+
+    def test_lookalike_names_survive(self):
+        text = '<div xvalue="1" svalue="2" xml:value="3">x</div>'
+        out, n = strip_invalid_value(text)
+        self.assertEqual((out, n), (text, 0))
+
+
 class TestCssProtectedTags(unittest.TestCase):
     def test_element_selector_protects(self):
         self.assertIn("st", css_protected_tags("st { color: red }"))
