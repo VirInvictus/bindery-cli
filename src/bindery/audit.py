@@ -51,6 +51,7 @@ Exit codes:
 """
 
 import argparse
+import html
 import sys
 from pathlib import Path
 
@@ -202,15 +203,20 @@ def load_book(path: Path) -> Book:
                 lang = el.text.strip().lower()
                 break
 
-        def full(href: str) -> str:
+        def full(href: str, rel_base: str | None = None) -> str:
             # Decode the percent-encoded IRI and drop any #fragment before
             # matching the archive namelist; otherwise a spine doc whose
             # filename has a reserved char (e.g. '!' written '%21') resolves to
             # nothing and the book reads as empty (false EMPTY verdict).
+            # `rel_base` overrides the OPF directory: a nav or NCX document in
+            # a subdirectory carries hrefs relative to ITS OWN directory, not
+            # the OPF's (a nested NCX resolved against the OPF dir counted
+            # every target absent).
+            use_base = base if rel_base is None else rel_base
             href = _pct_decode(href.split("#", 1)[0])
-            return os.path.normpath(f"{base}/{href}" if base else href).replace(
-                "\\", "/"
-            )
+            return os.path.normpath(
+                f"{use_base}/{href}" if use_base else href
+            ).replace("\\", "/")
 
         spine: list[str] = []
         for itemref in opf.iter(OPF_NS + "itemref"):
@@ -232,44 +238,52 @@ def load_book(path: Path) -> Book:
         for doc in spine:
             blob = raw.get(doc)
             docs[doc] = blob.decode("utf-8", "replace") if blob is not None else ""
-    # ToC reference accounting: every nav/NCX anchor target checked against
-    # the archive (manifest items are the spine's own source and already
-    # accounted by the spine resolution).
-    toc_refs = 0
-    toc_absent = 0
 
-    def _account(href: str) -> None:
-        nonlocal toc_refs, toc_absent
-        href = href.strip()
-        if href.startswith("#"):
-            return  # in-page anchor, not an archive target
-        if re.match(r"^[a-z]+:", href, re.IGNORECASE):
-            return  # foreign URL scheme, not an archive target
-        toc_refs += 1
-        if full(href) not in nameset:
-            toc_absent += 1
+        # ToC reference accounting: every nav/NCX anchor target checked against
+        # the archive (manifest items are the spine's own source and already
+        # accounted by the spine resolution). This runs INSIDE the open zip:
+        # the accounting reads nav/NCX bodies through `_read`, and a read
+        # after close raises and poisons Book.corrupt.
+        toc_refs = 0
+        toc_absent = 0
 
-    nav_html = docs.get(nav) if nav else None
-    if nav_html is None and nav:
-        # The nav document is usually in the spine, but nothing requires it.
-        blob = _read(nav)
-        nav_html = blob.decode("utf-8", "replace") if blob is not None else ""
-    if nav_html:
-        for m in re.finditer(r'href\s*=\s*["\']([^"\']+)', nav_html):
-            _account(m.group(1))
-    ncx_path = None
-    for it in opf.iter(OPF_NS + "item"):
-        if (it.get("media-type") or "").lower() == "application/x-dtbncx+xml":
-            ncx_path = full(it.get("href") or "")
-            break
-    if ncx_path:
-        blob = _read(ncx_path)
-        if blob is not None:
-            for m in re.finditer(
-                r'<content[^>]+src\s*=\s*["\']([^"\']+)',
-                blob.decode("utf-8", "replace"),
-            ):
-                _account(m.group(1))
+        def _account(href: str, href_base: str) -> None:
+            nonlocal toc_refs, toc_absent
+            href = html.unescape(href.strip())
+            if href.startswith("#"):
+                return  # in-page anchor, not an archive target
+            if re.match(r"^[a-z]+:", href, re.IGNORECASE):
+                return  # foreign URL scheme, not an archive target
+            toc_refs += 1
+            if full(href, href_base) not in nameset:
+                toc_absent += 1
+
+        nav_html = docs.get(nav) if nav else None
+        if nav_html is None and nav and nav in nameset:
+            # The nav document is usually in the spine, but nothing requires
+            # it. A DECLARED-but-absent nav is a manifest leftover, not a
+            # damaged archive: it is skipped here and must not poison
+            # Book.corrupt (a healthy book with a leftover nav/toc.ncx entry
+            # is not "re-source" material).
+            blob = _read(nav)
+            nav_html = blob.decode("utf-8", "replace") if blob is not None else ""
+        if nav_html:
+            nav_dir = os.path.dirname(nav) if nav else ""
+            for m in re.finditer(r'href\s*=\s*["\']([^"\']+)', nav_html):
+                _account(m.group(1), nav_dir)
+        ncx_path = None
+        for it in opf.iter(OPF_NS + "item"):
+            if (it.get("media-type") or "").lower() == "application/x-dtbncx+xml":
+                ncx_path = full(it.get("href") or "")
+                break
+        if ncx_path and ncx_path in nameset:
+            blob = _read(ncx_path)
+            if blob is not None:
+                for m in re.finditer(
+                    r'<content[^>]+src\s*=\s*["\']([^"\']+)',
+                    blob.decode("utf-8", "replace"),
+                ):
+                    _account(m.group(1), os.path.dirname(ncx_path))
 
     return Book(spine, nav, lang, docs, names, corrupt, toc_refs, toc_absent)
 

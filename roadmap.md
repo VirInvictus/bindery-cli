@@ -972,7 +972,7 @@ can be net-neutral and ships silently.*
 
 ### audit.py correctness
 
-- [ ] **Read nav/NCX inside the open zip and resolve NCX srcs against the
+- [x] **Read nav/NCX inside the open zip and resolve NCX srcs against the
       NCX's own directory.** The post-close `_read` of a manifest-declared
       but absent nav/NCX poisons `Book.corrupt`, so an otherwise healthy
       book with a leftover `toc.ncx` manifest entry is branded CORRUPT
@@ -982,6 +982,12 @@ can be net-neutral and ships silently.*
       reach the FRAGMENT "quarantine" alarm (`audit.py:187`, `205-213`,
       `249`, `263-272`). Also `html.unescape` captured ToC hrefs, which are
       currently compared raw against archive names (`audit.py:258`, `268-272`).
+      *(Done in v0.33.0: the whole ToC-accounting block moved inside the
+      open-zip context, a declared-but-absent nav/NCX is recognized by a
+      nameset check and skipped instead of poisoning `corrupt`, `full()`
+      takes a doc-relative base override used for nav and NCX hrefs, and
+      captured hrefs are entity-decoded before comparison. Tests pin all
+      three shapes.)*
 - [ ] **Make archive/spine first-class in library mode.** `run_library`'s
       report loop iterates the content-analyzer tuple only, so the
       `archive`/`spine` branches and their section builders are dead code:

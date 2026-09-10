@@ -1048,6 +1048,103 @@ class TestSpineIntegrity(unittest.TestCase):
             r = audit.spine_integrity(book)
         self.assertEqual(r["class"], "ok")
 
+    def test_declared_absent_ncx_does_not_poison_corrupt(self):
+        # reported 2026-09-08: a healthy book with a leftover declared-but-
+        # absent toc.ncx manifest entry was branded CORRUPT "re-source"
+        # because the ToC accounting read through a closed zip. A manifest
+        # leftover is not a damaged archive.
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestRunSingle.CONTAINER)
+            z.writestr(
+                "content.opf",
+                '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+                '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+                '<item id="toc" href="toc.ncx" '
+                'media-type="application/x-dtbncx+xml"/>'
+                "</manifest>"
+                '<spine><itemref idref="c1"/></spine></package>',
+            )
+            z.writestr("c1.xhtml", "<html><body><p>chapter</p></body></html>")
+            # deliberately NO toc.ncx entry in the archive
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(buf.getvalue())
+            book = audit.load_book(p)
+        self.assertEqual(book.corrupt, [])
+        self.assertEqual(book.toc_refs, 0)
+
+    def test_nested_ncx_targets_resolve_against_the_ncx_directory(self):
+        # reported 2026-09-08: NCX content srcs were resolved against the
+        # OPF's directory, so a spec-compliant nested NCX counted every
+        # target absent
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestRunSingle.CONTAINER)
+            z.writestr(
+                "content.opf",
+                '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+                '<item id="c1" href="text/c1.xhtml" '
+                'media-type="application/xhtml+xml"/>'
+                '<item id="toc" href="text/toc.ncx" '
+                'media-type="application/x-dtbncx+xml"/>'
+                "</manifest>"
+                '<spine><itemref idref="c1"/></spine></package>',
+            )
+            z.writestr("text/c1.xhtml", "<html><body><p>chapter</p></body></html>")
+            z.writestr(
+                "text/toc.ncx",
+                '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>'
+                '<navPoint id="n1"><content src="c1.xhtml"/></navPoint>'
+                "</navMap></ncx>",
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(buf.getvalue())
+            book = audit.load_book(p)
+        self.assertEqual((book.toc_refs, book.toc_absent), (1, 0))
+
+    def test_entity_encoded_nav_hrefs_resolve(self):
+        # reported 2026-09-08: nav hrefs were compared raw against archive
+        # names, so an &amp;-encoded href never matched its own file
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestRunSingle.CONTAINER)
+            z.writestr(
+                "content.opf",
+                '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+                '<item id="c1" href="ch&amp;1.xhtml" '
+                'media-type="application/xhtml+xml"/>'
+                '<item id="nav" href="nav.xhtml" '
+                'media-type="application/xhtml+xml" properties="nav"/>'
+                "</manifest>"
+                '<spine><itemref idref="c1"/></spine></package>',
+            )
+            z.writestr("ch&1.xhtml", "<html><body><p>chapter</p></body></html>")
+            z.writestr(
+                "nav.xhtml",
+                '<html><body><nav><ol><li><a href="ch&amp;1.xhtml">c</a></li>'
+                "</ol></nav></body></html>",
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(buf.getvalue())
+            book = audit.load_book(p)
+        self.assertEqual(book.toc_refs, 1)
+        self.assertEqual(book.toc_absent, 0)
+
     def test_fragment_and_monolithic_compose_in_one_report(self):
         # The verdict surfaces are independent: a library book can be a
         # fragment AND monolithic, and one report counts both.
