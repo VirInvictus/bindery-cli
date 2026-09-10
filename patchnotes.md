@@ -24,14 +24,14 @@ regression test.
   bounded pool sized by `--workers` (default 1: the old behavior), a
   busy pool falls back to subprocesses instead of blocking, every
   roundtrip is bounded by the caller's timeout, and a daemon that dies
-  or wedges is torn down and never retried — one failed attempt exhausts
-  the pool so the sweep degrades to pure subprocess checks instead of
+  or wedges is torn down and never retried; one failed attempt exhausts
+  the pool, so the sweep degrades to pure subprocess checks instead of
   respawning a JVM per book. Measured: 8 books, 4 workers, two ~10s
   waves. The evidence for the recorded daemon-classpath decision grew:
   this machine's javac (27-ea) and java (25) cannot load each other's
   classes, so the daemon has never served a count here, and when forced
   to run its counts diverge from the CLI JSON oracle (243 vs 4 on one
-  book) — enabling it would change gate outcomes.
+  book): enabling it would change gate outcomes.
 - **Smaller apply papercuts:** `--limit < 1` and a missing `--audit`
   file are usage errors, not tracebacks; the fresh-format install
   registers the catalogued file's own name instead of `repaired`; and
