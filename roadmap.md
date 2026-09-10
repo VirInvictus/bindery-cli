@@ -911,13 +911,22 @@ can be net-neutral and ships silently.*
       on `fix_id_colons` regressions manufactured the old way. Tests pin
       the external-URL, data-id/xml:id, phantom-count, and NCX-follow
       shapes.)*
-- [ ] **Run anchor stripping last and protect CDATA/comments everywhere.**
+- [x] **Run anchor stripping last and protect CDATA/comments everywhere.**
       `strip_broken_anchors`' id snapshot predates `unwrap_block_in_inline`
       and `unwrap_illegal_tags`, which can delete ids the snapshot thinks
       exist (`epub.py:980-997`); `strip_broken_tags` and
       `unwrap_illegal_tags` are not wrapped in the module's own
       protected-span machinery, so they edit inside CDATA (rendered text)
       and comments (`transforms.py:444-450`, `619-623`).
+      *(Done in v0.32.0: the anchor pass now runs last in the content
+      pipeline, and the id snapshot pre-pass replicates every id-moving fix
+      ahead of it (reserialize, id-colon renames, both unwraps, the
+      resource prune), so a fragment whose target an earlier fix deleted is
+      stripped instead of left dangling; `_outside_protected` now forwards
+      arguments, so `strip_broken_tags` and `unwrap_illegal_tags` (with its
+      protected_tags set) are both decorated and never edit inside CDATA or
+      comments. Tests pin the dangling-fragment shape and the protected
+      spans for both transforms.)*
 - [ ] **Stop re-encoding non-UTF-8 documents.** Any fix that fires on a
       windows-1252 or UTF-16 document decodes with `replace` and re-encodes
       UTF-8, materializing mojibake under an XML declaration that still

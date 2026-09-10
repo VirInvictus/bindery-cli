@@ -77,12 +77,17 @@ def outside_protected_map(s: str, fn: Transform) -> tuple[str, int]:
     return "".join(parts), total
 
 
-def _outside_protected(fn: Transform) -> Transform:
-    """Wrap a transform so it never touches CDATA sections or comments."""
+def _outside_protected(fn: Callable) -> Callable:
+    """Wrap a transform so it never touches CDATA sections or comments.
+
+    Extra args and keyword arguments are forwarded, so context-carrying
+    transforms (unwrap_illegal_tags takes a protected_tags set) can be
+    decorated too.
+    """
 
     @wraps(fn)
-    def wrapped(s: str) -> tuple[str, int]:
-        return outside_protected_map(s, fn)
+    def wrapped(s: str, *args, **kwargs):
+        return outside_protected_map(s, lambda part: fn(part, *args, **kwargs))
 
     return wrapped
 
@@ -452,6 +457,7 @@ def style_block_tags(doc: str, tags: tuple[str, ...] = ILLEGAL_TAGS) -> frozense
     return css_protected_tags(*_STYLE_BLOCK_RE.findall(doc), tags=tags)
 
 
+@_outside_protected
 def unwrap_illegal_tags(
     s: str, protected_tags: frozenset[str] = frozenset()
 ) -> tuple[str, int]:
@@ -462,7 +468,8 @@ def unwrap_illegal_tags(
     well-formedness repair. Names in `protected_tags` (the union of every
     stylesheet's element selectors, see css_protected_tags/style_block_tags) are
     left untouched: if a book styles one of these tags, unwrapping it would change
-    how the text renders, so preservation wins.
+    how the text renders, so preservation wins. CDATA sections and comments are
+    never edited: a `<w>` mentioned in either is literal text, not markup.
     """
     count = 0
     for tag in ILLEGAL_TAGS:
@@ -680,8 +687,11 @@ _BROKEN_TAGS_RE = re.compile(
 )
 
 
+@_outside_protected
 def strip_broken_tags(text: str) -> tuple[str, int]:
     """Strip leaked HTML closing tags that render as raw text in readers.
-    This lossily removes the leaked text fragment and should be gated behind `validate.no_worse`.
+    This lossily removes the leaked text fragment and should be gated behind
+    `validate.no_worse`. CDATA sections and comments are never edited: a
+    leaked-looking fragment inside either is literal text, not markup.
     """
     return _BROKEN_TAGS_RE.subn("", text)

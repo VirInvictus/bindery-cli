@@ -858,11 +858,12 @@ def repair_epub(
             for i in zin.infolist():
                 if i.filename.lower().endswith(CONTENT_SUFFIXES):
                     # The id sets must describe the documents as they will look when
-                    # the anchor pass runs, so replicate the transforms that can move
-                    # an id or a fragment (the core pass, plus the two opt-ins that
-                    # rename ids): a --fix-id-colons rename rewrites ids and their
-                    # #fragment refs together, and checking post-rename fragments
-                    # against pre-rename id sets would strip valid references.
+                    # the anchor pass runs, so replicate every transform ahead of it
+                    # that can move or delete an id or a fragment: the core pass,
+                    # --reserialize, the --fix-id-colons rename, the two unwraps
+                    # (they delete elements, ids included), and the resource prune.
+                    # Checking the fragments the anchor pass sees against ids that
+                    # any of those steps removed would leave the references dangling.
                     t, _ = apply_transforms(
                         zin.read(i).decode("utf-8", "replace"), HTML_TRANSFORMS
                     )
@@ -870,6 +871,16 @@ def repair_epub(
                         t, _ = reserialize_if_broken(t)
                     if id_colons:
                         t, _ = fix_id_colons(t)
+                    if block_in_inline:
+                        t, _ = unwrap_block_in_inline(t)
+                    if illegal_tags:
+                        t, _ = unwrap_illegal_tags(
+                            t, protected_tags=book_css_tags | style_block_tags(t)
+                        )
+                    if prune_missing:
+                        t, _ = prune_missing_resources_doc(
+                            t, posixpath.dirname(i.filename), present
+                        )
                     ids_by_doc[_norm_path(i.filename)] = frozenset(
                         m.group(3) for m in _XML_ID_RE.finditer(t)
                     )
@@ -1027,15 +1038,6 @@ def repair_epub(
                     text, n = fix_id_colons(text)
                     if n:
                         counts["fix_id_colons"] = n
-                if strip_anchors:
-                    text, acounts = strip_broken_anchors_doc(
-                        text,
-                        posixpath.dirname(name),
-                        ids_by_doc.get(_norm_path(name), frozenset()),
-                        ids_by_doc,
-                    )
-                    if acounts:
-                        counts.update(acounts)
                 if block_in_inline:
                     text, n = unwrap_block_in_inline(text)
                     if n:
@@ -1073,6 +1075,19 @@ def repair_epub(
                     text, n = encode_url_spaces(text)
                     if n:
                         counts["url_spaces_encoded"] = n
+                # The anchor pass runs last: its id snapshot describes the
+                # document as every earlier fix leaves it, so a fix that
+                # deletes an id (the unwraps, the resource prunes) can no
+                # longer strand a fragment the snapshot still believed in.
+                if strip_anchors:
+                    text, acounts = strip_broken_anchors_doc(
+                        text,
+                        posixpath.dirname(name),
+                        ids_by_doc.get(_norm_path(name), frozenset()),
+                        ids_by_doc,
+                    )
+                    if acounts:
+                        counts.update(acounts)
                 if counts:
                     report.add(counts)
                     report.files_changed += 1

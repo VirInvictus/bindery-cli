@@ -20,6 +20,7 @@ from bindery.transforms import (
     fix_named_entities,
     fix_ncx_src_fragments,
     self_close_void,
+    strip_broken_tags,
     strip_invalid_attributes,
     strip_invalid_value,
     strip_prolog_junk,
@@ -370,6 +371,26 @@ class TestProtectedSpans(unittest.TestCase):
         self.assertEqual(n, 1)
         self.assertIn('<!-- <img v:shapes="x"> -->', out)
         self.assertNotIn('v:shapes="y"', out)
+
+    def test_broken_tags_strip_leaves_cdata_and_comments_alone(self):
+        # reported 2026-09-08: the broken-tags strip edited inside CDATA and
+        # comments, where a leaked-looking fragment is literal text
+        text = "<p>x</p><![CDATA[ /p&gt; and &lt;/i&gt; stay ]]><!-- &lt;/b&gt; -->"
+        out, n = strip_broken_tags(text)
+        self.assertEqual((out, n), (text, 0))
+
+    def test_illegal_tag_unwrap_leaves_cdata_and_comments_alone(self):
+        text = "<p>y</p><![CDATA[if (a) { <w> } ]]><!-- <st>kept</st> -->"
+        out, n = unwrap_illegal_tags(text)
+        self.assertEqual((out, n), (text, 0))
+
+    def test_illegal_tag_unwrap_still_fires_outside_spans(self):
+        out, n = unwrap_illegal_tags("<p>a<w>x</w>b<st>c</st></p>")
+        self.assertEqual((out, n), ("<p>axbc</p>", 4))
+
+    def test_broken_tags_strip_still_fires_outside_spans(self):
+        out, n = strip_broken_tags("<p>end /p&gt; of</p>")
+        self.assertEqual((out, n), ("<p>end  of</p>", 1))
 
 
 class TestStructuralRepairsAreOptIn(unittest.TestCase):

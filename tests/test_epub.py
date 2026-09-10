@@ -1012,6 +1012,44 @@ class TestStripBrokenAnchors(unittest.TestCase):
         ):
             self.assertNotIn(key, report.fixes)
 
+    def test_snapshot_follows_id_deleting_fixes(self):
+        # reported 2026-09-08: the id snapshot predated the unwrap fixes, so an
+        # id an unwrap deleted still counted as present and fragments pointing
+        # at it survived as dangling references. The anchor pass now runs last,
+        # and the snapshot replicates every id-moving fix ahead of it.
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            '<item href="a.xhtml" id="a" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="a"/></spine>'
+            "</package>"
+        )
+        doc = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body>"
+            '<p><pagebreak id="pb:1"/>text</p>'
+            '<a href="#pb:1">jump</a>'
+            "</body></html>"
+        )
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/a.xhtml", doc)
+            z.writestr("OEBPS/content.opf", opf)
+        report = repair_epub(self.src, self.dst, strip_anchors=True, illegal_tags=True)
+        self.assertEqual(report.fixes.get("unwrap_illegal_tags"), 1)
+        self.assertEqual(report.fixes.get("broken_fragment_hrefs_stripped"), 1)
+        with zipfile.ZipFile(self.dst) as z:
+            out = z.read("OEBPS/a.xhtml").decode()
+        self.assertNotIn("pagebreak", out)
+        self.assertIn("<a>jump</a>", out)
+
 
 class TestEncodeUrlSpacesEpub(unittest.TestCase):
     """--encode-url-spaces: raw spaces in src/href attribute values are
