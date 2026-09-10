@@ -547,14 +547,28 @@ def run_library(args) -> int:
 
             tag = "ACCEPT"
             if args.apply:
-                if backup_dir is not None or args.backup_inplace:
-                    make_backup(epub, backup_dir)
-                if args.install_to_calibre:
-                    # The id comes from cquarry's metadata.db view — accurate
-                    # even when the (id) directory was renamed.
-                    install_format(epub, work / "repaired.epub", id_resolver)
-                else:
-                    atomic_replace(epub, work / "repaired.epub")
+                try:
+                    if backup_dir is not None or args.backup_inplace:
+                        make_backup(epub, backup_dir)
+                    if args.install_to_calibre:
+                        # The id comes from cquarry's metadata.db view — accurate
+                        # even when the (id) directory was renamed.
+                        install_format(epub, work / "repaired.epub", id_resolver)
+                    else:
+                        atomic_replace(epub, work / "repaired.epub")
+                except OSError as e:
+                    # A full disk or a permission error partway through a
+                    # multi-hour run must not abort it raw with no summary,
+                    # no JSON, and no record of what was already applied.
+                    # Record the failure as an error Outcome and keep going.
+                    errors += 1
+                    records.append(
+                        Outcome(epub, "error", o.before, o.after, f"apply failed: {e}")
+                    )
+                    tqdm.write(
+                        f"  ERROR   {rel}\n            apply failed: {e}; not applied"
+                    )
+                    continue
                 applied += 1
                 applied_paths.add(epub)
                 tag = "APPLIED"

@@ -503,6 +503,48 @@ class TestUnreadableReasons(unittest.TestCase):
         self.assertEqual(cli._unreadable_reason(e), "encrypted")
 
 
+class TestApplyFailureIsolation(unittest.TestCase):
+    """An OSError during the apply (backup, replace, install) must be recorded
+    as an error Outcome and the sweep must reach its summary and JSON, not
+    abort raw (reported 2026-09-08: an ENOSPC partway through a multi-hour
+    run lost the whole report and every applied book's record)."""
+
+    def test_apply_oserror_is_recorded_and_run_continues(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _phase1_book(root / "a.epub", broken=False)
+            _phase1_book(root / "b.epub", broken=False)
+            jout = root / "lib.json"
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch(
+                    "bindery.cli.make_backup",
+                    side_effect=OSError(28, "No space left on device"),
+                ),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = cli.run_library(
+                    build_parser().parse_args(
+                        [
+                            "library",
+                            str(root),
+                            "--apply",
+                            "--no-validate",
+                            "--backup-inplace",
+                            "--json",
+                            str(jout),
+                        ]
+                    )
+                )
+            data = json.loads(jout.read_text())
+        self.assertEqual(data["summary"]["errors"], 2)
+        self.assertEqual(data["summary"]["applied"], 0)
+        self.assertEqual(rc, 2)
+        self.assertIn("apply failed", out.getvalue())
+        self.assertIn("No space left on device", out.getvalue())
+
+
 class TestLibraryIdScoping(unittest.TestCase):
     """library --id: comma-separated book-id scoping (phase 8). The sweep
     processes only the resolved EPUBs, one wrong id warns without sinking
