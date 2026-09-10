@@ -41,7 +41,17 @@ _P_RE = re.compile(r"<p\b[^>]*>.*?</p>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _INT_RE = re.compile(r"\d{1,4}\Z")
-_ROMAN_RE = re.compile(r"[ivxlcdm]{2,7}\Z", re.IGNORECASE)
+# A strict roman-numeral grammar, not a character set. The old [ivxlcdm]{2,7} also
+# matched ordinary English words built from those letters (mid, dim, mix, lid,
+# civil), and a standalone word between two prose paragraphs is exactly where a
+# confident interrupt fires, so real words were deleted as page numbers
+# (reported 2026-09-08). Two gates replace it: the numeral must be well-formed
+# (subtractive pairs explicit), and its value must stay under 100, because page
+# numbers in roman form do not run that high while words do (mix = 1009, civ = 104).
+_ROMAN_RE = re.compile(
+    r"m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})", re.IGNORECASE
+)
+_ROMAN_MAX = 100
 # An element carrying an id is a navigation target (page-list, internal link); it must
 # survive even when its visible number is removed, or the nav breaks. That covers both
 # <a id=...> anchors inside a removed block and an id on the removed <p> itself.
@@ -69,12 +79,14 @@ def roman_value(s: str) -> int | None:
 
 def number_value(text: str) -> int | None:
     """A bare page-number-ish value (1-9999 arabic, or a roman numeral), else None.
-    Year-range values (1500-2099) are excluded: those are chronologies, not pages."""
+    Year-range values (1500-2099) are excluded: those are chronologies, not pages.
+    Romans keep the old 2-7 character window (a lone i/v/x stayed too noisy)."""
     if _INT_RE.fullmatch(text):
         v = int(text)
         return None if 1500 <= v <= 2099 else v
-    if _ROMAN_RE.fullmatch(text):
-        return roman_value(text)
+    if 2 <= len(text) <= 7 and _ROMAN_RE.fullmatch(text):
+        v = roman_value(text)
+        return v if v is not None and v < _ROMAN_MAX else None
     return None
 
 

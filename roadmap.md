@@ -639,8 +639,15 @@ paragraph is a confident page-number hit and is deleted and merged away.
 epubcheck is blind to deleted text, so `no_worse` passes. `pagination.py:44`,
 `70-78`, `180-184`.
 **Fix:** require uppercase romans, or validate with a strict roman grammar
-(`M?(D?C{0,3}|C[MD])(X?L{0,3}|L?X{0,3})(I?V{0,3}|V?I{0,3})`). *(Unfixed as of
-the 2026-09-08 sweep.)*
+(`M?(D?C{0,3}|C[MD])(X?L{0,3}|L?X{0,3})(I?V{0,3}|V?I{0,3})`). *(Fixed in
+v0.32.0, taking the grammar option to keep lowercase front-matter romans
+working, with one addition the demonstrated words forced: the grammar alone
+still accepts `mix` (M+IX = 1009), so a roman is a page number only when it is
+well-formed AND its value stays under 100, where real roman page numbers live
+and words do not. The audit pagenumbers analyzer's verbatim-twin detector got
+the same fix; the audit copy's deliberately different year handling is
+untouched (still its own question). Tests pin the word list, the surviving
+numerals, and the cap.)*
 
 ### install_format can write a wrong size into metadata.db for stray files (2026-09-08 sweep)
 **Bug in `library --apply --install-to-calibre` without `--id`:**

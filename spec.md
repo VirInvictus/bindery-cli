@@ -227,8 +227,10 @@ Scope is `<p>` elements (where the defect is carried). For each book:
 - A **page-number layer** is confirmed only when BOTH hold: >= 20 standalone arabic
   numbers AND >= 3 confident interrupts. A chapter-numbered book has zero interrupts, so
   its chapter numbers are never touched. Roman numerals are removed only as a confident
-  interrupt, preserving roman chapter and front-matter numbering. Year-range values
-  (1500-2099) are never page numbers.
+  interrupt, preserving roman chapter and front-matter numbering; a roman counts as a
+  number only when it is well-formed (explicit subtractive pairs) and under 100, so
+  ordinary words built from roman letters (`mid`, `mix`, `civil`) are never read as
+  pages. Year-range values (1500-2099) are never page numbers.
 - **Merging:** only a confident interrupt (lowercase continuation or word split) rejoins
   the two surrounding prose paragraphs (a word split closes up its hyphen). Every other
   removal is delete-only, leaving the existing paragraph break.

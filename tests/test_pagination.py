@@ -40,6 +40,41 @@ class TestNumberValue(unittest.TestCase):
         self.assertIsNone(number_value("12345"))  # > 4 digits
         self.assertIsNone(number_value("i"))  # lone i too noisy
 
+    def test_word_romans_are_not_numbers(self):
+        # reported 2026-09-08: [ivxlcdm]{2,7} read ordinary English words built
+        # from roman letters as page numbers (number_value("mid") = 1499)
+        for w in (
+            "mid",
+            "dim",
+            "mix",
+            "lid",
+            "civil",
+            "mild",
+            "mil",
+            "ill",
+            "civ",
+            "div",
+        ):
+            self.assertIsNone(number_value(w), w)
+
+    def test_strict_roman_grammar_still_parses_numerals(self):
+        for w, v in (
+            ("ii", 2),
+            ("iv", 4),
+            ("ix", 9),
+            ("xiv", 14),
+            ("xl", 40),
+            ("xciv", 94),
+        ):
+            self.assertEqual(number_value(w), v, w)
+
+    def test_roman_values_are_capped_at_page_range(self):
+        # well-formed numerals over 99 are words or section marks in prose
+        # (mix = 1009), not page numbers; front-matter pages stay under 100
+        self.assertIsNone(number_value("mcmxcix"))
+        self.assertIsNone(number_value("MMXXIV"))
+        self.assertEqual(number_value("xcix"), 99)
+
 
 class TestRunheadsAndLayer(unittest.TestCase):
     def test_runhead_detected_when_repeated(self):
@@ -79,6 +114,23 @@ class TestStripConservative(unittest.TestCase):
         out, n = strip_pagination_doc(_doc(body), set())
         self.assertEqual(n, 0)
         self.assertEqual(out, _doc(body))
+
+    def test_word_roman_not_deleted_as_page_number(self):
+        # reported 2026-09-08: <p>mid</p> before a lowercase-starting paragraph
+        # was a confident interrupt, and the word was deleted and merged away
+        body = f"<p>{LONG} and</p><p>mid</p><p>sometimes {LONG}.</p>"
+        out, n = strip_pagination_doc(_doc(body), set())
+        self.assertEqual(n, 0)
+        self.assertIn(">mid<", out)
+        self.assertNotIn("and sometimes", _texts(out))  # no merge across the word
+
+    def test_lowercase_roman_still_merges_on_confident_interrupt(self):
+        # the legitimate shape the strict grammar must keep working: front-matter
+        # roman page numbers interrupting prose are still stripped and merged
+        body = f"<p>{LONG} and</p><p>xiv</p><p>sometimes {LONG}.</p>"
+        out, n = strip_pagination_doc(_doc(body), set())
+        self.assertEqual(n, 1)
+        self.assertIn("and sometimes", _texts(out))
 
 
 class TestStripAggressive(unittest.TestCase):

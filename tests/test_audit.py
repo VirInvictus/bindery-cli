@@ -121,6 +121,18 @@ class TestPageNumberValue(unittest.TestCase):
         self.assertIsNone(pagenum.number_value("i"))  # lone roman i is too noisy
         self.assertIsNone(pagenum.number_value("42a"))
 
+    def test_word_romans_are_not_numbers(self):
+        # reported 2026-09-08: the character-set roman regex read ordinary words
+        # (mid, dim, mix, lid, civil) as page numbers, inflating baked-hit counts
+        for w in ("mid", "dim", "mix", "lid", "civil", "mild", "mil", "ill", "civ"):
+            self.assertIsNone(pagenum.number_value(w), w)
+
+    def test_strict_roman_grammar_still_parses_numerals(self):
+        self.assertEqual(pagenum.number_value("xiv"), 14)
+        self.assertEqual(pagenum.number_value("xciv"), 94)
+        self.assertEqual(pagenum.number_value("xcix"), 99)
+        self.assertIsNone(pagenum.number_value("mcmxcix"))  # over the page range
+
 
 class TestIsDefective(unittest.TestCase):
     def _r(self, **over):
