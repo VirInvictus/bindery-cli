@@ -1065,3 +1065,24 @@ wired into every mode it promises, and the apply path's failure modes (crash
 mid-run, backup clobber, daemon stall) are unpadded. Fix the four Bug
 Reports entries and the anchored-regex cluster before any further features;
 everything else is backlog, not danger.*
+
+## Phase 15: completeness spot-check analyzer (proposed 2026-09-10, from the phase-1 skill's own doctrine)
+
+*The phase-1 skill's step 2 has a judgment step with no tool owner: the
+completeness spot-check ("sample early, middle, and late pages ... read the
+LAST content page to confirm it reaches real back matter rather than cutting
+off mid-chapter"). Two consecutive phase-1 runs (2026-09-08 Strauss batch,
+2026-09-10 Redwall batch) used a hand-rolled zipfile sampler in /tmp for it,
+which is exactly the "hand-rolled substitute becomes permanent" pattern the
+skill forbids; the skill allows only two inline checks, both with filed
+phases here. The sampler also already needed one repair (href unquoting)
+that the shipped audit gets for free. Proposal: an `audit completeness`
+analyzer that, in the audit's existing single decompression pass, reports
+per book: spine doc count, prose-doc count (>400 visible chars), the first /
+middle / last prose doc's opening and closing text, trailing-ToC detection
+(a final spine doc that is mostly chapter-heading lines), and the fraction of
+unreadable docs. The 2026-09-10 Redwall run is the fixture set: Lord
+Brocktree (real Epilogue doc before a trailing 520-char ToC), Mattimeo
+(Chapter 50 verified as a real heading with prose after, inside a 174k-char
+split doc), The Long Patrol (percent-encoded hrefs defeated the hand-rolled
+reader; 55/57 prose docs).*
