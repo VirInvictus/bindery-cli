@@ -573,7 +573,9 @@ class TestApplyFailureIsolation(unittest.TestCase):
             err = io.StringIO()
             with redirect_stdout(io.StringIO()), redirect_stderr(err):
                 rc = cli.run_library(
-                    build_parser().parse_args(["library", str(root), "--limit", "-1"])
+                    build_parser().parse_args(
+                        ["library", str(root), "--limit", "-1", "--no-validate"]
+                    )
                 )
         self.assertEqual(rc, 1)
         self.assertIn("must be >= 1", err.getvalue())
@@ -588,7 +590,13 @@ class TestApplyFailureIsolation(unittest.TestCase):
             with redirect_stdout(io.StringIO()), redirect_stderr(err):
                 rc = cli.run_library(
                     build_parser().parse_args(
-                        ["library", str(root), "--audit", str(root / "nope.csv")]
+                        [
+                            "library",
+                            str(root),
+                            "--audit",
+                            str(root / "nope.csv"),
+                            "--no-validate",
+                        ]
                     )
                 )
         self.assertEqual(rc, 1)
