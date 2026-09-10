@@ -927,8 +927,26 @@ def repair_epub(
             data = zin.read(item)
             low = name.lower()
 
+            # The fix branches below need UTF-8 text. A document in any other
+            # encoding (windows-1252, UTF-16) must never be decoded with
+            # replacement and re-encoded: that materializes U+FFFD mojibake
+            # under an XML declaration that still names the old encoding, and
+            # the result is usually well-formed, so the gate cannot see the
+            # damage. The entry is copied byte-for-byte and reported for
+            # manual repair instead.
+            if (
+                low.endswith(".ncx")
+                or low.endswith(".opf")
+                or low.endswith(CONTENT_SUFFIXES)
+            ):
+                try:
+                    text = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    report.add({"non_utf8_docs_skipped": 1})
+                    zout.writestr(item, data, compress_type=item.compress_type)
+                    continue
+
             if low.endswith(".ncx"):
-                text = data.decode("utf-8", "replace")
                 text, counts = apply_transforms(text, XML_TRANSFORMS)
                 if fix_ids:
                     text, n = fix_ncx_ids(text)
@@ -964,7 +982,6 @@ def repair_epub(
             elif low.endswith(".opf") and (
                 fix_ids or page_map or strip_epub3_attrs or prune_missing or url_spaces
             ):
-                text = data.decode("utf-8", "replace")
                 opf_changed = False
                 if fix_ids:
                     text, n = fix_manifest_ids(text)
@@ -997,7 +1014,6 @@ def repair_epub(
                     report.files_changed += 1
                     data = text.encode("utf-8")
             elif low.endswith(CONTENT_SUFFIXES):
-                text = data.decode("utf-8", "replace")
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
                 if escape_entities:
                     text, n = escape_unknown_entities(text)

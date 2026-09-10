@@ -927,12 +927,17 @@ can be net-neutral and ships silently.*
       protected_tags set) are both decorated and never edit inside CDATA or
       comments. Tests pin the dangling-fragment shape and the protected
       spans for both transforms.)*
-- [ ] **Stop re-encoding non-UTF-8 documents.** Any fix that fires on a
+- [x] **Stop re-encoding non-UTF-8 documents.** Any fix that fires on a
       windows-1252 or UTF-16 document decodes with `replace` and re-encodes
       UTF-8, materializing mojibake under an XML declaration that still
       names the old encoding; usually well-formed, so the gate cannot see
       it (`epub.py:874`, `902`, `939`, `1027`). Detect and skip with a
       report entry, per the project's manual-repair philosophy.
+      *(Done in v0.32.0: the write loop strict-decodes each NCX, OPF, and
+      content document before any fix runs; a document that is not valid
+      UTF-8 is copied byte-for-byte, counted in the new
+      `non_utf8_docs_skipped` report entry, and left for manual repair.
+      UTF-8 siblings in the same book are still repaired.)*
 - [ ] **Scope `--reserialize` to HTML roots.** A broken non-HTML `.xml`
       sidecar gets html5lib's HTML algorithm and comes back
       html/body-wrapped with `ns0:` prefixes, structurally rewritten while

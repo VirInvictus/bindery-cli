@@ -1012,6 +1012,36 @@ class TestStripBrokenAnchors(unittest.TestCase):
         ):
             self.assertNotIn(key, report.fixes)
 
+    def test_non_utf8_document_is_skipped_not_mojibake(self):
+        # reported 2026-09-08: a fix firing on a windows-1252 document decoded
+        # with U+FFFD substitutes and re-encoded UTF-8 under a declaration
+        # that still named the old encoding. The entry must be copied
+        # byte-for-byte and reported for manual repair instead.
+        cp1252_doc = (
+            "<?xml version=\"1.0\" encoding=\"windows-1252\"?>"
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head></head>'
+            "<body><p>caf\xe9 r\xe9sum\xe9</p>"
+            "<span><p>inner</p></span></body></html>"
+        ).encode("windows-1252")
+        utf8_doc = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head></head>'
+            "<body><p>café</p>"
+            "<span><p>inner</p></span></body></html>"
+        ).encode("utf-8")
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/bad.xhtml", cp1252_doc)
+            z.writestr("OEBPS/good.xhtml", utf8_doc)
+        report = repair_epub(self.src, self.dst, block_in_inline=True)
+        self.assertEqual(report.fixes.get("non_utf8_docs_skipped"), 1)
+        with zipfile.ZipFile(self.dst) as z:
+            self.assertEqual(z.read("OEBPS/bad.xhtml"), cp1252_doc)
+            good = z.read("OEBPS/good.xhtml").decode("utf-8")
+        # the UTF-8 sibling is still repaired
+        self.assertNotIn("<span><p>", good)
+        self.assertEqual(report.fixes.get("unwrap_block_in_inline"), 1)
+
     def test_snapshot_follows_id_deleting_fixes(self):
         # reported 2026-09-08: the id snapshot predated the unwrap fixes, so an
         # id an unwrap deleted still counted as present and fragments pointing
