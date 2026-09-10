@@ -277,7 +277,10 @@ def install_format(
                 )
             else:
                 dest_dir = Path(db_path).parent / book["path"]
-                name = new_file.stem
+                # Register the format under the name the file already carries
+                # (Calibre's "Title - Author" convention), not the repaired
+                # temp file's throwaway stem.
+                name = target.stem
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 atomic_replace(dest_dir / f"{name}.epub", new_file)
                 placed = True

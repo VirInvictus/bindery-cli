@@ -366,20 +366,13 @@ def run_library(args) -> int:
         )
         return 1
 
-    validate = not args.no_validate
-    if validate and not epubcheck_available():
-        print(
-            "error: epubcheck not found. install it or pass --no-validate.",
-            file=sys.stderr,
-        )
-        return 1
-
-    audit = _load_audit(Path(args.audit).expanduser()) if args.audit else None
     backup_dir = Path(args.backup).expanduser() if args.backup else None
     if backup_dir is not None:
         # A backup directory inside the library root would have its .epub-named
         # copies swept as candidates on the next run (and replaced in place):
         # backups must live outside the tree being swept (2026-09-08).
+        # Validated before the epubcheck check: argument errors are argument
+        # errors, whatever the environment looks like.
         try:
             backup_dir.resolve().relative_to(root.resolve())
         except ValueError:
@@ -392,6 +385,20 @@ def run_library(args) -> int:
                 file=sys.stderr,
             )
             return 1
+
+    validate = not args.no_validate
+    if validate and not epubcheck_available():
+        print(
+            "error: epubcheck not found. install it or pass --no-validate.",
+            file=sys.stderr,
+        )
+        return 1
+
+    audit_path = Path(args.audit).expanduser() if args.audit else None
+    if audit_path is not None and not audit_path.is_file():
+        print(f"error: no such audit file: {audit_path}", file=sys.stderr)
+        return 1
+    audit = _load_audit(audit_path) if audit_path else None
     wants_backup = backup_dir is not None or args.backup_inplace
     if wants_backup and not args.apply:
         print(
@@ -446,6 +453,9 @@ def run_library(args) -> int:
     else:
         selected = _select(all_epubs, args.only, audit, audit_hits)
     if args.limit is not None:
+        if args.limit < 1:
+            print(f"error: --limit must be >= 1 (got {args.limit})", file=sys.stderr)
+            return 1
         # islice keeps the scan lazy: draining it pulls at most `limit` candidates, so
         # --only ncx --limit 20 still stops opening archives after the 20th instead of
         # probing every book in the tree. Draining it here (rather than iterating it in
@@ -871,6 +881,11 @@ def run_phase1(args) -> int:
         print(f"error: no .epub files under {root}", file=sys.stderr)
         return 1
     apply = args.apply_lossy
+    if args.backup and not apply:
+        print(
+            "note: dry run -- --backup does nothing without --apply-lossy",
+            file=sys.stderr,
+        )
     mode = "APPLY-LOSSY" if apply else "READ-ONLY"
     print(f"Bindery run phase1 ({mode}): {root}\n")
 

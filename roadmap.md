@@ -1018,13 +1018,18 @@ can be net-neutral and ships silently.*
 
 ### Apply-path and oracle safety
 
-- [ ] **Move the write-back inside the per-book exception isolation.**
+- [x] **Move the write-back inside the per-book exception isolation.**
       `make_backup`/`atomic_replace`/`install_format` sit bare in the
       sweep loop, so an ENOSPC or EACCES partway through a multi-hour run
       aborts raw with no summary, no JSON, and no record of what was
       already applied (`cli.py:498-508` vs `544-557`). Wrap the block,
       record an error Outcome, and still emit the report; a run journal
       (one line per applied book, resumable) is the stronger version.
+      *(Done in v0.33.0: the write-back is wrapped, an OSError records an
+      `apply failed:` error Outcome and the run continues to its summary
+      and JSON with exit 2; the resumable run journal is deliberately not
+      built, since isolation plus `--json` already preserves the record
+      and the journal is a second write surface next to the library.)*
 - [ ] **Drive the exit code from partial books.** The documented contract
       says exit 2 means "ran fine but some books are in trouble", but
       partial books land in `still_fatal` and return 0, in both `library`
@@ -1038,7 +1043,7 @@ can be net-neutral and ships silently.*
       its `.epub`-named copies swept as candidates on the next run
       (`library.py:29-34`). Refuse overwrite (or rotate) and reject an
       in-tree backup path.
-      *(Done in v0.32.0: `make_backup` rotates (book.epub.bak, .bak2, .bak3,
+      *(Done in v0.33.0: `make_backup` rotates (book.epub.bak, .bak2, .bak3,
       ...) so the first backup always keeps the author original, and
       `run_library` refuses a `--backup` directory resolved inside the
       library root with a usage error (exit 1). The phase1 apply test's
@@ -1057,13 +1062,21 @@ can be net-neutral and ships silently.*
       book (`validate.py:130-153`); and `--only ncx` crashes with a raw
       RuntimeError on encrypted archives because `_select` probes outside
       the exception net (`epub.py:688`, `cli.py:184`).
-- [ ] **Smaller apply papercuts:** `--limit -1` and a missing
+- [x] **Smaller apply papercuts:** `--limit -1` and a missing
       `--audit` file raise tracebacks instead of usage errors
       (`cli.py:434`, `373`); the fresh-format branch of `install_format`
       registers the format under the name `repaired`
       (`library.py:223-230`); phase1 ignores `--backup` without
       `--apply-lossy` silently; the lossy override can upgrade a noop to
       partial in the still-fatal listing (conservative direction only).
+      *(Done in v0.33.0, all four actionable items: `--limit < 1` and a
+      missing `--audit` file are usage errors with exit 1; the fresh-format
+      branch registers under the catalogued file's own name instead of the
+      temp file's throwaway `repaired` stem; and phase1 prints the usual
+      dry-run note when `--backup` comes without `--apply-lossy`. The last
+      item (lossy override upgrading a noop to partial) is conservative-
+      direction-only output labeling and stays as is: the still-fatal
+      listing over-reporting a book that needs eyes is the safe side.)*
 
 ### Tests
 

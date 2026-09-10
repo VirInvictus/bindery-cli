@@ -565,6 +565,35 @@ class TestApplyFailureIsolation(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("inside the library root", err.getvalue())
 
+    def test_limit_below_one_is_a_usage_error(self):
+        # reported 2026-09-08: --limit -1 used to raise a raw traceback
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _phase1_book(root / "a.epub", broken=False)
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                rc = cli.run_library(
+                    build_parser().parse_args(["library", str(root), "--limit", "-1"])
+                )
+        self.assertEqual(rc, 1)
+        self.assertIn("must be >= 1", err.getvalue())
+
+    def test_missing_audit_file_is_a_usage_error(self):
+        # reported 2026-09-08: a missing --audit CSV used to raise a raw
+        # FileNotFoundError traceback instead of a usage error
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _phase1_book(root / "a.epub", broken=False)
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                rc = cli.run_library(
+                    build_parser().parse_args(
+                        ["library", str(root), "--audit", str(root / "nope.csv")]
+                    )
+                )
+        self.assertEqual(rc, 1)
+        self.assertIn("no such audit file", err.getvalue())
+
 
 class TestLibraryIdScoping(unittest.TestCase):
     """library --id: comma-separated book-id scoping (phase 8). The sweep

@@ -295,7 +295,9 @@ class TestInstallFormat(unittest.TestCase):
         # A book with no catalogued EPUB row: the resolver cannot see it (its
         # map IS the format rows), so the legacy guess plus CALIBRE_DBPATH
         # carries the id; the repaired file is placed in the book's directory
-        # under the repaired file's stem and registered fresh.
+        # under the catalogued file's own name and registered fresh (v0.33.0:
+        # it used to register under the temp file's throwaway stem
+        # "repaired").
         import os
 
         root = make_library(Path(self.tmp.name) / "lib4", dir_id=1)
@@ -312,9 +314,11 @@ class TestInstallFormat(unittest.TestCase):
         env["CALIBRE_DBPATH"] = str(root)
         with mock.patch.dict(os.environ, env, clear=True):
             install_format(epub, new)
-        placed = root / "Author" / "Title (1)" / "repaired.epub"
+        placed = root / "Author" / "Title (1)" / "Title - Author.epub"
         self.assertEqual(placed.read_bytes(), b"REPAIRED")
-        self.assertEqual(self._rows(root), [("EPUB", "repaired", len(b"REPAIRED"))])
+        self.assertEqual(
+            self._rows(root), [("EPUB", "Title - Author", len(b"REPAIRED"))]
+        )
         self.assertEqual(self._dirtied(root), [1])
 
     def test_stray_file_in_book_dir_leaves_row_alone(self):
