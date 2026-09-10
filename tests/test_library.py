@@ -374,3 +374,53 @@ class TestInstallFormat(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAtomicReplaceFailure(unittest.TestCase):
+    """atomic_replace's failure path: temp cleaned, target untouched, and the
+    exception re-raised (failure-injection test demanded by the 2026-09-08
+    sweep)."""
+
+    def test_failure_removes_temp_and_preserves_target(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            target = d / "book.epub"
+            target.write_bytes(b"ORIGINAL")
+            new = d / "new.epub"
+            new.write_bytes(b"REPAIRED")
+            real_replace = os.replace
+            calls = []
+
+            def failing_replace(src, dst):
+                calls.append(dst)
+                if str(dst).endswith("book.epub"):  # the real replace, not the copy
+                    raise OSError(28, "No space left on device")
+                return real_replace(src, dst)
+
+            with mock.patch("bindery.library.os.replace", side_effect=failing_replace):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    try:
+                        atomic_replace(target, new)
+                    except OSError as e:
+                        self.assertIn("No space", str(e))
+                    else:
+                        self.fail("OSError did not propagate")
+            self.assertEqual(target.read_bytes(), b"ORIGINAL")
+            # no half-written temp left in the library directory
+            self.assertEqual(
+                sorted(p.name for p in d.iterdir()), ["book.epub", "new.epub"]
+            )
+            self.assertEqual(len(calls), 1)
+
+
+class TestInstallToCalibreWiring(unittest.TestCase):
+    def test_flag_exists_and_defaults_off(self):
+        from bindery.cli import build_parser
+
+        args = build_parser().parse_args(["library", "/tmp"])
+        self.assertFalse(args.install_to_calibre)
+        args = build_parser().parse_args(["library", "/tmp", "--install-to-calibre"])
+        self.assertTrue(args.install_to_calibre)

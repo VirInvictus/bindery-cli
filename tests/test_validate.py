@@ -24,6 +24,8 @@ from bindery.validate import (
     CheckResult,
     _DaemonPool,
     _readline_timeout,
+    gate,
+    no_worse,
     run_epubcheck,
     set_daemon_pool_size,
 )
@@ -264,3 +266,40 @@ class DaemonPoolLogic(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGateDirect(unittest.TestCase):
+    """gate() and no_worse() had zero direct tests; the subtle fatal-fixing
+    error-unmasking branch was asserted nowhere."""
+
+    def test_fatal_fixing_accepts_unmasked_errors(self) -> None:
+        # fatals were masking five errors; clearing the fatal surfaces them.
+        # That is success, not regression.
+        self.assertEqual(gate(CheckResult(1, 0, 0), CheckResult(0, 5, 0)), "accept")
+
+    def test_fatal_reduction_without_clearance_is_partial(self) -> None:
+        self.assertEqual(gate(CheckResult(2, 9, 0), CheckResult(1, 9, 0)), "partial")
+
+    def test_unchanged_fatals_is_noop(self) -> None:
+        self.assertEqual(gate(CheckResult(1, 0, 0), CheckResult(1, 0, 0)), "noop")
+
+    def test_net_new_fatal_is_reject_even_from_fatal(self) -> None:
+        self.assertEqual(gate(CheckResult(1, 9, 0), CheckResult(2, 9, 0)), "reject")
+
+    def test_clean_book_error_rise_is_reject(self) -> None:
+        self.assertEqual(gate(CheckResult(0, 1, 0), CheckResult(0, 2, 0)), "reject")
+
+    def test_clean_book_error_drop_is_accept(self) -> None:
+        self.assertEqual(gate(CheckResult(0, 3, 0), CheckResult(0, 1, 0)), "accept")
+
+    def test_no_worse_forbids_fatal_rise(self) -> None:
+        self.assertFalse(no_worse(CheckResult(0, 2, 0), CheckResult(1, 2, 0)))
+
+    def test_no_worse_forbids_error_rise_on_a_clean_book(self) -> None:
+        self.assertFalse(no_worse(CheckResult(0, 2, 0), CheckResult(0, 3, 0)))
+
+    def test_no_worse_tolerates_error_unmasking_under_fatals(self) -> None:
+        self.assertTrue(no_worse(CheckResult(1, 0, 0), CheckResult(0, 9, 0)))
+
+    def test_no_worse_allows_identical_counts(self) -> None:
+        self.assertTrue(no_worse(CheckResult(0, 2, 5), CheckResult(0, 2, 5)))

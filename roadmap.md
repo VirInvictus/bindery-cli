@@ -1156,7 +1156,7 @@ can be net-neutral and ships silently.*
 
 ### Tests
 
-- [ ] **Add the missing direct tests for the safety contract:** `gate()` and
+- [x] **Add the missing direct tests for the safety contract:** `gate()` and
       `no_worse()` have zero direct tests (the subtle fatal-fixing
       error-unmasking branch is asserted nowhere); `_EpubcheckDaemon` is
       completely untested (and hides the no-reset liveness bug above);
@@ -1167,6 +1167,16 @@ can be net-neutral and ships silently.*
       (temp cleaned, target untouched, re-raise) has no failure-injection
       test; `--install-to-calibre` CLI wiring and library-mode `--tag`
       end-to-end are untested.
+      *(Done in v0.33.0. Landed with their fixes earlier in the batch: the
+      daemon pool logic and bounds tests, the watermark protected-span and
+      broken-tags CDATA tests, and the playorder nav-label tests. This
+      commit adds the rest: direct gate()/no_worse() tests including the
+      fatal-fixing error-unmasking branch, the watermark gated-apply
+      analogue of the pagination gate test, atomic_replace failure
+      injection (temp cleaned, target untouched, re-raise), the
+      --install-to-calibre parser wiring, and a library-mode --tag
+      end-to-end run through cquarry's write path against a real temporary
+      metadata.db.)*
 - [x] **Clean the weak 2%:** delete the three mid-file
       `if __name__ == "__main__": unittest.main()` blocks
       (`test_audit.py:806`, `:943`; `test_cli.py:475`) that make direct

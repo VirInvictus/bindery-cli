@@ -1645,3 +1645,70 @@ class TestAuditThresholdValidation(unittest.TestCase):
             rc = run_audit_cmd(args)
         self.assertEqual(rc, 2)
         self.assertIn("must not exceed", err.getvalue())
+
+
+class TestLibraryTagEndToEnd(unittest.TestCase):
+    """library-mode --tag end to end: an EMPTY book gets tagged through
+    cquarry's write path, against a real (temporary) metadata.db."""
+
+    def test_flagged_book_is_tagged(self):
+        import contextlib
+        import io
+        import sqlite3
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            root.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(root / "metadata.db")
+            conn.executescript(
+                """
+                CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, sort TEXT,
+                    author_sort TEXT, timestamp TEXT, pubdate TEXT, has_cover INT,
+                    last_modified TEXT, series_index REAL DEFAULT 1.0, path TEXT, uuid TEXT);
+                CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+                CREATE TABLE books_authors_link (id INTEGER PRIMARY KEY, book INT, author INT);
+                CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT, link TEXT);
+                CREATE TABLE books_tags_link (id INTEGER PRIMARY KEY, book INT, tag INT);
+                CREATE TABLE languages (id INTEGER PRIMARY KEY, lang_code TEXT, link TEXT);
+                CREATE TABLE books_languages_link (id INTEGER PRIMARY KEY, book INT, lang_code INT);
+                CREATE TABLE data (id INTEGER PRIMARY KEY, book INT, format TEXT,
+                    name TEXT, uncompressed_size INT);
+                CREATE TABLE identifiers (book INT, type TEXT, val TEXT);
+                """
+            )
+            conn.execute(
+                "INSERT INTO books (id,title,sort,path) VALUES (1,'Empty','Empty','A/E (1)')"
+            )
+            conn.execute("INSERT INTO authors (id,name) VALUES (1,'Author')")
+            conn.execute("INSERT INTO books_authors_link (book,author) VALUES (1,1)")
+            conn.execute(
+                "INSERT INTO data (book,format,name) VALUES (1,'EPUB','E - Author')"
+            )
+            conn.commit()
+            conn.close()
+            book_dir = root / "A" / "E (1)"
+            book_dir.mkdir(parents=True)
+            with zipfile.ZipFile(book_dir / "E - Author.epub", "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", TestRunSingle.CONTAINER)
+                z.writestr("content.opf", TestRunSingle.OPF)
+                z.writestr("text.xhtml", "<html><body></body></html>")
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                buf, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                    rc = audit.run_library(["emptytext"], 2000, 20000, tag="Flagged")
+                conn = sqlite3.connect(root / "metadata.db")
+                try:
+                    tagged = conn.execute(
+                        "SELECT b.id FROM books b JOIN books_tags_link l ON b.id = l.book "
+                        "JOIN tags t ON l.tag = t.id WHERE t.name = 'Flagged'"
+                    ).fetchall()
+                finally:
+                    conn.close()
+            finally:
+                os.chdir(old)
+        self.assertEqual(rc, 1)  # an EMPTY book is a finding
+        self.assertEqual(tagged, [(1,)])

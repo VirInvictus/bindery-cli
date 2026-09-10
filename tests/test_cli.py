@@ -81,6 +81,34 @@ class TestStripPaginationGate(unittest.TestCase):
         self.assertEqual(o.status, "reject")
 
 
+class TestStripWatermarkGate(unittest.TestCase):
+    """--strip-watermarks' gated apply path: the analogue of the pagination
+    gate test, asserted nowhere until now (reported 2026-09-08)."""
+
+    def _strip_verdict(self, before, after):
+        report = RepairReport(fixes={"stripped_watermarks": 2})
+        with (
+            mock.patch("bindery.cli.repair_epub", return_value=report),
+            mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
+        ):
+            return process_book(
+                Path("x.epub"), Path("."), validate=True, strip_watermarks=True
+            )
+
+    def test_identical_counts_accept_via_no_worse(self) -> None:
+        # the strip's gain is invisible to epubcheck: identical counts pass
+        o = self._strip_verdict(CheckResult(0, 0, 0), CheckResult(0, 0, 0))
+        self.assertEqual(o.status, "accept")
+
+    def test_still_fatal_book_is_partial_not_accept(self) -> None:
+        o = self._strip_verdict(CheckResult(3, 0, 0), CheckResult(1, 0, 0))
+        self.assertEqual(o.status, "partial")
+
+    def test_regression_rejects(self) -> None:
+        o = self._strip_verdict(CheckResult(0, 1, 0), CheckResult(0, 2, 0))
+        self.assertEqual(o.status, "reject")
+
+
 class TestLibrarySurvivesCorruptEpub(unittest.TestCase):
     def test_sweep_continues_past_a_bad_zip(self):
         with tempfile.TemporaryDirectory() as td:
