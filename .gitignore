@@ -12,6 +12,11 @@ testing_facility/books_to_fix/*
 !testing_facility/books_to_fix/.gitkeep
 testing_facility/top500candidates/*.epub
 
+# test_facility EPUBs stopped being tracked in v0.33.0 (forward-only; 9 of
+# the 10 books are commercial and one untracked leak on a public repo is
+# one too many). Files stay on disk, out of git.
+test_facility/*.epub
+
 # Compiled Java scratch (FastSweep harness)
 *.class
 

@@ -60,6 +60,8 @@ Every repair is gated by [epubcheck](https://github.com/w3c/epubcheck). The acce
 
 Introducing a net-new fatal is always rejected. If epubcheck itself fails to run (crash, timeout, unparsable output), the book is reported as an error and never applied; only an explicit `--no-validate` skips the gate. Originals are never modified except by an explicit, atomic in-place replace (see below), and even then only after the gate accepts the result.
 
+Under the hood, the oracle can run two ways: the usual `epubcheck --json -` subprocess, or a small in-process daemon that compiles `FastDaemon.java` into a temp directory at runtime and drives a warm JVM over a pipe. The daemon is a pool bounded by `--workers` (serial runs use one), its every roundtrip is bounded by the caller's timeout, and any failure tears it down and falls back to the subprocess for good — the two paths must never disagree about a book, and the subprocess oracle is the fallback by design. The daemon is also the scariest under-tested code in the repo and depends on a matched javac/java pair; its status is recorded in the roadmap's Phase 12 postscript and Phase 14 backlog.
+
 The lossy modes (`--strip-pagination`, `--strip-broken-tags`, and `--strip-watermarks`) are the exception to the "must improve" rule. Since they remove visible markup rather than correcting XML schema violations, epubcheck counts often remain unchanged. They are accepted when the result is **no worse** (no net-new fatals or errors), relying on strict programmatic safety nets instead.
 
 ## Install
@@ -232,8 +234,14 @@ The older `find_*.py` detection wedges and the `sweep.sh`/`FastSweepExtract.java
 ## Development
 
 ```sh
-./run_tests.sh        # unittest suite
+./run_tests.sh        # ruff (CI's pin) + unittest suite
 ```
+
+The suite builds its own synthetic EPUBs in temporary directories. `testing_facility/`
+holds staged real-book copies for manual dry runs (gitignored); `test_facility/` holds
+loose local books that stay on disk but out of git (untracked since v0.33.0,
+forward-only, because 9 of the 10 are commercial and one untracked leak on a public
+repo is one too many).
 
 See [spec.md](spec.md) for the full contract and [roadmap.md](roadmap.md) for what is planned.
 

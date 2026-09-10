@@ -225,6 +225,12 @@ be run or its output cannot be parsed during a validated run, the book is an `er
 the gate has not accepted anything, so nothing is applied or written. With
 `--no-validate`, the gate is skipped and repairs are trusted on the RepairReport alone.
 
+The oracle itself runs two ways: the `epubcheck --json -` subprocess, or a persistent
+daemon (`_EpubcheckDaemon`, a bounded pool sized by `--workers`) that compiles
+`FastDaemon.java` at runtime and drives a warm JVM over a pipe. Every daemon roundtrip
+is bounded by the caller's timeout, and any daemon failure tears it down and falls back
+to the subprocess for good, so the two paths can never disagree about a book.
+
 ## Page-number strip (opt-in, lossy)
 
 `--strip-pagination` removes print page numbers and running headers that a PDF/OCR
