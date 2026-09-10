@@ -284,7 +284,16 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
   atomic-replacement contract live there).
 
 ### Native format installation (`--install-to-calibre`)
-Optionally, bindery-cli installs the repaired EPUB as the book's format through cquarry's write module (`WritableCalibreDB`): the file is placed atomically — an in-place replace over the catalogued file when one exists (same path, same `data.name`), or a fresh placement under the repaired file's stem otherwise — and the `data` row follows in one `batch()` transaction (`remove_format` + `add_format`, since `add_format` refuses duplicates), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. The external `calibredb` CLI is no longer used (the v0.23.1 `--replace` crash class is gone with it). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
+Optionally, bindery-cli installs the repaired EPUB as the book's format through cquarry's write module (`WritableCalibreDB`): the file is placed atomically — an in-place replace over the catalogued file when one exists (same path, same `data.name`), or a fresh placement under the repaired file's stem otherwise — and the `data` row follows through `set_format` (cquarry 1.17's sanctioned remove+add in one transaction), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. The external `calibredb` CLI is no longer used (the v0.23.1 `--replace` crash class is gone with it). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
+
+The no-catalog fallback guesses the id from the `(N)` directory fragment. A guessed
+id may drive a row update only when metadata.db corroborates it: the book row exists,
+the file lives in that book's own directory, and (when an EPUB is catalogued) carries
+its stored `data.name`. Anything else is a stray file inside a book directory; the
+repair is saved in place and the row is left untouched (updating the row from a stray
+wrote the stray's size over the catalogued entry, the 2026-09-08 stray-size incident),
+and a stale `(N)` directory whose book no longer exists saves in place instead of
+crashing the sweep.
 
 ## Audit subcommand (read-only)
 

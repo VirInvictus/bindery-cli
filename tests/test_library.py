@@ -304,6 +304,56 @@ class TestInstallFormat(unittest.TestCase):
         self.assertEqual(self._rows(root), [("EPUB", "repaired", len(b"REPAIRED"))])
         self.assertEqual(self._dirtied(root), [1])
 
+    def test_stray_file_in_book_dir_leaves_row_alone(self):
+        # The 2026-09-08 stray-size incident: an uncatalogued stray .epub inside
+        # a book directory guessed the book id from the (id) fragment, and the
+        # row update wrote the stray's size over the catalogued EPUB's entry.
+        # The guess is now verified against metadata.db: the repair is saved
+        # over the stray, and the catalog row is left untouched.
+        import contextlib
+        import io
+        import os
+
+        root = make_library(Path(self.tmp.name) / "lib5", dir_id=1)
+        stray = root / "Author" / "Title (1)" / "stray.epub"
+        stray.write_bytes(b"STRAY" * 2000)
+        new = root / "repaired.epub"
+        new.write_bytes(b"REPAIRED")
+        env = {k: v for k, v in os.environ.items() if k != "CALIBRE_DBPATH"}
+        env["CALIBRE_DBPATH"] = str(root)
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                install_format(stray, new)
+        self.assertEqual(stray.read_bytes(), b"REPAIRED")
+        # same name, still the catalogued file's size, nothing queued dirty
+        self.assertEqual(self._rows(root), [("EPUB", "Title - Author", 10)])
+        self.assertEqual(self._dirtied(root), [])
+        self.assertIn("not the catalogued EPUB", err.getvalue())
+
+    def test_stale_id_directory_saves_in_place(self):
+        # A (5) directory whose book no longer exists in metadata.db: the guess
+        # used to crash the sweep on the missing books row (TypeError); now the
+        # repair is saved in place and the catalog is untouched.
+        import contextlib
+        import io
+        import os
+
+        root = make_library(Path(self.tmp.name) / "lib6", dir_id=1)
+        stale_dir = root / "Author" / "Title (5)"
+        stale_dir.mkdir(parents=True)
+        stale = stale_dir / "whatever.epub"
+        stale.write_bytes(b"OLD")
+        new = root / "repaired.epub"
+        new.write_bytes(b"REPAIRED")
+        env = {k: v for k, v in os.environ.items() if k != "CALIBRE_DBPATH"}
+        env["CALIBRE_DBPATH"] = str(root)
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                install_format(stale, new)
+        self.assertEqual(stale.read_bytes(), b"REPAIRED")
+        self.assertEqual(self._rows(root), [("EPUB", "Title - Author", 10)])
+        self.assertIn("does not exist in metadata.db", err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

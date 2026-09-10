@@ -662,7 +662,18 @@ book instead raises an uncaught `TypeError` at the `book["path"]` access.
 **Fix:** when the id came from the directory guess, verify the target
 matches the DB's book path and format name before the batch; otherwise save
 in place and warn without touching the row, and catch the `TypeError` path.
-*(Unfixed as of the 2026-09-08 sweep.)*
+*(Fixed in v0.32.0: a guessed id now drives a row update only when
+metadata.db corroborates it — the books row exists, the file sits in that
+book's catalogued directory, and when an EPUB row exists it carries that
+row's stored name. Any other guess (a stray file in a book directory, a
+stale `(N)` directory whose book is gone, the resolver's id gone from
+`books` mid-run) saves the repair in place with a warning and leaves the
+catalog untouched; the `TypeError` on the missing books row is gone. The
+existing verified-guess fresh-placement and wrong-directory-degrades tests
+are unchanged in behavior. Also rode along here: spec.md's install section
+still described the v0.31.0-retired remove+add `batch()`; it now describes
+`set_format`. Tests pin the stray-size incident shape and the stale-directory
+save.)*
 
 ### EPUB2-targeted structural fixes fire on EPUB3 books under --all (2026-09-08 sweep)
 **Bug in `--strip-epub3-attrs` / `--downgrade-epub3-tags` via the run verbs

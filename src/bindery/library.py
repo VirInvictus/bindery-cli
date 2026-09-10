@@ -135,6 +135,35 @@ def guess_calibre_id(epub: Path) -> str | None:
     return match.group(1) if match else None
 
 
+class _UnverifiedBookId(Exception):
+    """A book id whose link to the target file could not be verified against
+    metadata.db: the data row must never be updated from this file."""
+
+
+def _verify_guess(book, row, target: Path, db_path: Path, book_id: int) -> None:
+    """A guessed ``(id)`` directory fragment may only drive a data-row update
+    when metadata.db agrees the target IS that book's EPUB: the book row must
+    exist, the file must live in the book's own directory, and (when an EPUB is
+    catalogued) carry its stored name. Anything else is a stray file inside a
+    book directory, and updating the row from it wrote the stray's size over
+    the catalogued file's (the 2026-09-08 stray-size incident: a 999-byte file
+    untouched on disk while ``data`` recorded 8123 bytes)."""
+    if book is None:
+        raise _UnverifiedBookId(
+            f"book {book_id} does not exist in metadata.db (a stale (id) directory)"
+        )
+    book_dir = (Path(db_path).parent / book["path"]).resolve()
+    if target.parent.resolve() != book_dir:
+        raise _UnverifiedBookId(
+            f"{target.name} is not in book {book_id}'s catalogued directory"
+        )
+    if row is not None and target.name.lower() != (row["name"] + ".epub").lower():
+        raise _UnverifiedBookId(
+            f"{target.name} is not the catalogued EPUB of book {book_id} "
+            f"(data.name is {row['name']})"
+        )
+
+
 def install_format(
     target: Path, new_file: Path, resolver: CalibreIdResolver | None = None
 ) -> None:
@@ -157,17 +186,23 @@ def install_format(
     row is written, and a failed row update degrades to the in-place save
     with a warning rather than losing the repair.
 
+    A guessed id is only trusted when metadata.db corroborates it (the book
+    exists, the file sits in that book's directory carrying its stored name);
+    otherwise the repair is saved in place and the row is left untouched.
+
     This used to shell out to ``calibredb add_format``; the native path drops
     the external CLI dependency and the flag-shape crash class with it (the
     2026-08-31 ``--replace`` incident).
     """
     calibre_id: str | None = None
+    guess_only = False
     if resolver is not None:
         bid = resolver.id_for(target)
         if bid is not None:
             calibre_id = str(bid)
     if calibre_id is None:
         calibre_id = guess_calibre_id(target)
+        guess_only = calibre_id is not None
     if calibre_id is None:
         import sys
 
@@ -203,10 +238,22 @@ def install_format(
     placed = False
     try:
         with WritableCalibreDB(str(db_path)) as wdb:
+            book = wdb.conn.execute(
+                "SELECT path FROM books WHERE id = ?", (int(calibre_id),)
+            ).fetchone()
             row = wdb.conn.execute(
                 "SELECT name FROM data WHERE book = ? AND upper(format) = 'EPUB'",
                 (int(calibre_id),),
             ).fetchone()
+            if guess_only:
+                _verify_guess(book, row, target, db_path, int(calibre_id))
+            elif book is None:
+                # The resolver's id comes from the format map, so a missing
+                # books row means the catalog changed under us; same handling,
+                # and this access used to be an uncaught TypeError.
+                raise _UnverifiedBookId(
+                    f"book {calibre_id} has no row in metadata.db (stale catalog)"
+                )
             if row is not None:
                 atomic_replace(target, new_file)
                 placed = True
@@ -217,9 +264,6 @@ def install_format(
                     int(calibre_id), "EPUB", row["name"], new_file.stat().st_size
                 )
             else:
-                book = wdb.conn.execute(
-                    "SELECT path FROM books WHERE id = ?", (int(calibre_id),)
-                ).fetchone()
                 dest_dir = Path(db_path).parent / book["path"]
                 name = new_file.stem
                 dest_dir.mkdir(parents=True, exist_ok=True)
@@ -229,6 +273,19 @@ def install_format(
                     wdb.add_format(
                         int(calibre_id), "EPUB", name, new_file.stat().st_size
                     )
+    except _UnverifiedBookId as e:
+        import sys
+
+        if not placed:
+            # The repair is never lost to a catalog mismatch: save it in place
+            # (the path the file already lives at) and say what happened.
+            atomic_replace(target, new_file)
+            placed = True
+        print(
+            f"WARNING: {e}; saving the repaired file in place and leaving the "
+            "catalog row untouched.",
+            file=sys.stderr,
+        )
     except (ValueError, sqlite3.Error) as e:
         import sys
 
