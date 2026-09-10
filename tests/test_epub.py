@@ -1018,7 +1018,7 @@ class TestStripBrokenAnchors(unittest.TestCase):
         # that still named the old encoding. The entry must be copied
         # byte-for-byte and reported for manual repair instead.
         cp1252_doc = (
-            "<?xml version=\"1.0\" encoding=\"windows-1252\"?>"
+            '<?xml version="1.0" encoding="windows-1252"?>'
             '<html xmlns="http://www.w3.org/1999/xhtml"><head></head>'
             "<body><p>caf\xe9 r\xe9sum\xe9</p>"
             "<span><p>inner</p></span></body></html>"
