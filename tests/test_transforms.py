@@ -18,6 +18,7 @@ from bindery.transforms import (
     fix_id_colons,
     fix_missing_title,
     fix_named_entities,
+    fix_ncx_src_fragments,
     self_close_void,
     strip_invalid_attributes,
     strip_invalid_value,
@@ -432,6 +433,55 @@ class TestStripInvalidValue(unittest.TestCase):
         text = '<div xvalue="1" svalue="2" xml:value="3">x</div>'
         out, n = strip_invalid_value(text)
         self.assertEqual((out, n), (text, 0))
+
+
+class TestFixIdColons(unittest.TestCase):
+    def test_bare_id_and_internal_fragments_translate(self):
+        doc = (
+            '<p id="sec:1">one</p>'
+            '<a href="#sec:1">self</a>'
+            '<a href="ch1.xhtml#sec:2">doc</a>'
+        )
+        out, n = fix_id_colons(doc)
+        self.assertEqual(n, 3)
+        self.assertIn('id="sec_1"', out)
+        self.assertIn('href="#sec_1"', out)
+        self.assertIn('href="ch1.xhtml#sec_2"', out)
+
+    def test_external_url_fragment_survives(self):
+        # reported 2026-09-08: the fragment of an external URL names a
+        # position in that other document; translating it broke the link
+        doc = '<a href="http://example.com/page#sec:1">ext</a>'
+        out, n = fix_id_colons(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_data_id_and_xml_id_survive(self):
+        # reported 2026-09-08: data-id is arbitrary data and xml:id needs its
+        # own reference graph; only the bare id attribute is in scope
+        doc = '<div data-id="a:b">x</div><p xml:id="c:d">y</p>'
+        out, n = fix_id_colons(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_colonless_ids_report_no_phantom_changes(self):
+        # reported 2026-09-08: every id attribute was counted even when no
+        # colon was replaced, so byte-identical reruns reported changes and
+        # triggered the re-encode the untouched-file guard exists to prevent
+        doc = '<p id="clean">x</p><a href="#also_clean">y</a>'
+        out, n = fix_id_colons(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_ncx_src_fragments_follow_the_rename(self):
+        ncx = (
+            '<navMap><navPoint id="np1"><content src="c1.xhtml#sec:1"/></navPoint>'
+            '<navPoint id="np2"><content src="c2.xhtml#keep"/></navPoint>'
+            '<navPoint id="np3"><content src="http://example.com/x#a:b"/></navPoint>'
+            "</navMap>"
+        )
+        out, n = fix_ncx_src_fragments(ncx)
+        self.assertEqual(n, 1)
+        self.assertIn('src="c1.xhtml#sec_1"', out)
+        self.assertIn('src="c2.xhtml#keep"', out)
+        self.assertIn('src="http://example.com/x#a:b"', out)
 
 
 class TestCssProtectedTags(unittest.TestCase):

@@ -1,4 +1,69 @@
 # bindery-cli Patch Notes
+## v0.32.0 (2026-09-10)
+
+### The four Bug Reports fixes (2026-09-08 sweep) and the anchored-attribute cluster
+
+- **`--strip-watermarks` refuses anchored matches larger than the stamp**
+  (the sweep demonstrated two paragraphs of real prose vanishing with
+  count 1). The anchored stamp regex is DOTALL with no tag budget, so an
+  unclosed stamp `<a>` matched through real prose to the next unrelated
+  `</a>`, and the whole-match fallback deleted everything in between;
+  epubcheck cannot see deleted text, so the no-regression bar accepted the
+  loss. The fallback now fires only when the match demonstrably holds
+  nothing but the stamp (a tag-free body within stamp length, or visible
+  text exactly the watermark), a second `<a>` opening inside the match
+  refuses it outright, and anything larger stays in place, counted in the
+  new `RepairReport.watermark_refusals` and surfaced by `run phase1` as a
+  `manual_watermark_repair` decision on both the read-only and apply paths.
+  Safe shapes (pure wrappers, inline stamp-only links) are byte-identical
+  to before.
+- **Roman page-number detection reads well-formed numerals only**, in both
+  `--strip-pagination` and the audit pagenumbers analyzer. The old
+  `[ivxlcdm]{2,7}` character set read ordinary English words as page
+  numbers (`mid` = 1499), and a standalone `<p>mid</p>` before a
+  lowercase-starting paragraph is exactly the confident interrupt shape,
+  so real words were deleted and merged away. A roman counts only when
+  well-formed (explicit subtractive pairs) and valued under 100, where
+  front-matter page numbers live and words do not (`mix` = M+IX = 1009).
+  Lowercase front-matter romans keep working; the audit copy's deliberately
+  different year handling is untouched.
+- **`install_format` verifies directory-guessed ids against metadata.db.**
+  In directory mode, an uncatalogued stray `.epub` inside a book directory
+  made the `(id)` directory guess fire, and the row update re-registered
+  the catalogued format name with the stray file's size: the catalogued
+  999-byte file untouched on disk while `data` recorded 8123 bytes. A
+  stale `(N)` directory for a deleted book crashed the sweep instead. A
+  guessed id now drives a row update only when metadata.db corroborates it
+  (the books row exists, the file sits in that book's own directory, and
+  when an EPUB row exists it carries the row's stored name); anything else
+  saves the repair in place with a warning and leaves the catalog
+  untouched. The resolver path needs no verification: its id comes from
+  the catalog's own path map.
+- **The EPUB2-targeted fixes are gated on the package version.** Neither
+  `--strip-epub3-attrs` nor `--downgrade-epub3-tags` checked what the
+  package declared, so under `--all` every EPUB3 book in a sweep took the
+  EPUB2 cure: a repairable EPUB3 book gained a net-new error from a
+  stripped nav `epub:type` (whole repair rejected), and a legal
+  `epub:type="chapter"` was silently removed because the gate only sees
+  epubcheck counts. Both fixes now fire only on EPUB 2 packages (major
+  version 1 or 2) and are inert on EPUB 3 packages and when no version can
+  be read, where their target defects do not exist.
+- **The anchored-attribute regex cluster closes with the gate** (the same
+  sweep's sharpest repair-pipeline finding): the attribute scrub runs
+  anchored on real start tags through the new
+  `transforms.strip_attrs_in_start_tags`, with CDATA sections and comments
+  protected, so prose mentioning `epub:type="chapter"` is no longer
+  deleted down to `Use here`; `strip_invalid_value` matches its attribute
+  name behind a `(?<![\w:.-])value` lookbehind, so `data-value="42"`
+  survives instead of becoming a malformed `<span  data->`.
+
+Dry-run validation for this release: the 14 staged top500candidates plus
+the 3 books_to_fix fixtures swept clean (9 accepted, 2 gate-refused
+regressions, 0 errors), and a 212-book random-order sample of the real
+library (5,228 EPUBs) under `--all --workers 4` matched the documented
+verdict mix with zero crashes and zero epubcheck failures. Read-only
+throughout.
+
 ## v0.31.0 (2026-09-09)
 
 ### Cascade: install through cquarry 1.17's set_format

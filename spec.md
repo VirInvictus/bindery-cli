@@ -91,8 +91,12 @@ part of the default pipeline:
   incomplete"). Adds visible content, hence opt-in like `--add-img-alt`.
 - **`--fix-missing-title`**: inject `<title>Unknown</title>` when the head has no usable
   title.
-- **`--fix-id-colons`**: illegal colons in `id="X:Y"` and their matching `#X:Y` fragment
-  references become `_`; word-bounded, so external URLs are untouched.
+- **`--fix-id-colons`**: illegal colons in `id="X:Y"` and their matching internal
+  `#X:Y` fragment references become `_`. Only the bare `id` attribute is in scope
+  (`data-id` values are arbitrary data and are never touched), the fragment of an
+  external URL names a position in that other document and survives verbatim, and the
+  NCX's `content src` fragments follow the rename (`fix_ncx_src_fragments`), so a ToC
+  never dangles against the ids it references.
 - **`--unwrap-block-in-inline`**: drop a `<span>` that illegally wraps a
   `<div>/<p>/<blockquote>`, keeping the block element and its text.
 - **`--strip-invalid-value`**: remove misplaced `value="..."` attributes from non-form

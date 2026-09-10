@@ -524,37 +524,49 @@ def fix_missing_title(s: str) -> tuple[str, int]:
     return s, n
 
 
+# A reference target that is not a file inside this package: an absolute URI
+# with a scheme (`http://`, `kindle:`, `file://`) or a protocol-relative
+# `//host/path`. Its fragment names a position in that other document and is
+# never this package's business.
+_EXTERNAL_TARGET_RE = re.compile(r"^(?:[a-zA-Z][\w+.-]*:|//)")
+
+
 @_outside_protected
 def fix_id_colons(s: str) -> tuple[str, int]:
-    """Translate illegal colons in `id="X:Y"` and matching `#X:Y` fragments to `_`.
+    """Translate illegal colons in `id="X:Y"` and matching internal `#X:Y`
+    fragments to `_`.
 
-    Opt-in (--fix-id-colons): it rewrites every id-bearing attribute and internal
-    fragment reference, so it stays out of the core pass despite being
-    rendering-neutral. Word boundaries keep external URLs intact.
+    Opt-in (--fix-id-colons): it rewrites id-bearing attributes and internal
+    fragment references, so it stays out of the core pass despite being
+    rendering-neutral. Only the bare `id` attribute is matched (a lookbehind
+    keeps `data-id` and `xml:id` values untouched: the former is arbitrary
+    data, and renaming the latter would need its own reference graph), and a
+    fragment is translated only in an internal reference: the fragment of an
+    external URL (`http://example.com/page#sec:1`) names a position in that
+    other document, so it must survive verbatim.
     """
     count = 0
 
     def repl_id(m: re.Match) -> str:
         nonlocal count
+        if ":" not in m.group(2):
+            return m.group(0)  # no colon, no rename, no phantom count
         count += 1
         return m.group(1) + m.group(2).replace(":", "_") + m.group(3)
 
-    s, n1 = re.subn(
-        r'\b(id\s*=\s*["\'])([^"\']+)(["\'])', repl_id, s, flags=re.IGNORECASE
+    s, _ = re.subn(
+        r'\b(?<![\w:.-])(id\s*=\s*["\'])([^"\']+)(["\'])',
+        repl_id,
+        s,
+        flags=re.IGNORECASE,
     )
 
     def repl_href(m: re.Match) -> str:
         nonlocal count
-        if ":" in m.group(3):
-            count += 1
-            return (
-                m.group(1)
-                + m.group(2)
-                + "#"
-                + m.group(3).replace(":", "_")
-                + m.group(4)
-            )
-        return m.group(0)
+        if ":" not in m.group(3) or _EXTERNAL_TARGET_RE.match(m.group(2)):
+            return m.group(0)
+        count += 1
+        return m.group(1) + m.group(2) + "#" + m.group(3).replace(":", "_") + m.group(4)
 
     s, n2 = re.subn(
         r'\b(href\s*=\s*["\'])([^"#]*?)#([^"\']+)(["\'])',
@@ -563,6 +575,34 @@ def fix_id_colons(s: str) -> tuple[str, int]:
         flags=re.IGNORECASE,
     )
     return s, count
+
+
+@_outside_protected
+def fix_ncx_src_fragments(ncx: str) -> tuple[str, int]:
+    """Translate colon-bearing fragments in NCX `content src` references to
+    `_`, mirroring what fix_id_colons just did to the content documents.
+
+    Opt-in (--fix-id-colons): a content id rename without this NCX half
+    manufactures dangling ToC references end to end (every navPoint pointing
+    at a colon-bearing id lands on nothing). External targets keep their
+    fragments verbatim.
+    """
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        if ":" not in m.group(3) or _EXTERNAL_TARGET_RE.match(m.group(2)):
+            return m.group(0)
+        count += 1
+        return m.group(1) + m.group(2) + "#" + m.group(3).replace(":", "_") + m.group(4)
+
+    ncx, _ = re.subn(
+        r'\b(src\s*=\s*["\'])([^"#]*?)#([^"\']+)(["\'])',
+        repl,
+        ncx,
+        flags=re.IGNORECASE,
+    )
+    return ncx, count
 
 
 # A src/href attribute with a quoted value. A raw space can only survive inside

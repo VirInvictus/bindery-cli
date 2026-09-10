@@ -30,6 +30,7 @@ from .transforms import (
     fix_empty_body,
     fix_id_colons,
     fix_missing_title,
+    fix_ncx_src_fragments,
     outside_protected_map,
     strip_attrs_in_start_tags,
     strip_broken_tags,
@@ -922,6 +923,10 @@ def repair_epub(
                     text, n = fix_ncx_ids(text)
                     if n:
                         counts["fix_ncx_ids"] = n
+                if id_colons:
+                    text, n = fix_ncx_src_fragments(text)
+                    if n:
+                        counts["fix_ncx_src_fragments"] = n
                 if page_map:
                     text, n = fix_pagelist_class(text)
                     if n:

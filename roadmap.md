@@ -890,7 +890,7 @@ can be net-neutral and ships silently.*
       `data-value`, `xvalue`, and `xml:value` all survive untouched. Tests
       pin the prose-mention case, CDATA/comment protection, multi-line start
       tags, and the lookalike attribute names.)*
-- [ ] **Make `fix_id_colons` consistent and honest.** It rewrites fragments
+- [x] **Make `fix_id_colons` consistent and honest.** It rewrites fragments
       of external URLs (`http://example.com/page#sec:1` becomes `#sec_1`,
       breaking the link; `transforms.py:524`, `536`, docstring at 509 claims
       otherwise) and rewrites colon-bearing `data-id`/`xml:id`; it never
@@ -899,6 +899,18 @@ can be net-neutral and ships silently.*
       (`epub.py:976-979` vs the NCX branch at `873-901`); and it counts
       every matched `id` attribute even when no colon was replaced, so
       byte-identical reruns report phantom changes (`transforms.py:513-516`).
+      *(Done in v0.32.0: only the bare `id` attribute is in scope (a
+      `(?<![\w:.-])` lookbehind keeps `data-id` and `xml:id` untouched), a
+      fragment is translated only when the target is not an absolute URI or
+      protocol-relative reference (`_EXTERNAL_TARGET_RE`), the new
+      `fix_ncx_src_fragments` runs in the NCX branch under `--fix-id-colons`
+      so ToC `content src` fragments follow the rename, and the id replacer
+      counts only actual colons replaced, so byte-identical reruns report 0
+      and the untouched-file guard holds. Live evidence for this box showed
+      up in the v0.32.0 dry run itself: two staged books were gate-REJECTED
+      on `fix_id_colons` regressions manufactured the old way. Tests pin
+      the external-URL, data-id/xml:id, phantom-count, and NCX-follow
+      shapes.)*
 - [ ] **Run anchor stripping last and protect CDATA/comments everywhere.**
       `strip_broken_anchors`' id snapshot predates `unwrap_block_in_inline`
       and `unwrap_illegal_tags`, which can delete ids the snapshot thinks
