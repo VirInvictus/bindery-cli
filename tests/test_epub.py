@@ -1028,7 +1028,7 @@ class TestStripBrokenAnchors(unittest.TestCase):
             '<html xmlns="http://www.w3.org/1999/xhtml"><head></head>'
             "<body><p>café</p>"
             "<span><p>inner</p></span></body></html>"
-        ).encode("utf-8")
+        ).encode()
         with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("mimetype", "application/epub+zip")
             z.writestr("OEBPS/bad.xhtml", cp1252_doc)
