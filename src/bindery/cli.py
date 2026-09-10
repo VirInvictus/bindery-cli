@@ -42,6 +42,7 @@ from .validate import (
     gate,
     no_worse,
     run_epubcheck,
+    set_daemon_pool_size,
 )
 
 
@@ -431,6 +432,10 @@ def run_library(args) -> int:
     if workers < 1:
         print(f"error: --workers must be >= 1, got {workers}", file=sys.stderr)
         return 1
+    # The daemon pool grows with the worker count: N workers on one warm JVM
+    # serialized behind its pipe, so --workers N silently degraded to serial
+    # exactly when epubcheck was present (reported 2026-09-08).
+    set_daemon_pool_size(workers)
     if not args.sweep and workers > 1:
         print(
             "note: --workers applies to the --sweep candidate pass; ignored here.",

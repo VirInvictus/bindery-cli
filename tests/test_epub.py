@@ -517,6 +517,19 @@ class TestMimetypeRepair(unittest.TestCase):
             with zipfile.ZipFile(dst) as z:
                 self.assertEqual(z.comment, b"converted by a chatty tool")
 
+    def test_encrypted_ncx_is_not_a_crash(self):
+        # reported 2026-09-08: --only ncx probed outside the exception net,
+        # and z.read on a zip-encrypted entry raises RuntimeError, which
+        # crashed the whole selection pass
+        encrypted = zipfile.ZipInfo("OEBPS/toc.ncx")
+        encrypted.flag_bits |= 0x1  # the "encrypted" bit; no data follows
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "drm.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", b"application/epub+zip")
+                z.writestr(encrypted, b"\x00\x01")  # unreadable without a password
+            self.assertFalse(ncx_uid_mismatch(src))
+
     def test_correct_mimetype_untouched(self):
         report, first, data = self._repair("application/epub+zip")
         self.assertNotIn("mimetype_added", report.fixes)

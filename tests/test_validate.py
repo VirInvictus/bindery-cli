@@ -13,14 +13,45 @@ These tests mock `subprocess.run` itself (unlike test_cli.py, which mocks
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
-from bindery.validate import CheckResult, run_epubcheck
+from bindery.validate import (
+    CheckResult,
+    _DaemonPool,
+    _readline_timeout,
+    run_epubcheck,
+    set_daemon_pool_size,
+)
 
 _BOOK = Path("/tmp/anything.epub")
+
+
+def setUpModule() -> None:
+    # The pool compiles a JVM helper and launches a JVM; none of the parsing
+    # tests exercise it (they mock the subprocess oracle), and CI has no
+    # epubcheck at all. Daemon tests re-enable it locally.
+    set_daemon_pool_size(0)
+
+
+def _daemon_toolchain_available() -> bool:
+    import shutil
+
+    return shutil.which("epubcheck") is not None and shutil.which("javac") is not None
+
+
+def _fixture_epub(dirpath: Path, name: str) -> Path:
+    """A minimal (not-schema-valid) EPUB: enough for a real epubcheck run
+    with real counts."""
+    path = dirpath / name
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr("t.xhtml", "<html><body><p>x</p></body></html>")
+    return path
 
 
 def _completed(
@@ -144,6 +175,91 @@ class FailureModes(unittest.TestCase):
             side_effect=subprocess.TimeoutExpired(cmd="epubcheck", timeout=1),
         ):
             self.assertIsNone(run_epubcheck(_BOOK))
+
+
+class ReadlineTimeout(unittest.TestCase):
+    """The daemon roundtrip is bounded: a wedged JVM can no longer hang the
+    whole sweep forever (reported 2026-09-08; needs no JVM to test)."""
+
+    def test_ready_line_is_read(self) -> None:
+        r, w = os.pipe()
+        os.write(w, b"0,1,2\n")
+        os.close(w)
+        with os.fdopen(r, "rb") as fh:
+            self.assertEqual(_readline_timeout(fh, 5), "0,1,2")
+
+    def test_silent_pipe_times_out(self) -> None:
+        r, w = os.pipe()
+        os.close(w)
+        with os.fdopen(r, "rb") as fh:
+            with self.assertRaises(TimeoutError):
+                _readline_timeout(fh, 0)
+
+    def test_closed_pipe_raises_not_blocks(self) -> None:
+        r, w = os.pipe()
+        os.close(w)
+        with os.fdopen(r, "rb") as fh:
+            with self.assertRaises(RuntimeError):
+                _readline_timeout(fh, 5)
+
+
+class DaemonPoolLogic(unittest.TestCase):
+    """The pool's degrade-to-subprocess logic, hermetic (no JVM needed).
+
+    The oracle must measure every book the same way, so a daemon that cannot
+    serve counts must fall back to the subprocess oracle permanently, never
+    respawn a JVM per book, and never serve counts from a different
+    measurement method than the gate was calibrated against."""
+
+    def test_size_zero_disables_the_daemon_path(self) -> None:
+        with mock.patch("bindery.validate._EpubcheckDaemon") as daemon_cls:
+            pool = _DaemonPool(max_size=0)
+            self.assertIsNone(pool.check(_BOOK))
+            daemon_cls.assert_not_called()
+
+    def test_broken_toolchain_exhausts_after_one_attempt(self) -> None:
+        # reported 2026-09-08: a failed daemon start re-ran javac per book
+        with mock.patch("bindery.validate._EpubcheckDaemon") as daemon_cls:
+            inst = daemon_cls.return_value
+            inst.alive.return_value = False
+            inst._start.return_value = False
+            inst._proc = None
+            pool = _DaemonPool(max_size=2)
+            self.assertIsNone(pool.check(_BOOK))
+            self.assertIsNone(pool.check(_BOOK))
+            self.assertTrue(pool._exhausted)
+            self.assertEqual(inst._start.call_count, 1)  # one attempt, not one per book
+
+    def test_busy_pool_falls_back_to_subprocess(self) -> None:
+        pool = _DaemonPool(max_size=1)
+        pool._live = 1  # the one slot is busy checking another book
+        with mock.patch("bindery.validate._EpubcheckDaemon") as daemon_cls:
+            self.assertIsNone(pool.check(_BOOK))
+            daemon_cls.assert_not_called()
+
+    def test_dead_daemon_without_a_success_exhausts_the_pool(self) -> None:
+        with mock.patch("bindery.validate._EpubcheckDaemon") as daemon_cls:
+            inst = daemon_cls.return_value
+            inst.alive.return_value = False  # died on its first check
+            inst._start.return_value = True
+            inst._proc = None
+            inst.check.return_value = None
+            inst.succeeded = False
+            pool = _DaemonPool(max_size=1)
+            self.assertIsNone(pool.check(_BOOK))
+            self.assertTrue(pool._exhausted)
+            self.assertIsNone(pool.check(_BOOK))
+
+    def test_alive_daemon_returns_to_the_idle_pool(self) -> None:
+        with mock.patch("bindery.validate._EpubcheckDaemon") as daemon_cls:
+            inst = daemon_cls.return_value
+            inst.alive.return_value = True
+            inst._start.return_value = True
+            inst.check.return_value = CheckResult(0, 0, 0)
+            inst.succeeded = True
+            pool = _DaemonPool(max_size=1)
+            self.assertEqual(pool.check(_BOOK), CheckResult(0, 0, 0))
+            self.assertEqual(pool._idle.qsize(), 1)  # reusable, not discarded
 
 
 if __name__ == "__main__":

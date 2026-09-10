@@ -8,11 +8,17 @@ the repair without it (the CLI requires --no-validate to do so).
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
+import queue
 import re
+import select
 import shutil
 import subprocess
+import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -106,9 +112,21 @@ public class FastDaemon {
 
 
 class _EpubcheckDaemon:
+    """One warm epubcheck JVM driven over a stdin/stdout pipe.
+
+    Any failure (a dead process, a wedged roundtrip, a timeout) tears the
+    daemon down so a later call can start a fresh one; a failed start is
+    remembered and never retried, so a broken toolchain cannot cost one
+    javac compile per book. The caller falls back to the subprocess oracle
+    whenever `check` returns None.
+    """
+
     def __init__(self):
         self._proc = None
-        self._lock = __import__("threading").Lock()
+        self._lock = threading.Lock()
+        self._failed = False
+        self.succeeded = False
+        self.workdir = None
 
     def _start(self):
         epubcheck_bin = shutil.which("epubcheck")
@@ -127,7 +145,7 @@ class _EpubcheckDaemon:
             if not os.path.exists(jar_path):
                 return False
 
-            self.workdir = __import__("tempfile").mkdtemp(prefix="bindery-daemon-")
+            self.workdir = tempfile.mkdtemp(prefix="bindery-daemon-")
             java_file = os.path.join(self.workdir, "FastDaemon.java")
             with open(java_file, "w") as f:
                 f.write(_DAEMON_JAVA)
@@ -144,45 +162,183 @@ class _EpubcheckDaemon:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                text=True,
-                bufsize=1,
             )
-            __import__("atexit").register(self.stop)
+            atexit.register(self.stop)
             return True
         except Exception:
+            # Leave nothing behind: a failed compile or start must not leak
+            # the tempdir, and the failure is final for this instance.
+            self.stop()
             return False
 
-    def check(self, path: Path) -> CheckResult | None:
+    def alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    def check(self, path: Path, timeout: int = 300) -> CheckResult | None:
+        if self._failed:
+            return None
         with self._lock:
-            if self._proc is None:
-                if not self._start():
-                    return None
+            if self._proc is None and not self._start():
+                self._failed = True
+                return None
             try:
-                self._proc.stdin.write(str(path.resolve()) + "\n")
+                self._proc.stdin.write(str(path.resolve()).encode() + b"\n")
                 self._proc.stdin.flush()
-                res = self._proc.stdout.readline().strip()
-                if not res or res == "-1,-1,-1":
+                res = _readline_timeout(self._proc.stdout, timeout)
+                if not res:
+                    # EOF: the daemon is gone. Tear down so the failure is
+                    # clean, and mark it final: a daemon that died before it
+                    # ever answered will only die again, and restarting it
+                    # would cost one JVM spawn per book.
+                    self.stop()
+                    self._failed = True
+                    return None
+                if res == "-1,-1,-1":
+                    # The daemon's per-book error sentinel: counts unparseable
+                    # for this book only; the daemon itself is fine.
                     return None
                 f, e, w = map(int, res.split(","))
+                self.succeeded = True
                 return CheckResult(f, e, w)
             except Exception:
+                # Wedged or dead (timeout included): tear down and mark it
+                # final rather than failing (or respawning) for the life of
+                # the process. The caller falls back to the subprocess
+                # oracle, which is slower but never wrong.
+                self.stop()
+                self._failed = True
                 return None
 
     def stop(self):
-        if self._proc:
+        if self._proc is not None:
             if self._proc.stdin:
                 try:
                     self._proc.stdin.close()
                 except OSError:
                     pass
             self._proc.terminate()
-            self._proc.wait(timeout=2)
+            try:
+                self._proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
             self._proc = None
-        if hasattr(self, "workdir") and os.path.exists(self.workdir):
+        if self.workdir is not None:
             shutil.rmtree(self.workdir, ignore_errors=True)
+            self.workdir = None
 
 
-_daemon = _EpubcheckDaemon()
+def _readline_timeout(fh, timeout: int) -> str:
+    """One line from a binary pipe, or TimeoutError after `timeout` seconds.
+
+    A blocking readline on the daemon pipe is what made a JVM hang hang the
+    whole sweep forever; select bounds every wait.
+    """
+    deadline = time.monotonic() + timeout
+    fd = fh.fileno()
+    buf = b""
+    while b"\n" not in buf:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"daemon roundtrip exceeded {timeout}s")
+        ready, _, _ = select.select([fd], [], [], remaining)
+        if not ready:
+            raise TimeoutError(f"daemon roundtrip exceeded {timeout}s")
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            raise RuntimeError("daemon closed its stdout")
+        buf += chunk
+    return buf.decode(errors="replace").strip()
+
+
+class _DaemonPool:
+    """A bounded pool of warm daemons.
+
+    Serial runs use one daemon (byte-for-byte the old behavior); with
+    `--workers N`, checks run on up to N warm JVMs, so parallelism survives
+    the oracle instead of serializing behind a single pipe. A worker that
+    finds the pool busy falls back to the subprocess oracle, which is
+    slower but never wrong.
+    """
+
+    def __init__(self, max_size: int = 1):
+        self._max = max(0, max_size)
+        self._idle: queue.Queue[_EpubcheckDaemon] = queue.Queue()
+        self._live = 0
+        self._exhausted = False
+        self._lock = threading.Lock()
+        self._start_lock = threading.Lock()
+
+    def set_size(self, max_size: int) -> None:
+        # 0 disables the daemon oracle entirely (every check falls back to
+        # the subprocess path); also re-arms a pool that had exhausted
+        # itself against a missing toolchain.
+        self._max = max(0, max_size)
+        self._exhausted = False
+
+    def check(self, path: Path, timeout: int = 300) -> CheckResult | None:
+        if self._exhausted:
+            return None
+        daemon = self._checkout()
+        if daemon is None:
+            return None
+        try:
+            return daemon.check(path, timeout)
+        finally:
+            if daemon.alive():
+                self._idle.put(daemon)
+            else:
+                with self._lock:
+                    self._live -= 1
+                    # A daemon that died without ever answering means the
+                    # toolchain itself is broken (javac/java skew, missing
+                    # jar): stop trying, so the sweep degrades to pure
+                    # subprocess checks instead of respawning a JVM per book.
+                    if not daemon.succeeded:
+                        self._exhausted = True
+
+    def _checkout(self) -> _EpubcheckDaemon | None:
+        if self._max == 0:
+            return None
+        try:
+            return self._idle.get_nowait()
+        except queue.Empty:
+            pass
+        with self._lock:
+            if self._live < self._max:
+                self._live += 1
+            else:
+                return None  # pool busy: caller falls back to subprocesses
+        # Only one daemon may be starting at a time: N workers hitting a cold
+        # pool must not stampede into N concurrent javac compiles. Whoever
+        # finds a start already in flight falls back to subprocesses for this
+        # one book.
+        if not self._start_lock.acquire(blocking=False):
+            with self._lock:
+                self._live -= 1
+            return None
+        try:
+            daemon = _EpubcheckDaemon()
+            if daemon._proc is None and not daemon._start():
+                with self._lock:
+                    self._live -= 1
+                    self._exhausted = True  # no toolchain: stop trying per book
+                return None
+            return daemon
+        finally:
+            self._start_lock.release()
+
+
+_daemon_pool = _DaemonPool()
+
+
+def set_daemon_pool_size(n: int) -> None:
+    """Bound the daemon pool to the sweep's worker count (default 1: exactly
+    the historical single-daemon behavior)."""
+    _daemon_pool.set_size(n)
+
+
+# Backwards-compatible alias for the historical single-daemon entry point.
+_daemon = _daemon_pool
 
 
 def run_epubcheck(path: Path, timeout: int = 300) -> CheckResult | None:
@@ -190,10 +346,12 @@ def run_epubcheck(path: Path, timeout: int = 300) -> CheckResult | None:
 
     Counts come from `--json -` (locale-independent) first; the English summary-line
     regex stays as the fallback for epubchecks too old for `--json`, kept meaningful
-    by the JVM locale pin in the env. The persistent daemon answers first when it is
-    available; None anywhere means the caller falls back to (or reports) failure.
+    by the JVM locale pin in the env. A warm daemon answers first when one is
+    available (the pool grows to the sweep's worker count, bounded by
+    set_daemon_pool_size); the roundtrip itself is bounded by `timeout`, and None
+    anywhere means the caller falls back to (or reports) failure.
     """
-    res = _daemon.check(path)
+    res = _daemon_pool.check(path, timeout)
     if res is not None:
         return res
     try:

@@ -1049,7 +1049,7 @@ can be net-neutral and ships silently.*
       library root with a usage error (exit 1). The phase1 apply test's
       fixture, which had been violating phase1's own keep-backups-outside
       contract, was corrected in the same commit.)*
-- [ ] **Make `--workers` parallelism real and bound the daemon.** The
+- [x] **Make `--workers` parallelism real and bound the daemon.** The
       epubcheck daemon holds its lock across the whole blocking
       round-trip, so every worker serializes behind it and `--workers N`
       degrades to serial exactly when epubcheck is present
@@ -1062,6 +1062,29 @@ can be net-neutral and ships silently.*
       book (`validate.py:130-153`); and `--only ncx` crashes with a raw
       RuntimeError on encrypted archives because `_select` probes outside
       the exception net (`epub.py:688`, `cli.py:184`).
+      *(Done in v0.33.0, the daemon half: the daemon is now a bounded pool
+      (`set_daemon_pool_size(workers)`, default 1 = the historical single
+      daemon) so N workers check on N warm JVMs instead of serializing
+      behind one pipe, a busy pool falls back to the subprocess oracle
+      rather than blocking, and the roundtrip is bounded by `timeout` via
+      select. A daemon that dies or wedges is torn down and marked final,
+      a failed start is never retried and leaves no workdir, and a pool
+      whose first daemon dies without ever answering exhausts itself once
+      so the sweep degrades to pure subprocess checks instead of
+      respawning a JVM per book. The leaky `__import__` calls became real
+      imports. Measured on the staged fixtures: 8 books, 4 workers, two
+      ~10s waves = 20s total (was ~4.4s/book serialized). The recorded
+      evidence for Brandon's daemon-classpath decision grew sharper: this
+      machine's javac is 27-ea while java is 25, so the compiled class can
+      never load and the daemon has silently never served a single count
+      here; and when the daemon is forced to run (single-file source
+      launcher), its CheckingReport counts diverge from the CLI JSON
+      oracle on the same book (243 vs 4 errors), so enabling it would
+      change gate outcomes. Both facts belong in the decision. The
+      `--only ncx` encrypted-archive crash is also fixed here:
+      `ncx_uid_mismatch` now catches the RuntimeError that `z.read`
+      raises on zip-encrypted entries, so a DRM'd book is not a candidate
+      rather than a crash.)*
 - [x] **Smaller apply papercuts:** `--limit -1` and a missing
       `--audit` file raise tracebacks instead of usage errors
       (`cli.py:434`, `373`); the fresh-format branch of `install_format`
