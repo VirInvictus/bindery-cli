@@ -1222,7 +1222,7 @@ can be net-neutral and ships silently.*
       FastSweepExtract.java deleted; fast_sweep.py + FastSweep.java stay.
       README's companion-scripts section notes the removal and where the
       capabilities live now.)*
-- [ ] **Decide what test_facility/ is.** It carries 10 tracked commercial
+- [x] **Decide what test_facility/ is.** It carries 10 tracked commercial
       EPUBs (muse-of-nightmares, last-man-out, etc.; only leaves-of-grass is
       public domain), a second never-run "suite" of bare functions that
       `unittest discover` reports as 0 tests, and it mutates the tracked
@@ -1231,10 +1231,22 @@ can be net-neutral and ships silently.*
       `test_facility/` predates it. At minimum stop tracking the EPUBs and
       delete or properly convert the dead suite; stripping them from
       history is the thorough option (repo is public).
-- [ ] **Mention validate.py's Java epubcheck daemon in the docs.** It is
+      *(Done in v0.33.0, executing the recorded recommended default:
+      `git rm --cached` on all 14 tracked EPUBs (files stay on disk),
+      gitignored forward-only, and the dead never-run suite files deleted.
+      History stripping (the force-push option) remains Brandon's separate
+      call and is recorded as an open gated item.)*
+- [x] **Mention validate.py's Java epubcheck daemon in the docs.** It is
       the first oracle tried at runtime, it compiles `_DAEMON_JAVA`
       (`validate.py:73-105`) into a tempdir, and nothing in README/spec
       admits it exists; it is also the scariest untested code in the repo.
+      *(Done in v0.33.0: the README gate section and spec's epubcheck-gate
+      section both describe the daemon (bounded pool sized by --workers,
+      per-roundtrip timeout, fail-safe fallback to the subprocess oracle),
+      and README's --sweep bullet stopped describing the pre-43d9e26
+      broken classpath as current behavior. Pool logic and bounds are now
+      tested hermetically; the "scariest untested code" verdict was true
+      and is now much less true.)*
 
 ### Documentation (drift is real but narrow)
 
@@ -1246,6 +1258,34 @@ can be net-neutral and ships silently.*
       NCX sentence at spec.md:52-53 is garbled (a dangling "to the OPF
       unique identifier" tail). A contributor reading spec.md first would
       conclude two shipped flags violate the charter.
+      **GATED on Brandon: spec.md is the contract file. Draft proposal,
+      ready to apply on a go (do not apply without one):**
+      (1) Non-goals bullet 2 ("Repairing genuinely mangled structure
+      (unclosed non-void elements, corrupted tag names, embedded VML/SVG)")
+      currently contradicts two shipped flags. Replace with: "Repairing
+      genuinely mangled structure remains opt-in and bounded: `--reserialize`
+      (v0.3.0) re-parses malformed documents carrying an `<html>` root via
+      html5lib and re-emits XHTML; it refuses non-HTML XML sidecars, and
+      wholesale structural rewrites without a root to anchor on stay out of
+      scope. Corrupted tag names stay covered by `--strip-bad-attrs`
+      (v0.4.0) and `--unwrap-illegal-tags`."
+      (2) Non-goals bullet 1 ("Fixing RSC-005 schema/content-model
+      violations in bulk") gains a clause: "in bulk" is the operative
+      words; the scoped, opt-in RSC-005 repairs
+      (`--strip-epub3-attrs`, `--downgrade-epub3-tags`, version-gated)
+      ship and stay.
+      (3) Add the missing spec sections: `--fix-ids`'s OPF half (manifest
+      item ids, spine idref/toc, fallback, media-overlay, EPUB 2 cover
+      meta, single- and double-quoted) has no section; add one under the
+      opt-in structural repairs.
+      (4) Fix the garbled NCX sentence at spec.md:52-53 (drop the dangling
+      "to the OPF unique identifier" tail).
+      (5) Adjust "the OPF is left untouched" to "left untouched by the
+      default pass; `--fix-ids`, `--strip-epub3-attrs`, `--fix-page-map`,
+      `--prune-missing-resources`, and `--encode-url-spaces` edit it when
+      requested."
+      Everything in this draft matches shipped, tested behavior as of
+      v0.33.0; applying it is a pure docs change waiting on the go.
 - [x] **Fix the exit-code contract.** README and spec document usage
       errors as exit 1, but argparse-level misuse exits 2 (the same code
       as "book in trouble"); either a custom parser exit or updated docs.
@@ -1257,14 +1297,23 @@ can be net-neutral and ships silently.*
       diverge from every other Python CLI's muscle memory for no script-
       visible gain, since the collision (2 = argparse misuse vs 2 =
       trouble) never occurs for a run that got past argument parsing.)*
-- [ ] **README completeness:** document `--min-chars`, `--thin-chars`,
+- [x] **README completeness:** document `--min-chars`, `--thin-chars`,
       `--max-doc-chars`, and `--limit` in the flag reference; fix the
       `--only fatals` bullet to "needs `--audit` or `--sweep`" (it
       currently contradicts the `--sweep` bullet one line over).
-- [ ] **CLAUDE.md's exception taxonomy** lists twelve structural repairs
+      *(Done in v0.33.0: all four flags documented in the library flag
+      reference and the `--only fatals` bullet corrected. The `--sweep`
+      bullet's stale daemon description (written before the 43d9e26
+      classpath fix and today's pool bounding) was refreshed in the same
+      pass, which also completes the :1027 daemon-documentation box.)*
+- [x] **CLAUDE.md's exception taxonomy** lists twelve structural repairs
       and three lossy strips but omits the four safe opt-ins
       (`--fix-ids`, `--add-img-alt`, `--strip-bad-attrs`,
       `--escape-unknown-entities`), which reads as a complete inventory.
+      *(Done in v0.33.0: CLAUDE.md's hard-constraints section now names
+      the safe opt-ins as their own group, including the URL-space
+      encoder, and notes the twelve/three phrasing is not the full
+      inventory.)*
 
 ### Completeness verdict from the sweep
 

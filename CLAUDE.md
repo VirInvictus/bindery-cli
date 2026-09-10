@@ -52,7 +52,11 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
     decision by `run phase1` on both the read-only and apply paths.
   Do not let any NEW fix touch content without its own flag; if a candidate repair cannot
   be made deterministically safe, it does not belong here — report it for manual repair
-  instead.
+  instead. A fourth, smaller group sits beside the structural repairs and lossy strips:
+  the safe opt-ins (`--fix-ids`, `--add-img-alt`, `--strip-bad-attrs`,
+  `--escape-unknown-entities`) plus `--encode-url-spaces`, which repair without
+  altering visible markup; the "twelve structural repairs and three lossy strips"
+  phrasing elsewhere in these docs was never the complete inventory.
 - **The gate is the safety contract.** Never apply a repair epubcheck has not accepted.
   Respect the two-mode logic in `validate.gate` (fatal-fixing tolerates error unmasking;
   error-cleanup does not). The lossy strips (`--strip-pagination`, `--strip-broken-tags`,
