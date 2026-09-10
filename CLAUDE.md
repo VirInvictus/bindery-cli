@@ -38,7 +38,11 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   * **Lossy strips** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`;
     pagination.py, watermark.py): remove only what a converter injected (page numbers,
     running headers, leaked tags, watermarks), fenced behind character conservation, tag
-    balance, and the epubcheck no-regression bar.
+    balance, and the epubcheck no-regression bar. The watermark anchored pass's
+    whole-match fallback only fires when the match holds nothing but the stamp; a
+    larger match (an unclosed stamp anchor that swallowed prose) is refused, counted
+    in `RepairReport.watermark_refusals`, and surfaced as a `manual_watermark_repair`
+    decision by `run phase1` on both the read-only and apply paths.
   Do not let any NEW fix touch content without its own flag; if a candidate repair cannot
   be made deterministically safe, it does not belong here — report it for manual repair
   instead.

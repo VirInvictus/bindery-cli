@@ -116,6 +116,10 @@ def process_book(
     summary = ", ".join(f"{k}:{v}" for k, v in report.fixes.items())
     if report.ncx_uid_synced:
         summary = (summary + ", " if summary else "") + "ncx_uid_synced"
+    if report.watermark_refusals:
+        summary = (summary + ", " if summary else "") + (
+            f"watermark_refusals:{report.watermark_refusals}"
+        )
 
     if not validate:
         return Outcome(epub, "unvalidated", None, None, summary)
@@ -779,6 +783,7 @@ def _phase1_decisions(books: list[dict], apply: bool) -> list[dict]:
     verbs never prompt; --non-interactive only declares what is already
     true off a TTY."""
     decisions: list[dict] = []
+    manual_wm: list[str] = []
     if not apply:
         pending: list[str] = []
         watermarked: list[str] = []
@@ -789,6 +794,8 @@ def _phase1_decisions(books: list[dict], apply: bool) -> list[dict]:
             summary = r.get("summary") or ""
             if "stripped_watermarks" in summary or "dropped_marker" in summary:
                 watermarked.append(b["path"])
+            if "watermark_refusals" in summary:
+                manual_wm.append(b["path"])
             if r["status"] in ("accept", "partial"):
                 pending.append(b["path"])
         if pending or watermarked:
@@ -804,6 +811,24 @@ def _phase1_decisions(books: list[dict], apply: bool) -> list[dict]:
                     "books": sorted(set(pending + watermarked)),
                 }
             )
+    else:
+        for b in books:
+            r = b["repair"]
+            if r is not None and "watermark_refusals" in (r.get("summary") or ""):
+                manual_wm.append(b["path"])
+    if manual_wm:
+        decisions.append(
+            {
+                "decision": "manual_watermark_repair",
+                "detail": (
+                    f"{len(manual_wm)} book(s) carry a watermark the strip "
+                    "refused to remove (the anchored stamp match was too "
+                    "large to be safe, likely an unclosed stamp anchor "
+                    "swallowing prose); remove it by hand."
+                ),
+                "books": sorted(set(manual_wm)),
+            }
+        )
     return decisions
 
 

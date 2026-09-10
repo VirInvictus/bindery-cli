@@ -619,7 +619,17 @@ real content vanish with count 1; the output is well-formed with equal or
 fewer fatals, so the `no_worse` bar accepts it. `watermark.py:207-213`.
 **Fix:** require the anchored match to be tag-free (or stamp-length visible
 text) before falling back to whole-match deletion; anything larger goes to
-`decisions_needed` for manual repair. *(Unfixed as of the 2026-09-08 sweep.)*
+`decisions_needed` for manual repair. *(Fixed in v0.32.0: the fallback now
+fires only when the match holds nothing but the stamp, a tag-free body within
+stamp length or a body whose visible text is exactly the watermark, and a
+second `<a>` opening inside the match refuses it outright (the close belongs
+to that other anchor). Larger matches are left in place and counted in
+`RepairReport.watermark_refusals`, surfaced in every sweep summary and as a
+`manual_watermark_repair` decision by `run phase1` on both the read-only and
+apply paths. The anchored pass now decides all matches left to right and
+applies deletions right to left, so a refusal can no longer be re-counted on
+rescan. Regression tests pin the reported two-paragraph loss, the tag-free
+long swallow, and the safe inline shapes.)*
 
 ### roman-numeral detector reads ordinary English words as page numbers (2026-09-08 sweep)
 **Bug in `--strip-pagination`:** `_ROMAN_RE = [ivxlcdm]{2,7}\Z` (IGNORECASE)

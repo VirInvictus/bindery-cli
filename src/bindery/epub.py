@@ -191,6 +191,7 @@ class RepairReport:
     fixes: dict[str, int] = field(default_factory=dict)
     files_changed: int = 0
     ncx_uid_synced: bool = False
+    watermark_refusals: int = 0
 
     def add(self, counts: dict[str, int]) -> None:
         for k, v in counts.items():
@@ -201,7 +202,10 @@ class RepairReport:
         return sum(self.fixes.values()) + (1 if self.ncx_uid_synced else 0)
 
     def __bool__(self) -> bool:
-        return self.total > 0
+        # A refused watermark is not a fix, but it must not vanish: a report
+        # carrying only refusals is truthy so the sweep surfaces the manual-
+        # repair question instead of reporting nochange.
+        return self.total > 0 or self.watermark_refusals > 0
 
 
 _SPINE_PAGE_MAP_RE = re.compile(r"(<spine\b[^>]*?)\s+page-map=(?:\"[^\"]*\"|'[^']*')")
@@ -1000,9 +1004,11 @@ def repair_epub(
                     if n:
                         counts["unwrap_illegal_tags"] = n
                 if strip_watermarks:
-                    text, n = strip_watermark_html(text)
+                    text, n, refused = strip_watermark_html(text)
                     if n:
                         counts["stripped_watermarks"] = n
+                    if refused:
+                        report.watermark_refusals += refused
                 if strip_brokentags:
                     text, n = strip_broken_tags(text)
                     if n:

@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from bindery import cli
-from bindery.cli import _load_audit, build_parser, main, process_book
+from bindery.cli import _load_audit, _phase1_decisions, build_parser, main, process_book
 from bindery.epub import RepairReport
 from bindery.validate import CheckResult
 
@@ -929,6 +929,39 @@ class TestRunPhase1(unittest.TestCase):
             ["run", "phase3", "--ids", "1", "--non-interactive"]
         )
         self.assertTrue(p3.non_interactive)
+
+
+class TestWatermarkRefusalDecision(unittest.TestCase):
+    """A watermark the strip refused to remove (an unclosed stamp anchor whose
+    match swallowed prose) is a manual-repair question: it must surface as a
+    decision on the read-only path AND under --apply-lossy, never vanish."""
+
+    def _refusal_book(self):
+        return {
+            "path": "/tmp/x/stranded.epub",
+            "audit": None,
+            "repair": {
+                "status": "equal",
+                "summary": "watermark_refusals:1 (no measurable gain)",
+            },
+        }
+
+    def test_refusal_surfaces_readonly(self):
+        decisions = _phase1_decisions([self._refusal_book()], apply=False)
+        (d,) = [d for d in decisions if d["decision"] == "manual_watermark_repair"]
+        self.assertIn("stranded.epub", " ".join(d["books"]))
+        self.assertIn("by hand", d["detail"])
+
+    def test_refusal_surfaces_under_apply_lossy(self):
+        book = self._refusal_book()
+        book["repair"] = {
+            "status": "accept",
+            "summary": "stripped_watermarks:1, watermark_refusals:1",
+        }
+        decisions = _phase1_decisions([book], apply=True)
+        (d,) = decisions  # apply recorded: only the manual-repair question remains
+        self.assertEqual(d["decision"], "manual_watermark_repair")
+        self.assertIn("stranded.epub", " ".join(d["books"]))
 
 
 class TestRunPhase3(unittest.TestCase):

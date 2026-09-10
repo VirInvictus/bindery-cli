@@ -57,7 +57,7 @@ class Watermark:
     def __post_init__(self) -> None:
         anchor = (
             re.compile(
-                rf"<a\b[^>]*?{re.escape(self.href_sig)}[^>]*?>.*?</a>",
+                rf"<a\b[^>]*?{re.escape(self.href_sig)}[^>]*?>(.*?)</a>",
                 re.IGNORECASE | re.DOTALL,
             )
             if self.href_sig
@@ -133,6 +133,15 @@ MEDIA = re.compile(
     r"<(?:img|image|svg|video|audio|picture|iframe|table|object)\b", re.IGNORECASE
 )
 
+# An anchored stamp's visible text is short: the longest known stamp normalizes
+# to under 100 characters. A match whose visible text runs longer than this has
+# swallowed real prose and the whole-match fallback must refuse it.
+_MAX_STAMP_TEXT = 120
+
+# A second anchor opening inside a matched stamp anchor means the </a> the regex
+# closed on belongs to that other element: this stamp <a> is unclosed.
+_OTHER_ANCHOR = re.compile(r"<a\b", re.IGNORECASE)
+
 
 def _norm(element: str) -> str:
     """Visible text of an element fragment: tags stripped, nbsp and whitespace runs
@@ -199,18 +208,50 @@ def _pure_wrapper_span(
     return None
 
 
-def _strip_anchored(html: str, wm: Watermark) -> tuple[str, int]:
+def _anchored_fallback_safe(m: re.Match[str], wm: Watermark) -> bool:
+    """Whether the whole anchored match may be deleted when no pure wrapper
+    exists. The stamp regex is DOTALL with no tag budget, so an unclosed stamp
+    <a> (exactly the kind of broken book this tool repairs) matches through
+    real prose to the next unrelated </a>; deleting that match takes the prose
+    with it, and the no-regression bar cannot see lost text. The fallback may
+    only fire when the match demonstrably holds nothing but the stamp: a
+    tag-free body no longer than a stamp, or a body whose visible text is
+    exactly the watermark. Anything larger is left for manual repair."""
+    body = m.group(1)
+    if _OTHER_ANCHOR.search(body):
+        return False
+    if "<" not in body:
+        return len(_norm(body)) <= _MAX_STAMP_TEXT
+    return bool(wm.pure.fullmatch(_norm(body)))
+
+
+def _strip_anchored(html: str, wm: Watermark) -> tuple[str, int, int]:
     """Remove anchored (linked) occurrences of `wm`. Deletes the outermost pure
-    wrapper around each watermark <a>, or the <a> itself when it sits inline."""
+    wrapper around each watermark <a>, or the <a> itself when it sits inline
+    and demonstrably holds nothing but the stamp. A match too large to be safe
+    is left untouched and counted as a refusal for manual repair."""
     if wm.anchor is None:
-        return html, 0
-    count = 0
-    while (m := wm.anchor.search(html)) is not None:
+        return html, 0, 0
+    # Matches are decided left to right; deletions are applied right to left
+    # afterwards so spans stay valid. A pure wrapper may swallow several
+    # matches (its stamp may repeat), so the scan resumes past the wrapper.
+    actions: list[tuple[int, int]] = []
+    refusals = 0
+    pos = 0
+    while (m := wm.anchor.search(html, pos)) is not None:
         span = _pure_wrapper_span(html, m.start(), m.end(), wm)
-        s, e = span if span else (m.start(), m.end())
-        html = html[:s] + html[e:]
-        count += 1
-    return html, count
+        if span is not None:
+            actions.append(span)
+            pos = span[1]
+        elif _anchored_fallback_safe(m, wm):
+            actions.append((m.start(), m.end()))
+            pos = m.end()
+        else:
+            refusals += 1
+            pos = m.end()
+    for start, end in reversed(actions):
+        html = html[:start] + html[end:]
+    return html, len(actions), refusals
 
 
 def _strip_text(html: str, wm: Watermark) -> tuple[str, int]:
@@ -231,14 +272,20 @@ def _strip_text(html: str, wm: Watermark) -> tuple[str, int]:
     return html, count
 
 
-def strip_watermark_html(html: str) -> tuple[str, int]:
+def strip_watermark_html(html: str) -> tuple[str, int, int]:
     """Remove every known watermark (anchored and anchorless) from one document.
 
-    Returns (cleaned_html, number_of_watermarks_removed).
+    Returns (cleaned_html, number_of_watermarks_removed, number_of_refusals).
+    A refusal is an anchored stamp whose match was too large to delete safely
+    (an unclosed stamp <a> that swallowed real prose out to the next unrelated
+    </a>); it is left in place for manual repair and reported, never silently
+    dropped.
     """
     total = 0
+    refused = 0
     for wm in WATERMARKS:
-        html, n_anchor = _strip_anchored(html, wm)
+        html, n_anchor, n_refused = _strip_anchored(html, wm)
         html, n_text = _strip_text(html, wm)
         total += n_anchor + n_text
-    return html, total
+        refused += n_refused
+    return html, total, refused

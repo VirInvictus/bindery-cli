@@ -5,8 +5,12 @@ Fixtures mirror real nesting styles across producers:
   B. <div> holding the link plus an empty sibling <div>   (OceanofPDF)
   C. <a> inside <h1> inside a content <div> that also holds real text (OceanofPDF)
   D. <b> stamp whose text splits across the <b> and the <a>  (ABC Amber LIT Converter)
+  G/H. unclosed stamp anchors that swallow prose out to an unrelated </a>
+       (reported 2026-09-08; the fallback must refuse them, so they are
+       intentionally the only fixtures that are not valid XML)
 Each fixture is valid XML so the cleaned output can be re-parsed to prove it stays
-well-formed (the bug that motivated balanced matching produced unparsable XML).
+well-formed (the bug that motivated balanced matching produced unparsable XML),
+except where a fixture's own point is a broken book the pass must refuse to touch.
 """
 
 import unittest
@@ -95,6 +99,35 @@ URL_IN_PROSE = (
     "http://www.processtext.com/abclit.html, years ago.</p>"
 )
 
+# G: an unclosed stamp anchor, the reported failure shape. The stamp <a> never
+# closes, so the DOTALL regex matches through two paragraphs of real prose to
+# the next unrelated </a>; the old whole-match fallback deleted all of it with
+# count 1. The fallback must refuse: nothing is removed, the refusal is
+# reported, and every paragraph survives.
+UNCLOSED_ANCHOR = (
+    "<p>Real chapter text.</p>"
+    '<a href="https://oceanofpdf.com">OceanofPDF.com</p>'
+    "<p>First paragraph of real content.</p>"
+    "<p>Second paragraph of real content.</p>"
+    '<p>See <a href="https://example.com/other">this link</a> for more.</p>'
+)
+
+# H: an unclosed stamp anchor whose swallow happens to be tag-free prose, longer
+# than any stamp. Length alone must refuse it.
+UNCLOSED_ANCHOR_TAG_FREE = (
+    '<a href="https://oceanofpdf.com">OceanofPDF.com and a long stretch of '
+    "plain unmarked text that goes on well past any plausible stamp length, "
+    "still inside the unclosed anchor, until an unrelated link closes: "
+    '<a href="https://example.com/x">x</a>'
+)
+
+# I: a stamp anchor holding the stamp plus a void tag, inline in prose. Its
+# visible text is exactly the watermark, so the whole match is safe to delete
+# even though the body carries markup.
+STAMP_WITH_MARKUP = (
+    '<p>Read more at <a href="https://oceanofpdf.com">OceanofPDF.com<br></a> today.</p>'
+)
+
 
 def parse(html: str) -> ET.Element:
     """Re-parse to assert well-formedness; returns the root element."""
@@ -104,11 +137,11 @@ def parse(html: str) -> ET.Element:
 class TestRemoval(unittest.TestCase):
     def _clean(self, body: str):
         html = DOC.format(body=body)
-        cleaned, n = strip_watermark_html(html)
-        return cleaned, n
+        cleaned, n, refused = strip_watermark_html(html)
+        return cleaned, n, refused
 
     def test_flat_wrapper_removed_whole(self):
-        cleaned, n = self._clean(FLAT)
+        cleaned, n, refused = self._clean(FLAT)
         self.assertEqual(n, 1)
         self.assertNotIn("oceanofpdf", cleaned.lower())
         self.assertIn("Real text.", cleaned)
@@ -116,7 +149,7 @@ class TestRemoval(unittest.TestCase):
         parse(cleaned)
 
     def test_empty_sibling_wrapper_removed_whole(self):
-        cleaned, n = self._clean(EMPTY_SIBLING)
+        cleaned, n, refused = self._clean(EMPTY_SIBLING)
         self.assertEqual(n, 1)
         self.assertNotIn("oceanofpdf", cleaned.lower())
         self.assertIn("Real text.", cleaned)
@@ -125,7 +158,7 @@ class TestRemoval(unittest.TestCase):
         parse(cleaned)
 
     def test_heading_wrapper_preserves_real_dedication(self):
-        cleaned, n = self._clean(HEADING)
+        cleaned, n, refused = self._clean(HEADING)
         self.assertEqual(n, 1)
         self.assertNotIn("oceanofpdf", cleaned.lower())
         # the real dedication text and its outer frame must survive
@@ -135,7 +168,7 @@ class TestRemoval(unittest.TestCase):
         parse(cleaned)
 
     def test_inline_link_only_removes_anchor(self):
-        cleaned, n = self._clean(INLINE)
+        cleaned, n, refused = self._clean(INLINE)
         self.assertEqual(n, 1)
         self.assertNotIn("oceanofpdf", cleaned.lower())
         # surrounding prose and its paragraph must remain
@@ -145,27 +178,29 @@ class TestRemoval(unittest.TestCase):
         parse(cleaned)
 
     def test_idempotent(self):
-        cleaned, _ = self._clean(EMPTY_SIBLING)
-        again, n = strip_watermark_html(cleaned)
+        cleaned, _, _ = self._clean(EMPTY_SIBLING)
+        again, n, refused = strip_watermark_html(cleaned)
         self.assertEqual(n, 0)
+        self.assertEqual(refused, 0)
         self.assertEqual(again, cleaned)
 
     def test_no_watermark_is_noop(self):
         html = DOC.format(body="<p>Just a normal page.</p>")
-        cleaned, n = strip_watermark_html(html)
+        cleaned, n, refused = strip_watermark_html(html)
         self.assertEqual(n, 0)
+        self.assertEqual(refused, 0)
         self.assertEqual(cleaned, html)
 
     def test_multiple_watermarks_in_one_doc(self):
         body = FLAT + "<p>Middle.</p>" + EMPTY_SIBLING
-        cleaned, n = self._clean(body)
+        cleaned, n, refused = self._clean(body)
         self.assertEqual(n, 2)
         self.assertNotIn("oceanofpdf", cleaned.lower())
         self.assertIn("Middle.", cleaned)
         parse(cleaned)
 
     def test_abc_amber_bold_wrapper_removed_whole(self):
-        cleaned, n = self._clean(ABC_AMBER)
+        cleaned, n, refused = self._clean(ABC_AMBER)
         self.assertEqual(n, 1)
         self.assertNotIn("processtext", cleaned.lower())
         self.assertNotIn("abc amber", cleaned.lower())
@@ -175,7 +210,7 @@ class TestRemoval(unittest.TestCase):
         parse(cleaned)
 
     def test_abc_amber_preserves_real_bold(self):
-        cleaned, n = self._clean(BOLD_PROSE)
+        cleaned, n, refused = self._clean(BOLD_PROSE)
         self.assertEqual(n, 1)
         self.assertNotIn("processtext", cleaned.lower())
         self.assertNotIn("Generated by", cleaned)
@@ -184,7 +219,7 @@ class TestRemoval(unittest.TestCase):
         parse(cleaned)
 
     def test_mixed_producers_in_one_doc(self):
-        cleaned, n = self._clean(MIXED)
+        cleaned, n, refused = self._clean(MIXED)
         self.assertEqual(n, 2)
         self.assertNotIn("oceanofpdf", cleaned.lower())
         self.assertNotIn("processtext", cleaned.lower())
@@ -192,7 +227,7 @@ class TestRemoval(unittest.TestCase):
         parse(cleaned)
 
     def test_anchorless_text_paragraph_removed(self):
-        cleaned, n = self._clean(ABC_AMBER_TEXT)
+        cleaned, n, refused = self._clean(ABC_AMBER_TEXT)
         self.assertEqual(n, 1)  # one wrapper, even though the stamp repeats inside
         self.assertNotIn("processtext", cleaned.lower())
         self.assertNotIn("ABC Amber", cleaned)
@@ -201,7 +236,7 @@ class TestRemoval(unittest.TestCase):
         parse(cleaned)
 
     def test_anchorless_footer_div_removed_whole(self):
-        cleaned, n = self._clean(ABC_AMBER_FOOTER)
+        cleaned, n, refused = self._clean(ABC_AMBER_FOOTER)
         self.assertEqual(n, 1)
         self.assertNotIn("processtext", cleaned.lower())
         self.assertNotIn("FOOTER", cleaned)  # the whole footer div is gone
@@ -209,11 +244,48 @@ class TestRemoval(unittest.TestCase):
         parse(cleaned)
 
     def test_url_in_real_prose_is_preserved(self):
-        cleaned, n = self._clean(URL_IN_PROSE)
+        cleaned, n, refused = self._clean(URL_IN_PROSE)
         self.assertEqual(n, 0)  # wrapper text is not ONLY the stamp
         self.assertIn("processtext", cleaned.lower())  # real sentence kept intact
         self.assertIn("years ago.", cleaned)
         parse(cleaned)
+
+    def test_unclosed_anchor_refused_not_deleted(self):
+        cleaned, n, refused = self._clean(UNCLOSED_ANCHOR)
+        # the whole-match fallback used to swallow both paragraphs with count 1
+        self.assertEqual(n, 0)
+        self.assertEqual(refused, 1)
+        self.assertIn("Real chapter text.", cleaned)
+        self.assertIn("First paragraph of real content.", cleaned)
+        self.assertIn("Second paragraph of real content.", cleaned)
+        self.assertIn("this link", cleaned)  # the unrelated </a> is untouched
+        # no parse(cleaned) here: the refusal leaves the book exactly as broken
+        # as it arrived (the unclosed anchor is the pre-existing defect)
+
+    def test_unclosed_anchor_with_tag_free_prose_refused(self):
+        cleaned, n, refused = self._clean(UNCLOSED_ANCHOR_TAG_FREE)
+        # no tags inside the swallow, but it runs far past any stamp length
+        self.assertEqual(n, 0)
+        self.assertEqual(refused, 1)
+        self.assertIn("plain unmarked text", cleaned)
+
+    def test_inline_stamp_with_void_markup_still_removed(self):
+        cleaned, n, refused = self._clean(STAMP_WITH_MARKUP)
+        # visible text is exactly the stamp, so the whole match is safe
+        self.assertEqual(n, 1)
+        self.assertEqual(refused, 0)
+        self.assertNotIn("oceanofpdf", cleaned.lower())
+        self.assertIn("Read more at", cleaned)
+        self.assertIn("today.", cleaned)
+        parse(cleaned)
+
+    def test_refusal_does_not_block_later_safe_removal(self):
+        body = UNCLOSED_ANCHOR + "<p>Middle.</p>" + INLINE
+        cleaned, n, refused = self._clean(body)
+        self.assertEqual(n, 1)  # the well-formed inline stamp still goes
+        self.assertEqual(refused, 1)  # the unclosed one is reported once
+        self.assertIn("First paragraph of real content.", cleaned)
+        self.assertNotIn("oceanofpdf.com</a>", cleaned.lower())
 
 
 if __name__ == "__main__":
