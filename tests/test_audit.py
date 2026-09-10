@@ -1382,3 +1382,73 @@ class TestAuditJson(unittest.TestCase):
         self.assertEqual(book["verdicts"]["content"]["status"], "OK")
         self.assertEqual(book["verdicts"]["archive"]["status"], "OK")
         self.assertEqual(book["verdicts"]["spine"]["status"], "OK")
+
+    def test_corrupt_book_fails_library_mode_like_directory_mode(self):
+        # reported 2026-09-08: the library report loop iterated only the
+        # content-analyzer tuple, so a CRC-corrupt book printed
+        # "emptytext CLEAN" and exited 0 in library mode while directory mode
+        # said CORRUPT and exited 1
+        import contextlib
+        import io
+        import sqlite3
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            root.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(root / "metadata.db")
+            conn.executescript(
+                """
+                CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, sort TEXT,
+                    author_sort TEXT, timestamp TEXT, pubdate TEXT, has_cover INT,
+                    last_modified TEXT, series_index REAL DEFAULT 1.0, path TEXT, uuid TEXT);
+                CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+                CREATE TABLE books_authors_link (id INTEGER PRIMARY KEY, book INT, author INT);
+                CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT, link TEXT);
+                CREATE TABLE books_tags_link (id INTEGER PRIMARY KEY, book INT, tag INT);
+                CREATE TABLE languages (id INTEGER PRIMARY KEY, lang_code TEXT, link TEXT);
+                CREATE TABLE books_languages_link (id INTEGER PRIMARY KEY, book INT, lang_code INT);
+                CREATE TABLE data (id INTEGER PRIMARY KEY, book INT, format TEXT,
+                    name TEXT, uncompressed_size INT);
+                """
+            )
+            conn.execute(
+                "INSERT INTO books (id,title,sort,path) VALUES (1,'T','T','A/T (1)')"
+            )
+            conn.execute("INSERT INTO authors (id,name) VALUES (1,'Author')")
+            conn.execute("INSERT INTO books_authors_link (book,author) VALUES (1,1)")
+            conn.execute(
+                "INSERT INTO data (book,format,name) VALUES (1,'EPUB','T - Author')"
+            )
+            conn.commit()
+            conn.close()
+            book_dir = root / "A" / "T (1)"
+            book_dir.mkdir(parents=True)
+            # store (not deflate) so a single flipped data byte is surgical
+            # CRC damage: the archive still opens and scans, one entry fails
+            # its CRC
+            with zipfile.ZipFile(book_dir / "T - Author.epub", "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", self.CONTAINER)
+                z.writestr("content.opf", self.OPF)
+                info = zipfile.ZipInfo("text.xhtml")
+                z.writestr(
+                    info,
+                    "<html><body><p>prose</p></body></html>",
+                    compress_type=zipfile.ZIP_STORED,
+                )
+            raw = bytearray((book_dir / "T - Author.epub").read_bytes())
+            marker = b"prose"
+            i = raw.find(marker) + 1
+            raw[i] ^= 0xFF
+            (book_dir / "T - Author.epub").write_bytes(bytes(raw))
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                buf, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                    rc = audit.run_library(["emptytext"], 2000, 20000)
+            finally:
+                os.chdir(old)
+        self.assertEqual(rc, 1)
+        self.assertIn("CORRUPT", buf.getvalue())

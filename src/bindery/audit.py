@@ -1815,16 +1815,21 @@ def run_library(
             rc |= _pagenum_sections(pagenum_found)
         elif key == "emptytext":
             rc |= _empty_sections(empty_hits, partial_hits, thin_hits)
-        elif key == "archive":
-            rc |= _corrupt_sections(corrupt_hits)
-        elif key == "spine":
-            rc |= _spine_sections(spine_hits, spine_advisory)
         elif key == "monolithic":
             rc |= _monolithic_sections(mono_hits)
         else:
             rc |= _ocr_sections(ocr_found)
         if multi:
             print()
+
+    # The archive and spine verdicts are always-on — their scan runs on every
+    # book whether or not any content analyzer was selected — so their
+    # sections are not gated on --only. A CRC-corrupt book must print and
+    # fail the run in library mode exactly as it does in directory mode;
+    # leaving these branches inside the ALL loop made them dead code and let
+    # a corrupt book exit 0 with "emptytext CLEAN".
+    rc |= _corrupt_sections(corrupt_hits)
+    rc |= _spine_sections(spine_hits, spine_advisory)
 
     if errors:
         print(f"{YELLOW}{BOLD}SCAN ERRORS ({len(errors)}){RESET}")

@@ -988,13 +988,19 @@ can be net-neutral and ships silently.*
       takes a doc-relative base override used for nav and NCX hrefs, and
       captured hrefs are entity-decoded before comparison. Tests pin all
       three shapes.)*
-- [ ] **Make archive/spine first-class in library mode.** `run_library`'s
+- [x] **Make archive/spine first-class in library mode.** `run_library`'s
       report loop iterates the content-analyzer tuple only, so the
       `archive`/`spine` branches and their section builders are dead code:
       a CRC-corrupt book prints `emptytext CLEAN` and exits 0 in library
       mode while directory mode says CORRUPT and exits 1, contradicting the
       v0.22.0 "its own verdict in every mode" promise (`audit.py:1565`,
       `1783-1803`, `1520-1558`).
+      *(Done in v0.33.0: the archive and spine sections run unconditionally
+      after the selected content sections — they are always-on verdicts and
+      were already scanned and recorded in the JSON; only the console/rc
+      path was dead. A CRC-corrupt book now prints its CORRUPT section and
+      fails library mode with exit 1, matching directory mode. Test pins
+      the corrupt-book asymmetry with surgical CRC damage.)*
 - [ ] **Harden the edges of the record pipeline:** a failed `--json` write
       raises after the scan and loses the whole run's summary and exit code
       (`audit.py:1616`, `2023-2043`); `--tag` tags books whose content hits
