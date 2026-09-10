@@ -1145,6 +1145,125 @@ class TestSpineIntegrity(unittest.TestCase):
         self.assertEqual(book.toc_refs, 1)
         self.assertEqual(book.toc_absent, 0)
 
+    def test_drm_entries_get_their_own_verdict(self):
+        # reported 2026-09-08: zip-encrypted entries read as CORRUPT
+        # "re-source" instead of their own DRM status
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestRunSingle.CONTAINER)
+            z.writestr(
+                "content.opf",
+                '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+                '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+                "</manifest>"
+                '<spine><itemref idref="c1"/></spine></package>',
+            )
+            z.writestr("c1.xhtml", "<html><body><p>chapter</p></body></html>")
+            z.writestr(
+                "META-INF/encryption.xml",
+                '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                "<EncryptedData><CipherData>"
+                '<CipherReference URI="c1.xhtml"/>'
+                "</CipherData></EncryptedData></encryption>",
+            )
+        raw = bytearray(buf.getvalue())
+
+        def _mark_encrypted(raw: bytearray, filename: bytes) -> None:
+            # set the general-purpose encryption bit (0x1) on the entry in
+            # both the local header and the central directory: zipfile raises
+            # RuntimeError on read exactly as it does for real DRM
+            i = raw.find(b"PK\x03\x04")
+            while i != -1:
+                name_len = int.from_bytes(raw[i + 26 : i + 28], "little")
+                if bytes(raw[i + 30 : i + 30 + name_len]) == filename:
+                    raw[i + 6] |= 0x1
+                    break
+                i = raw.find(b"PK\x03\x04", i + 4)
+            j = raw.find(b"PK\x01\x02")
+            while j != -1:
+                name_len = int.from_bytes(raw[j + 28 : j + 30], "little")
+                if bytes(raw[j + 46 : j + 46 + name_len]) == filename:
+                    raw[j + 8] |= 0x1
+                    break
+                j = raw.find(b"PK\x01\x02", j + 4)
+
+        _mark_encrypted(raw, b"c1.xhtml")
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(bytes(raw))
+            book = audit.load_book(p)
+        self.assertEqual(book.corrupt, [])
+        self.assertEqual(book.encrypted, ["c1.xhtml"])
+        r = audit.analyze_corrupt(book)
+        problem, status, _ = audit._corrupt_verdict(r)
+        self.assertTrue(problem)
+        self.assertEqual(status, "ENCRYPTED")
+
+    def test_spine_miss_is_diagnosed_not_silent(self):
+        # reported 2026-09-08: an itemref whose decoded href missed the
+        # stored name silently dropped the doc and read as EMPTY with no
+        # diagnostic; the miss is now counted into the emptytext record
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestRunSingle.CONTAINER)
+            z.writestr(
+                "content.opf",
+                '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+                '<item id="c1" href="stored-name.xhtml" '
+                'media-type="application/xhtml+xml"/>'
+                "</manifest>"
+                '<spine><itemref idref="c1"/></spine></package>',
+            )
+            z.writestr("different-name.xhtml", "<html><body><p>x</p></body></html>")
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(buf.getvalue())
+            book = audit.load_book(p)
+        self.assertEqual(book.spine, [])
+        self.assertEqual(book.spine_missing, 1)
+        r = audit.analyze_emptytext(book)
+        self.assertEqual(r["spine_missing"], 1)
+        self.assertIn("unresolved", audit._empty_detail(r))
+
+    def test_duplicate_trailing_numbers_are_not_a_fragment(self):
+        # reported 2026-09-08: part1a/part1b/part2 all carry trailing numbers
+        # 1,1,2 and the raw sequence read as "broken", flagging a healthy
+        # book as a fragment of itself
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestRunSingle.CONTAINER)
+            chapters = ["part1a.xhtml", "part1b.xhtml", "part2.xhtml"]
+            manifest = "".join(
+                f'<item id="c{i}" href="{h}" media-type="application/xhtml+xml"/>'
+                for i, h in enumerate(chapters)
+            )
+            spine = "".join(f'<itemref idref="c{i}"/>' for i in range(3))
+            z.writestr(
+                "content.opf",
+                '<package xmlns="http://www.idpf.org/2007/opf">'
+                f"<manifest>{manifest}</manifest><spine>{spine}</spine></package>",
+            )
+            for h in chapters:
+                z.writestr(h, "<html><body><p>chapter</p></body></html>")
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(buf.getvalue())
+            book = audit.load_book(p)
+            r = audit.spine_integrity(book)
+        self.assertEqual(r["class"], "ok")
+
     def test_fragment_and_monolithic_compose_in_one_report(self):
         # The verdict surfaces are independent: a library book can be a
         # fragment AND monolithic, and one report counts both.

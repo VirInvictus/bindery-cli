@@ -115,21 +115,43 @@ class Book:
         "_visible",
         "corrupt",
         "docs",
+        "encrypted",
         "lang",
         "names",
         "nav",
         "spine",
+        "spine_missing",
         "toc_refs",
         "toc_absent",
     )
 
-    def __init__(self, spine, nav, lang, docs, names, corrupt, toc_refs, toc_absent):
+    def __init__(
+        self,
+        spine,
+        nav,
+        lang,
+        docs,
+        names,
+        corrupt,
+        toc_refs,
+        toc_absent,
+        encrypted=None,
+        spine_missing=0,
+    ):
         self.spine = spine  # resolved, in-order, in-archive spine doc paths
         self.nav = nav  # the nav document path, or None
         self.lang = lang  # declared dc:language (lowercased), or ""
         self.docs = docs  # {path: decoded html} for every spine doc
         self.names = names  # full archive namelist (for image / marker counts)
         self.corrupt = corrupt  # entries whose full read failed (CRC/truncation)
+        # DRM: entries declared in META-INF/encryption.xml. Their unreadability
+        # is the book's business model, not damage, so they get their own
+        # verdict instead of CORRUPT / re-source.
+        self.encrypted = encrypted if encrypted is not None else []
+        # itemrefs that could not be resolved to an archive file (dangling
+        # idref, decoded-href vs stored-name mismatch): a large count on an
+        # EMPTY-verdict book is the diagnostic, not a content-less stub.
+        self.spine_missing = spine_missing
         # Spine-integrity accounting (phase 8): nav/NCX ToC references vs what
         # the archive actually contains. The official Wandering Inn builds
         # ship series-wide ToC manifests (~750 references vs 14-19 real
@@ -161,6 +183,8 @@ def load_book(path: Path) -> Book:
         names = z.namelist()
         nameset = set(names)
         corrupt: list[str] = []
+        encrypted: list[str] = []
+        spine_missing = 0
         raw: dict[str, bytes] = {}
 
         def _read(name: str) -> bytes | None:
@@ -169,12 +193,15 @@ def load_book(path: Path) -> Book:
             content treated as absent — never silently swallowed."""
             if name in raw:
                 return raw[name]
-            if name in corrupt:
+            if name in corrupt or name in encrypted:
                 return None
             try:
                 blob = z.read(name)
             except Exception:
-                corrupt.append(name)
+                if name in encrypted_names:
+                    encrypted.append(name)  # DRM, not damage
+                else:
+                    corrupt.append(name)
                 return None
             raw[name] = blob
             return blob
@@ -186,6 +213,24 @@ def load_book(path: Path) -> Book:
             raise ValueError("container.xml has no rootfile")
         opf = ET.fromstring(_read(opf_path))
         base = os.path.dirname(opf_path)
+
+        # Entries declared encrypted (DRM): an unreadable one is the book's
+        # business model, not a damaged archive, so it gets its own verdict.
+        encrypted_names: set[str] = set()
+        # guard on the nameset: _read records a failed probe as corrupt, and
+        # most books simply have no encryption.xml at all
+        enc_blob = (
+            _read("META-INF/encryption.xml")
+            if ("META-INF/encryption.xml" in nameset)
+            else None
+        )
+        if enc_blob:
+            try:
+                for el in ET.fromstring(enc_blob).iter():
+                    if el.tag.split("}")[-1] == "CipherReference" and el.get("URI"):
+                        encrypted_names.add(el.get("URI"))
+            except ET.ParseError:
+                pass
 
         manifest: dict[str, str] = {}
         nav_href: str | None = None
@@ -222,8 +267,17 @@ def load_book(path: Path) -> Book:
         for itemref in opf.iter(OPF_NS + "itemref"):
             idref = itemref.get("idref")
             href = manifest.get(idref) if idref else None
-            if href and full(href) in nameset:
+            if not href:
+                spine_missing += 1
+                continue
+            if full(href) in nameset:
                 spine.append(full(href))
+            else:
+                # A decoded-href vs stored-name mismatch (NFC/NFD, %20 vs +,
+                # backslash names) silently dropped the doc and read as EMPTY
+                # on a book full of prose; count it so EMPTY carries the
+                # diagnostic.
+                spine_missing += 1
         nav = full(nav_href) if nav_href else None
 
         # The single full pass: every archive entry is fully read here (the
@@ -285,7 +339,18 @@ def load_book(path: Path) -> Book:
                 ):
                     _account(m.group(1), os.path.dirname(ncx_path))
 
-    return Book(spine, nav, lang, docs, names, corrupt, toc_refs, toc_absent)
+    return Book(
+        spine,
+        nav,
+        lang,
+        docs,
+        names,
+        corrupt,
+        toc_refs,
+        toc_absent,
+        encrypted=encrypted,
+        spine_missing=spine_missing,
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -968,6 +1033,7 @@ def analyze_emptytext(book: Book) -> dict:
     return {
         "chars": chars,
         "spine_len": len(book.spine),
+        "spine_missing": book.spine_missing,
         "images": images,
         "bookmate": bookmate,
         "placeholder": bool(sig or repeated),
@@ -994,6 +1060,10 @@ def classify(r: dict, min_chars: int, thin_chars: int) -> str:
 
 def _empty_detail(r: dict) -> str:
     bits = [f"{r['chars']} chars", f"spine {r['spine_len']}", f"{r['images']} images"]
+    if r.get("spine_missing"):
+        bits.append(
+            f"{r['spine_missing']} spine itemref(s) unresolved to archive files"
+        )
     if r.get("corrupt_n"):
         bits.append(f"corrupt:{r['corrupt_n']} (first: {r['corrupt_first']})")
     if r["bookmate"]:
@@ -1051,17 +1121,45 @@ def scan_monolithic(path: Path) -> dict:
 
 
 def analyze_corrupt(book: Book) -> dict:
-    """Archive entries whose full read failed (bad CRC, truncated stream).
+    """Archive entries whose full read failed (bad CRC, truncated stream), plus
+    entries declared encrypted (DRM) under their own status.
 
     Reported as its own verdict in every mode — a corrupt entry decompresses
     to nothing, and letting emptytext call that EMPTY mislabels a damaged
     archive as a content-less stub (the phase-1 re-source advice that follows
     from EMPTY would then aim at the wrong disease).
     """
-    return {"n": len(book.corrupt), "first": book.corrupt[0] if book.corrupt else ""}
+    return {
+        "n": len(book.corrupt),
+        "first": book.corrupt[0] if book.corrupt else "",
+        "encrypted_n": len(book.encrypted),
+        "encrypted_first": book.encrypted[0] if book.encrypted else "",
+    }
 
 
 def _corrupt_verdict(r: dict) -> tuple[bool, str, list[str]]:
+    if r.get("encrypted_n") and not r.get("n"):
+        # Pure DRM: nothing is damaged, the content is merely locked. The
+        # re-source advice is wrong for it (re-acquiring the same book
+        # yields the same lock).
+        return (
+            True,
+            "ENCRYPTED",
+            [
+                f"encrypted:{r['encrypted_n']} (first: {r['encrypted_first']})"
+                " — DRM-protected; not repairable, skip"
+            ],
+        )
+    if r.get("encrypted_n"):
+        return (
+            True,
+            "CORRUPT",
+            [
+                f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source",
+                f"encrypted:{r['encrypted_n']} (first: {r['encrypted_first']})"
+                " — DRM-protected entries",
+            ],
+        )
     return (
         True,
         "CORRUPT",
@@ -1093,7 +1191,7 @@ def spine_integrity(book: Book) -> dict:
         if not found:
             return {"class": "unknown", "refs": refs, "absent": absent}
         nums.append(int(found[-1]))
-    nums.sort()
+    nums = sorted(set(nums))  # part1a/part1b carries ONE chapter number, not two
     span = (
         "consecutive" if nums == list(range(nums[0], nums[0] + len(nums))) else "broken"
     )
@@ -1614,12 +1712,14 @@ def write_audit_json(
     max_doc_chars: int,
     scanned: int,
     error_count: int,
-) -> None:
+) -> bool:
     """Emit the machine-readable audit report (audit --json FILE).
 
     Same shape as library --json: mode/root/summary plus one record per file
     carrying per-analyzer verdicts (problem/status/details). This is the
     contract every downstream consumer of the phase-1 EPUB slice reads.
+    Returns False (and reports) when the write fails: the caller turns that
+    into a trouble exit instead of losing the run's summary to a traceback.
     """
     payload = {
         "mode": "audit",
@@ -1637,7 +1737,12 @@ def write_audit_json(
         },
         "books": records,
     }
-    Path(json_path).expanduser().write_text(json.dumps(payload, indent=2) + "\n")
+    try:
+        Path(json_path).expanduser().write_text(json.dumps(payload, indent=2) + "\n")
+        return True
+    except OSError as e:
+        print(f"ERROR: could not write --json file {json_path}: {e}", file=sys.stderr)
+        return False
 
 
 def run_library(
@@ -1839,7 +1944,7 @@ def run_library(
         rc |= 1
 
     if json_path is not None:
-        write_audit_json(
+        if not write_audit_json(
             json_path,
             json_records,
             root=library_root,
@@ -1849,16 +1954,19 @@ def run_library(
             max_doc_chars=max_doc_chars,
             scanned=scanned,
             error_count=len(errors),
-        )
+        ):
+            rc |= 1
 
     if audit_tag:
         rc |= _apply_audit_tag(
             library_root,
             audit_tag,
             {
-                "content": [h[0] for h in nonlatin_hits]
-                + [h[0] for h in latin_foreign]
-                + [h[0] for h in signature_hits],
+                # expected-foreign content findings are informational (the
+                # book is DECLARED that way); only unexpected hits get tagged
+                "content": [h[0] for h in nonlatin_hits if not h[3]]
+                + [h[0] for h in latin_foreign if not h[3]]
+                + [h[0] for h in signature_hits],  # signatures are always defects
                 "pagenumbers": [h[0] for h in pagenum_found],
                 "emptytext": [
                     h[0] for h in empty_hits + partial_hits
@@ -2049,8 +2157,9 @@ def run_directory(
                 ui.tqdm.write(f"      {ln}")
     print()
 
+    json_ok = True
     if json_path is not None:
-        write_audit_json(
+        json_ok = write_audit_json(
             json_path,
             json_records,
             root=directory,
@@ -2062,14 +2171,15 @@ def run_directory(
             error_count=errors,
         )
 
+    rc = 0 if json_ok else 1
     if problems == 0 and errors == 0:
         print(f"{GREEN}{BOLD}CLEAN{RESET}: no problems in {len(epubs)} file(s).")
-        return 0
+        return rc
     print(
         f"{RED}{BOLD}FOUND{RESET}: {problems} problem(s) need review, "
         f"{errors} scan error(s)."
     )
-    return 1
+    return 1 | rc
 
 
 def run_single(
@@ -2143,7 +2253,7 @@ def run_single(
                 scanned=0,
                 error_count=1,
             )
-        return 1
+        return 1  # the error record is best-effort; the run already failed
 
     tag_display = tags[0] if tags else "?"
     print(f"Auditing #{book_id} [{tag_display}] {title}\n  {path}\n")
@@ -2201,8 +2311,9 @@ def run_single(
         _record_verdict(record, "archive", (False, "OK", []))
     if "spine" not in record["verdicts"]:
         _record_verdict(record, "spine", (False, "OK", []))
+    json_ok = True
     if json_path is not None:
-        write_audit_json(
+        json_ok = write_audit_json(
             json_path,
             [record],
             root=library_root,
@@ -2223,7 +2334,7 @@ def run_single(
         for ln in lines:
             print(f"{prefix}    {ln}")
 
-    rc = 0
+    rc = 0 if json_ok else 1
     if problems:
         rc = 1
         print(f"\n{RED}{BOLD}FOUND{RESET}: {problems} problem(s) need review.")

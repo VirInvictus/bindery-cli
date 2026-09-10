@@ -1001,7 +1001,7 @@ can be net-neutral and ships silently.*
       path was dead. A CRC-corrupt book now prints its CORRUPT section and
       fails library mode with exit 1, matching directory mode. Test pins
       the corrupt-book asymmetry with surgical CRC damage.)*
-- [ ] **Harden the edges of the record pipeline:** a failed `--json` write
+- [x] **Harden the edges of the record pipeline:** a failed `--json` write
       raises after the scan and loses the whole run's summary and exit code
       (`audit.py:1616`, `2023-2043`); `--tag` tags books whose content hits
       the run itself marked expected-foreign (`audit.py:1830-1832` vs the
@@ -1012,6 +1012,16 @@ can be net-neutral and ships silently.*
       broken-span heuristic treats duplicate trailing numbers
       (`part1a/part1b/part2`) and duplicate spine itemrefs as FRAGMENT
       (`audit.py:1066-1079`).
+      *(Done in v0.33.0, all five: `write_audit_json` returns whether the
+      write landed and every mode folds a failure into a trouble exit
+      instead of a post-scan traceback; `--tag`'s content list filters
+      expected-foreign hits (injection signatures stay always-defect); an
+      unresolvable itemref is counted in `Book.spine_missing`, surfaced in
+      the emptytext detail so EMPTY carries its diagnostic; entries
+      declared in META-INF/encryption.xml get their own ENCRYPTED verdict
+      ("DRM-protected; not repairable, skip") instead of CORRUPT
+      re-source; and the broken-span heuristic dedupes trailing numbers
+      so part1a/part1b/part2 reads as a consecutive span. Tests pin each.)*
 - [ ] **Delete the dead surfaces:** `audit.main()` + its argparse block
       duplicate `cli.run_audit_cmd` (`audit.py:2212-2315`);
       `analyze_brokentags` is unreachable (`audit.py:1260-1274`); duplicate
