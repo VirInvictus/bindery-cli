@@ -1340,7 +1340,10 @@ class TestAuditJson(unittest.TestCase):
             data = json.loads(out.read_text())
         self.assertEqual(rc, 1)
         self.assertEqual(data["mode"], "audit")
-        self.assertEqual(data["analyzers"], ["emptytext"])
+        # the always-on archive/spine verdicts are part of the analyzer set
+        # (reported 2026-09-08: the list used to omit them while every
+        # record still carried their verdicts)
+        self.assertEqual(data["analyzers"], ["archive", "emptytext", "spine"])
         self.assertEqual(data["summary"]["scanned"], 2)
         self.assertEqual(data["summary"]["problems"], 1)
         self.assertEqual(data["summary"]["errors"], 0)
@@ -1571,3 +1574,85 @@ class TestAuditJson(unittest.TestCase):
                 os.chdir(old)
         self.assertEqual(rc, 1)
         self.assertIn("CORRUPT", buf.getvalue())
+
+
+class TestNavPropertyAndDuplicates(unittest.TestCase):
+    """Papercuts from the 2026-09-08 sweep: nav selection matched the token
+    'nav' by substring, and duplicate zip entries resolved last-wins with no
+    note anywhere."""
+
+    def _book(self, body_extra: str):
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestRunSingle.CONTAINER)
+            z.writestr(
+                "content.opf",
+                '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+                '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+                '<item id="weird" href="other.xhtml" '
+                'media-type="application/xhtml+xml" properties="data-nav"/>'
+                "</manifest>"
+                '<spine><itemref idref="c1"/></spine></package>',
+            )
+            z.writestr("c1.xhtml", "<html><body><p>chapter</p></body></html>")
+            z.writestr("other.xhtml", "<html><body><p>other</p></body></html>")
+            if body_extra:
+                z.writestr("c1.xhtml", body_extra)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(buf.getvalue())
+            return audit.load_book(p)
+
+    def test_data_nav_property_is_not_the_nav(self):
+        # 'nav' in 'data-nav' selected the wrong item by substring; only a
+        # whole 'nav' token declares the navigation document
+        book = self._book("")
+        self.assertIsNone(book.nav)
+
+    def test_duplicate_entries_are_counted(self):
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestRunSingle.CONTAINER)
+            z.writestr(
+                "content.opf",
+                '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+                '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+                "</manifest>"
+                '<spine><itemref idref="c1"/></spine></package>',
+            )
+            z.writestr("c1.xhtml", "<html><body><p>first</p></body></html>")
+            z.writestr("c1.xhtml", "<html><body><p>second</p></body></html>")
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(buf.getvalue())
+            book = audit.load_book(p)
+        self.assertEqual(book.dup_entries, 1)
+        r = audit.analyze_corrupt(book)
+        self.assertEqual(r["dup_entries"], 1)
+
+
+class TestAuditThresholdValidation(unittest.TestCase):
+    def test_min_chars_above_thin_chars_is_refused(self):
+        # reported 2026-09-08: the EMPTY threshold above the THIN threshold
+        # silently shadowed every THIN advisory
+        import contextlib
+        import io
+
+        from bindery.cli import build_parser, run_audit_cmd
+
+        args = build_parser().parse_args(
+            ["audit", "emptytext", "--min-chars", "30000", "--thin-chars", "20000"]
+        )
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = run_audit_cmd(args)
+        self.assertEqual(rc, 2)
+        self.assertIn("must not exceed", err.getvalue())

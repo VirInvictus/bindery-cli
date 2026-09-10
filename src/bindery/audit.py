@@ -48,14 +48,12 @@ Exit codes:
     1 = a real problem found (foreign content, baked page numbers, empty book,
         OCR-damaged prose) or a scan error
     2 = setup error (missing DB / library, or no .epub files in directory)
+    3 = a flagged run whose --tag apply ALSO failed (1 from findings, 2 from
+        the tagging write; documented here because it surfaced unexplained
+        on a tagging failure)
 """
 
-import argparse
 import html
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent))
 import json
 import os
 import re
@@ -65,6 +63,7 @@ from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+sys.path.insert(0, str(Path(__file__).parent))
 import vir_tui as ui
 
 # ----------------------------------------------------------------------------
@@ -115,6 +114,7 @@ class Book:
         "_visible",
         "corrupt",
         "docs",
+        "dup_entries",
         "encrypted",
         "lang",
         "names",
@@ -137,6 +137,7 @@ class Book:
         toc_absent,
         encrypted=None,
         spine_missing=0,
+        dup_entries=0,
     ):
         self.spine = spine  # resolved, in-order, in-archive spine doc paths
         self.nav = nav  # the nav document path, or None
@@ -152,6 +153,9 @@ class Book:
         # idref, decoded-href vs stored-name mismatch): a large count on an
         # EMPTY-verdict book is the diagnostic, not a content-less stub.
         self.spine_missing = spine_missing
+        # duplicate archive entry names (zip resolves last-wins silently);
+        # surfaced in the archive verdict so nothing is silently shadowed
+        self.dup_entries = dup_entries
         # Spine-integrity accounting (phase 8): nav/NCX ToC references vs what
         # the archive actually contains. The official Wandering Inn builds
         # ship series-wide ToC manifests (~750 references vs 14-19 real
@@ -185,6 +189,7 @@ def load_book(path: Path) -> Book:
         corrupt: list[str] = []
         encrypted: list[str] = []
         spine_missing = 0
+        dup_entries = len(names) - len(nameset)  # zip resolves last-wins
         raw: dict[str, bytes] = {}
 
         def _read(name: str) -> bytes | None:
@@ -239,7 +244,7 @@ def load_book(path: Path) -> Book:
             if not item_id or not href:
                 continue
             manifest[item_id] = href
-            if "nav" in (it.get("properties") or ""):
+            if "nav" in (it.get("properties") or "").split():
                 nav_href = href
 
         lang = ""
@@ -350,6 +355,7 @@ def load_book(path: Path) -> Book:
         toc_absent,
         encrypted=encrypted,
         spine_missing=spine_missing,
+        dup_entries=dup_entries,
     )
 
 
@@ -828,8 +834,14 @@ class _Blocks:
             def handle_endtag(self, tag):
                 if tag in BLOCK_TAGS:
                     outer._flush(self)
-                    if self.stack:
+                    # pop only the matching open tag: a stray mis-nested
+                    # closer used to pop an unrelated ancestor off the
+                    # stack and drop later blocks' in_quote guard
+                    if self.stack and self.stack[-1] == tag:
                         self.stack.pop()
+                    elif tag in self.stack:
+                        idx = len(self.stack) - 1 - self.stack[::-1].index(tag)
+                        del self.stack[idx]
 
             def handle_data(self, data):
                 if data.strip():
@@ -1134,6 +1146,7 @@ def analyze_corrupt(book: Book) -> dict:
         "first": book.corrupt[0] if book.corrupt else "",
         "encrypted_n": len(book.encrypted),
         "encrypted_first": book.encrypted[0] if book.encrypted else "",
+        "dup_entries": book.dup_entries,
     }
 
 
@@ -1160,10 +1173,16 @@ def _corrupt_verdict(r: dict) -> tuple[bool, str, list[str]]:
                 " — DRM-protected entries",
             ],
         )
+    lines = [f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source"]
+    if r.get("dup_entries"):
+        lines.append(
+            f"duplicate entries: {r['dup_entries']} (zip resolves last-wins; "
+            "which copy wins is undefined)"
+        )
     return (
         True,
         "CORRUPT",
-        [f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source"],
+        lines,
     )
 
 
@@ -1377,23 +1396,6 @@ DOUBLED_QUOTE_RE = re.compile(r"(?<=\s)['‘]\s+['‘’]\w")
 # ("AnkhMorpork"); only damage when the hyphenated form also appears.
 _CAMEL_RE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b")
 _HUMP_RE = re.compile(r"(?<=[a-z])(?=[A-Z])")
-
-
-def analyze_brokentags(book: Book) -> dict:
-    import re
-
-    hits = []
-    pattern = re.compile(
-        r"(?<!<)(?<!&lt;)/[a-zA-Z]+&gt;|&lt;/(?:p|div|span|h[1-6]|i|em|b|strong)&gt;",
-        re.IGNORECASE,
-    )
-    for doc in book.spine:
-        text = book.docs.get(doc, "")
-        for match in pattern.finditer(text):
-            hits.append(f"{doc}: {match.group(0)}")
-    if not hits:
-        return {}
-    return {"hits": hits, "summary": f"{len(hits)} broken tags found"}
 
 
 def analyze_ocr(book: Book) -> dict:
@@ -1724,7 +1726,7 @@ def write_audit_json(
     payload = {
         "mode": "audit",
         "root": str(root),
-        "analyzers": list(selected),
+        "analyzers": sorted(set(selected) | {"archive", "spine"}),
         "thresholds": {
             "min_chars": min_chars,
             "thin_chars": thin_chars,
@@ -2071,7 +2073,7 @@ def run_directory(
     if not directory.is_dir():
         print(f"ERROR: {directory} is not a directory.")
         return 2
-    epubs = sorted(directory.rglob("*.epub"))
+    epubs = sorted(directory.rglob("*.epub", case_sensitive=False))
     if not epubs:
         print(f"No .epub files found under {directory}")
         return 2
@@ -2096,6 +2098,7 @@ def run_directory(
             continue
 
         verdicts = []
+        book_problems = False
         corrupt_r = analyze_corrupt(book)
         spine_r = spine_integrity(book)
         for key in ALL:
@@ -2118,18 +2121,18 @@ def run_directory(
             else:
                 problem, status, lines = _ocr_dir(analyze_ocr(book))
             if problem:
-                problems += 1
+                book_problems = True
             verdicts.append((key, problem, status, lines))
 
         if corrupt_r["n"]:
             problem, status, lines = _corrupt_verdict(corrupt_r)
-            problems += 1
+            book_problems = True
             verdicts.append(("archive", problem, status, lines))
 
         if spine_r["class"] != "ok":
             problem, status, lines = _spine_verdict(spine_r)
             if problem:
-                problems += 1
+                book_problems = True
             verdicts.append(("spine", problem, status, lines))
 
         # JSON record: the display verdicts, then the always-on archive/spine
@@ -2141,6 +2144,10 @@ def run_directory(
             _record_verdict(record, "archive", (False, "OK", []))
         if "spine" not in record["verdicts"]:
             _record_verdict(record, "spine", (False, "OK", []))
+        if book_problems:
+            # the console counter counts books (one line each), matching
+            # summary.problems, which counts records
+            problems += 1
 
         if multi:
             ui.tqdm.write(f"  {path.name}")
@@ -2347,113 +2354,3 @@ def run_single(
             {key: [book_id] for key, problem, _s, _l in verdicts if problem},
         )
     return rc
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Audit EPUB body text for non-English content, baked-in page "
-        "numbers, empty stubs, or OCR-damaged prose."
-    )
-    parser.add_argument(
-        "mode",
-        choices=("content", "pagenumbers", "emptytext", "ocr", "monolithic", "all"),
-        help="which audit to run ('all' runs the analyzers in one decompression pass)",
-    )
-    parser.add_argument(
-        "directory",
-        nargs="?",
-        help="vet loose .epub files under this directory instead of the library",
-    )
-    parser.add_argument(
-        "--min-chars",
-        type=int,
-        default=DEFAULT_MIN_CHARS,
-        help=f"emptytext EMPTY threshold (default {DEFAULT_MIN_CHARS})",
-    )
-    parser.add_argument(
-        "--thin-chars",
-        type=int,
-        default=DEFAULT_THIN_CHARS,
-        help=f"emptytext THIN advisory threshold (default {DEFAULT_THIN_CHARS})",
-    )
-    parser.add_argument(
-        "--max-doc-chars",
-        type=int,
-        default=DEFAULT_MAX_DOC_CHARS,
-        help=f"monolithic FLAG threshold (default {DEFAULT_MAX_DOC_CHARS})",
-    )
-    parser.add_argument(
-        "--id",
-        metavar="BOOK_IDS",
-        default=None,
-        help="audit library book(s) by Calibre id — one id or a comma-separated "
-        "list (fetched via cquarry's single-entity get_book; cannot be "
-        "combined with a directory)",
-    )
-    parser.add_argument(
-        "--tag",
-        metavar="TAG",
-        default=None,
-        help="library mode only: tag every flagged book via cquarry's opt-in "
-        "write path (Calibre must be closed; audit itself stays read-only)",
-    )
-    parser.add_argument(
-        "--json",
-        metavar="FILE",
-        default=None,
-        help="write a machine-readable report (per-file analyzer verdicts, "
-        "library --json shape) to FILE; with --id, exactly one book id",
-    )
-    args = parser.parse_args()
-    ui.print_header("bindery audit - Execution")
-    selected = list(ALL) if args.mode == "all" else [args.mode]
-    if args.id is not None:
-        if args.directory:
-            print("ERROR: --id audits a library book; drop the directory argument.")
-            return 2
-        id_list = [s.strip() for s in str(args.id).split(",") if s.strip()]
-        if args.json and len(id_list) != 1:
-            print(
-                "ERROR: --json with --id supports exactly one book id.",
-                file=sys.stderr,
-            )
-            return 2
-        rc = 0
-        for raw in id_list:
-            try:
-                bid = int(raw)
-            except ValueError:
-                print(f"ERROR: --id {raw!r} is not a book id.", file=sys.stderr)
-                rc |= 2
-                continue
-            rc |= run_single(
-                bid,
-                selected,
-                args.min_chars,
-                args.thin_chars,
-                tag=args.tag,
-                max_doc_chars=args.max_doc_chars,
-                json_path=args.json,
-            )
-        return rc
-    if args.directory:
-        return run_directory(
-            Path(args.directory).expanduser(),
-            selected,
-            args.min_chars,
-            args.thin_chars,
-            max_doc_chars=args.max_doc_chars,
-            json_path=args.json,
-        )
-    return run_library(
-        selected,
-        args.min_chars,
-        args.thin_chars,
-        tag=args.tag,
-        max_doc_chars=args.max_doc_chars,
-        json_path=args.json,
-    )
-
-
-if __name__ == "__main__":
-    sys.exit(main())

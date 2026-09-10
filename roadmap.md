@@ -1022,12 +1022,17 @@ can be net-neutral and ships silently.*
       ("DRM-protected; not repairable, skip") instead of CORRUPT
       re-source; and the broken-span heuristic dedupes trailing numbers
       so part1a/part1b/part2 reads as a consecutive span. Tests pin each.)*
-- [ ] **Delete the dead surfaces:** `audit.main()` + its argparse block
+- [x] **Delete the dead surfaces:** `audit.main()` + its argparse block
       duplicate `cli.run_audit_cmd` (`audit.py:2212-2315`);
       `analyze_brokentags` is unreachable (`audit.py:1260-1274`); duplicate
       imports at the top of the file; and standalone `audit <dir>` silently
       skips uppercase `.EPUB` files (`audit.py:1937`).
-- [ ] **Smaller audit papercuts:** `_Blocks.handle_endtag` pops the stack
+      *(Done in v0.33.0: main() and its argparse block deleted (the CLI
+      subcommand is the only entry point), analyze_brokentags deleted, the
+      duplicated import blocks collapsed, and run_directory's rglob is
+      case-insensitive so a hand-added Book.EPUB is visible in directory
+      mode too, matching library.iter_epubs.)*
+- [x] **Smaller audit papercuts:** `_Blocks.handle_endtag` pops the stack
       top regardless of which tag closed, so mis-nested blockquotes lose
       their in_quote guard (`audit.py:739-743`); nav selection matches
       `data-nav` by substring (`audit.py:196`); tagging failure can surface
@@ -1037,6 +1042,17 @@ can be net-neutral and ships silently.*
       (`audit.py:1603`); `--min-chars`/`--thin-chars` are not validated
       against each other; duplicate zip entries silently resolve last-wins
       with no note in the record.
+      *(Done in v0.33.0: handle_endtag pops only the matching open tag (a
+      stray closer can no longer pop an unrelated ancestor); the nav
+      property matches whole tokens so properties="data-nav" is not the
+      nav; exit 3 (flagged run + failed tagging) is documented in the
+      module contract instead of being changed; the JSON analyzers list
+      includes the always-on archive/spine and the directory-mode console
+      counter counts books, matching summary.problems; min-chars above
+      thin-chars is a usage error (it silently shadowed every THIN
+      advisory); and duplicate archive entries are counted into
+      Book.dup_entries and noted in the archive verdict. Tests pin the
+      nav token, duplicate counting, and the threshold refusal.)*
 
 ### Apply-path and oracle safety
 

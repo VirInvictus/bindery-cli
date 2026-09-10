@@ -1252,6 +1252,15 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
 def run_audit_cmd(args: argparse.Namespace) -> int:
     selected = list(ALL) if args.mode == "all" else [args.mode]
     max_doc = args.max_doc_chars
+    if args.min_chars > args.thin_chars:
+        # the EMPTY threshold sitting above the THIN threshold silently
+        # shadows every THIN advisory
+        print(
+            f"error: --min-chars ({args.min_chars}) must not exceed "
+            f"--thin-chars ({args.thin_chars})",
+            file=sys.stderr,
+        )
+        return 2
     if args.id is not None:
         if args.path:
             print("ERROR: --id audits a library book; drop the directory argument.")
