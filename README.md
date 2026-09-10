@@ -225,8 +225,9 @@ cd ~/docs/Calibre\ Library && bindery run phase3 --ids 5071,5072 --json phase3-r
 
 `scripts/` holds standalone, read-only utilities that are useful for EPUB maintenance but fall outside bindery-cli's repair contract (fixing what they find would be a content change, which bindery-cli makes only via the opt-in `--strip-pagination`):
 
-- `find_missing_images.py`: scans a library tree and reports every book whose `<img>` tags point at files that do not exist inside the archive (a common defect in converted EPUBs). Reads the archives in place; nothing is unpacked or written. The library path is set at the bottom of the script.
 - `fast_sweep.py`: compiles and drives `FastSweep.java`, a parallel JVM epubcheck sweep that pays JVM startup once instead of per book (a 7,000-book dry-run sweep drops from hours to minutes). `--mode=audit` emits the `fatals,errors,warnings,path` CSV that `bindery library --audit` reads; `--mode=extract` emits per-book error codes for aggregation (`--summary` prints the per-code report). The epubcheck jar is located from the `epubcheck` launcher or `EPUBCHECK_JAR`; the harness compiles once (`--release 25`) and is cached on mtime.
+
+The older `find_*.py` detection wedges and the `sweep.sh`/`FastSweepExtract.java` prototypes were removed: every detection they performed is now a shipped, tested flag (missing images are `--prune-missing-resources`, and the rest of the RSC-005/PKG-010 family shipped through Phases 6-12), and keeping two copies meant future behavior changes landed in only one of them. Git history preserves them.
 
 ## Development
 

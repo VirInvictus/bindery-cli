@@ -1208,7 +1208,7 @@ can be net-neutral and ships silently.*
 
 ### Scripts and repo hygiene
 
-- [ ] **Retire the subsumed find_* diagnostics.** All ten `scripts/find_*.py`
+- [x] **Retire the subsumed find_* diagnostics.** All ten `scripts/find_*.py`
       detection wedges became shipped flags with tests
       (the css one says so in its own docstring port note); keeping both
       copies means future behavior changes land in one only. Delete (git
@@ -1218,6 +1218,10 @@ can be net-neutral and ships silently.*
       (a live, different tool: one JVM saturated across cores vs the
       library sweep's N subprocesses). The untracked `.class` files are
       local build leftovers; already gitignored.
+      *(Done in v0.33.0: all ten find_*.py, sweep.sh, and
+      FastSweepExtract.java deleted; fast_sweep.py + FastSweep.java stay.
+      README's companion-scripts section notes the removal and where the
+      capabilities live now.)*
 - [ ] **Decide what test_facility/ is.** It carries 10 tracked commercial
       EPUBs (muse-of-nightmares, last-man-out, etc.; only leaves-of-grass is
       public domain), a second never-run "suite" of bare functions that
