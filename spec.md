@@ -200,7 +200,12 @@ a fresh `ZipInfo` rather than the source one because OCF requires the mimetype e
 carry no extra field. Content documents and the NCX get the transforms above; every other
 entry is copied verbatim with its original compression. An eligible entry that no
 transform changed is also copied byte-for-byte, never decoded and re-encoded, so a
-clean non-UTF-8 file cannot be silently mangled. A `RepairReport` records
+clean non-UTF-8 file cannot be silently mangled. A document that is not valid UTF-8
+at all (windows-1252, UTF-16) is never decoded-with-replacement and re-encoded: it is
+copied byte-for-byte, counted in the report (`non_utf8_docs_skipped`), and left for
+manual repair. The anchor pass (`--strip-broken-anchors`) runs after every other
+content fix, against an id snapshot that replicates each id-moving fix ahead of it. A
+`RepairReport` records
 per-transform counts and whether the NCX uid was synced.
 
 ## The epubcheck gate

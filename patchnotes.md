@@ -57,6 +57,48 @@
   name behind a `(?<![\w:.-])value` lookbehind, so `data-value="42"`
   survives instead of becoming a malformed `<span  data->`.
 
+### Repair-pipeline correctness (Phase 14, the 2026-09-08 sweep's backlog)
+
+- **`--fix-id-colons` is consistent and honest.** Only the bare `id`
+  attribute is in scope (a lookbehind keeps `data-id` and `xml:id` values
+  untouched), the fragment of an external URL survives verbatim (it names a
+  position in another document), the NCX's `content src` fragments follow
+  the rename through the new `fix_ncx_src_fragments` so a ToC never dangles
+  against the ids it references, and only actual colons replaced are
+  counted (byte-identical reruns report 0 and no longer trigger the
+  re-encode the untouched-file guard exists to prevent).
+- **The anchor pass runs last.** `strip_broken_anchors`' id snapshot used
+  to predate the unwrap fixes, so an id they deleted still counted as
+  present and fragments pointing at it survived dangling. The anchor pass
+  now runs after every content fix, against a snapshot that replicates
+  each id-moving fix ahead of it.
+- **CDATA sections and comments are protected everywhere.**
+  `strip_broken_tags` and `unwrap_illegal_tags` joined the module's
+  protected-span machinery (the wrapper now forwards arguments, so the
+  protected_tags-carrying unwrap could be decorated); a leaked-looking tag
+  inside either is literal rendered text, not markup.
+- **Non-UTF-8 documents are skipped verbatim.** A fix firing on a
+  windows-1252 or UTF-16 document used to decode with U+FFFD substitutes
+  and re-encode UTF-8 under a declaration still naming the old encoding:
+  usually well-formed, so the gate could not see the corruption. The write
+  loop strict-decodes first; failures are copied byte-for-byte, counted in
+  the new `non_utf8_docs_skipped` entry, and left for manual repair.
+- **`--reserialize` requires an html root.** A broken non-HTML `.xml`
+  sidecar used to come back html/body-wrapped with `ns0:` prefixes,
+  structurally rewritten while staying well-formed; it is now returned
+  untouched.
+- **Seven papercuts.** `fix_ncx_playorder` is anchored to `<navPoint>`
+  start tags (nav-label text is untouchable); mimetype fixes increment
+  `files_changed`; `fix_manifest_ids` and its reference rewrites are
+  quote-agnostic (a single-quoting OPF used to be a silent count-0 no-op;
+  the two shadowed `_IDREF_ATTR_RE` definitions collapsed into one);
+  the css selector boundary recognizes `svg|st`, `:is(st, w)`, and
+  `:where(...)` forms and the stylesheet scan collects `.xpgt` page
+  templates, so styled tags keep their unwrap protection; watermark
+  normalization decodes entities (`OceanofPDF.com&nbsp;` stamps now
+  match); the prolog and duplicate-xmlns fixes run under the
+  protected-span wrapper; and the archive comment field rides the rewrite.
+
 Dry-run validation for this release: the 14 staged top500candidates plus
 the 3 books_to_fix fixtures swept clean (9 accepted, 2 gate-refused
 regressions, 0 errors), and a 200-candidate sample of the real library

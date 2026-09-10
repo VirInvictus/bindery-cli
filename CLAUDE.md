@@ -69,7 +69,7 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
 
 ## Layout
 
-- `src/bindery/transforms.py`: pure `str -> (str, int)` text transforms (including `strip_broken_tags`).
+- `src/bindery/transforms.py`: pure `str -> (str, int)` text transforms (including `strip_broken_tags`). Since v0.32.0: `strip_attrs_in_start_tags` anchors attribute edits on the quote-aware start-tag matcher, `_outside_protected` forwards arguments (context-carrying transforms can be decorated), `fix_id_colons` matches only the bare `id` attribute and only internal fragments (`fix_ncx_src_fragments` carries renames into the NCX), `fix_ncx_playorder` is anchored to `<navPoint>` start tags, and the css selector boundary covers namespaced and functional selector forms.
 - `src/bindery/pagination.py`: the opt-in lossy page-number strip (runhead detection, page-layer decision, block-centric removal/merge, safety nets).
 - `src/bindery/watermark.py`: the opt-in lossy watermark strip (anchored and anchorless signature removal).
 - `src/bindery/reserialize.py`: structural repair via `html5lib`.
