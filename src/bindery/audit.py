@@ -214,9 +214,9 @@ def load_book(path: Path) -> Book:
             # every target absent).
             use_base = base if rel_base is None else rel_base
             href = _pct_decode(href.split("#", 1)[0])
-            return os.path.normpath(
-                f"{use_base}/{href}" if use_base else href
-            ).replace("\\", "/")
+            return os.path.normpath(f"{use_base}/{href}" if use_base else href).replace(
+                "\\", "/"
+            )
 
         spine: list[str] = []
         for itemref in opf.iter(OPF_NS + "itemref"):
