@@ -938,11 +938,15 @@ can be net-neutral and ships silently.*
       UTF-8 is copied byte-for-byte, counted in the new
       `non_utf8_docs_skipped` report entry, and left for manual repair.
       UTF-8 siblings in the same book are still repaired.)*
-- [ ] **Scope `--reserialize` to HTML roots.** A broken non-HTML `.xml`
+- [x] **Scope `--reserialize` to HTML roots.** A broken non-HTML `.xml`
       sidecar gets html5lib's HTML algorithm and comes back
       html/body-wrapped with `ns0:` prefixes, structurally rewritten while
       staying well-formed (`epub.py:938`, `reserialize.py:39-42`). Require
       an `html` root (or manifest media-type) before rebuilding.
+      *(Done in v0.32.0, taking the html-root check: `reserialize_if_broken`
+      requires an `<html` root before it will rebuild, so a broken page
+      template or other XML sidecar is returned untouched instead of
+      structurally rewritten. Tests pin the sidecar shape.)*
 - [ ] **Smaller repair papercuts:** `fix_ncx_playorder` can rewrite
       `playOrder="N"`-shaped text inside nav labels (unanchored pattern,
       `transforms.py:326-328`); mimetype fixes land in `report.fixes`

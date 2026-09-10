@@ -23,6 +23,12 @@ BROKEN = (
     '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
     "<p>one<p>two<div>three</body></html>"
 )
+# Not well-formed, and not HTML either: the reported corruption shape was a
+# broken .xml sidecar coming back html/body-wrapped with ns0: prefixes.
+BROKEN_NON_HTML = (
+    '<?xml version="1.0" encoding="utf-8"?>'
+    "<page-template><region x=1 y=2/></page-template>"
+)
 
 
 class TestReserialize(unittest.TestCase):
@@ -40,6 +46,13 @@ class TestReserialize(unittest.TestCase):
         text = re.sub(r"<[^>]+>", " ", out)
         for word in ("one", "two", "three"):
             self.assertIn(word, text)
+
+    @unittest.skipUnless(HAVE_HTML5LIB, "html5lib not installed")
+    def test_broken_non_html_xml_is_left_alone(self):
+        # reported 2026-09-08: require an html root before rebuilding
+        out, n = reserialize_if_broken(BROKEN_NON_HTML)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, BROKEN_NON_HTML)
 
     @unittest.skipUnless(HAVE_HTML5LIB, "html5lib not installed")
     def test_idempotent(self):

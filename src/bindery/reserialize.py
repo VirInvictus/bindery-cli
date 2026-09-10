@@ -12,22 +12,36 @@ lazily so the rest of Bindery has no third-party dependency.
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 
 XHTML_NS = "http://www.w3.org/1999/xhtml"
 
+# An HTML document carries an `<html>` root. A broken document without one is
+# some other kind of XML (a page template, a sidecar), and html5lib's HTML
+# algorithm must never touch it.
+_HTML_ROOT_RE = re.compile(r"<html[\s>]", re.IGNORECASE)
+
 
 def reserialize_if_broken(s: str) -> tuple[str, int]:
-    """If `s` is not well-formed XML, re-parse it leniently and re-emit as XHTML.
+    """If `s` is not well-formed XML and carries an `<html>` root, re-parse it
+    leniently and re-emit as XHTML.
 
-    Returns (text, 1) if it was rebuilt, or (s, 0) if it already parsed. Raises
-    RuntimeError if html5lib is needed but not installed.
+    Returns (text, 1) if it was rebuilt, or (s, 0) if it already parsed or is
+    not HTML. A broken non-HTML XML sidecar is left untouched: html5lib's
+    HTML algorithm would structurally rewrite it (html/body-wrapped,
+    ns0:-prefixed) while leaving it well-formed, which is corruption, not
+    repair (reported 2026-09-08). Raises RuntimeError if html5lib is needed
+    but not installed.
     """
     try:
         ET.fromstring(s)
         return s, 0
     except ET.ParseError:
         pass
+
+    if not _HTML_ROOT_RE.search(s):
+        return s, 0
 
     try:
         import html5lib
