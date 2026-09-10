@@ -544,6 +544,27 @@ class TestApplyFailureIsolation(unittest.TestCase):
         self.assertIn("apply failed", out.getvalue())
         self.assertIn("No space left on device", out.getvalue())
 
+    def test_backup_dir_inside_library_root_is_refused(self):
+        # reported 2026-09-08: a --backup dir inside the library root gets its
+        # .epub-named copies swept as candidates on the next run
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _phase1_book(root / "a.epub", broken=False)
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                rc = cli.run_library(
+                    build_parser().parse_args(
+                        [
+                            "library",
+                            str(root),
+                            "--backup",
+                            str(root / "backups"),
+                        ]
+                    )
+                )
+        self.assertEqual(rc, 1)
+        self.assertIn("inside the library root", err.getvalue())
+
 
 class TestLibraryIdScoping(unittest.TestCase):
     """library --id: comma-separated book-id scoping (phase 8). The sweep
@@ -910,8 +931,12 @@ class TestRunPhase1(unittest.TestCase):
     def test_apply_lossy_is_the_consent_and_applies_with_backup(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            _phase1_book(root / "broken.epub", broken=True)
-            _phase1_book(root / "clean.epub", broken=False)
+            # backups must live outside the vetted directory (phase1's own
+            # contract, now enforced by run_library's in-tree rejection)
+            vet = root / "vetted"
+            vet.mkdir()
+            _phase1_book(vet / "broken.epub", broken=True)
+            _phase1_book(vet / "clean.epub", broken=False)
             bdir = root / "backups"
             jout = root / "phase1.json"
             results = [
@@ -930,7 +955,7 @@ class TestRunPhase1(unittest.TestCase):
                     [
                         "run",
                         "phase1",
-                        td,
+                        str(vet),
                         "--apply-lossy",
                         "--backup",
                         str(bdir),
@@ -944,7 +969,7 @@ class TestRunPhase1(unittest.TestCase):
             backup_names = [p.name for p in bdir.rglob("*.epub")]
             with zipfile.ZipFile(next(p for p in bdir.rglob("broken.epub"))) as z:
                 self.assertIn(b"<p>", z.read("t.xhtml"))
-            with zipfile.ZipFile(root / "broken.epub") as z:
+            with zipfile.ZipFile(vet / "broken.epub") as z:
                 repaired = z.read("t.xhtml").decode()
         self.assertEqual(rc, 0)
         self.assertTrue(data["apply_lossy"])

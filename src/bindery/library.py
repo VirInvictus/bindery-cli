@@ -35,10 +35,22 @@ def backup_path(epub: Path, backup_dir: Path | None) -> Path:
 
 
 def make_backup(epub: Path, backup_dir: Path | None) -> Path:
+    """Back `epub` up, never overwriting an earlier backup.
+
+    The first backup of a book is the only copy of the author original, so a
+    second --apply must not clobber it (the 2026-09-08 finding: a second
+    --apply destroyed the only copy). Later backups rotate:
+    book.epub.bak, book.epub.bak2, book.epub.bak3, ...
+    """
     dst = backup_path(epub, backup_dir)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(epub, dst)
-    return dst
+    final = dst
+    n = 1
+    while final.exists():
+        n += 1
+        final = dst.with_name(dst.name + str(n))
+    shutil.copy2(epub, final)
+    return final
 
 
 def atomic_replace(target: Path, new_file: Path) -> None:

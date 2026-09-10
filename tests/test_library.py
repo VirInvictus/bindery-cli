@@ -62,6 +62,19 @@ class TestAtomicReplace(unittest.TestCase):
         self.assertEqual(dst, self.target.with_suffix(".epub.bak"))
         self.assertEqual(dst.read_bytes(), b"OLD CONTENT")
 
+    def test_backup_never_clobbers_the_original(self):
+        # reported 2026-09-08: make_backup clobbered an existing backup, so a
+        # second --apply destroyed the only copy of the author original
+        first = make_backup(self.target, None)
+        self.target.write_bytes(b"REPAIRED ONCE")
+        second = make_backup(self.target, None)
+        self.assertEqual(second, first.with_name(first.name + "2"))
+        # the first backup still holds the author original
+        self.assertEqual(first.read_bytes(), b"OLD CONTENT")
+        self.assertEqual(second.read_bytes(), b"REPAIRED ONCE")
+        third = make_backup(self.target, None)
+        self.assertEqual(third, first.with_name(first.name + "3"))
+
     def test_backup_mirrored_dir(self):
         bdir = self.d / "backups"
         dst = backup_path(self.target, bdir)

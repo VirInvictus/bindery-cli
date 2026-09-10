@@ -376,6 +376,22 @@ def run_library(args) -> int:
 
     audit = _load_audit(Path(args.audit).expanduser()) if args.audit else None
     backup_dir = Path(args.backup).expanduser() if args.backup else None
+    if backup_dir is not None:
+        # A backup directory inside the library root would have its .epub-named
+        # copies swept as candidates on the next run (and replaced in place):
+        # backups must live outside the tree being swept (2026-09-08).
+        try:
+            backup_dir.resolve().relative_to(root.resolve())
+        except ValueError:
+            pass
+        else:
+            print(
+                "error: --backup directory is inside the library root; its "
+                "copies would be swept as candidates on the next run. Use a "
+                "directory outside the library.",
+                file=sys.stderr,
+            )
+            return 1
     wants_backup = backup_dir is not None or args.backup_inplace
     if wants_backup and not args.apply:
         print(

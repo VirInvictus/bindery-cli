@@ -1031,13 +1031,19 @@ can be net-neutral and ships silently.*
       and phase3, while phase1 maps partial to problem/exit 2; the layers
       disagree and scripts can miss trouble (`cli.py:260`, `526-534`, `634`,
       `1030-1032`).
-- [ ] **Give backups overwrite protection and keep them out of the
+- [x] **Give backups overwrite protection and keep them out of the
       candidate set.** `make_backup` clobbers an existing backup, so a
       second `--apply` destroys the only copy of the author original
       (`library.py:37-41`); a `--backup` dir inside the library root gets
       its `.epub`-named copies swept as candidates on the next run
       (`library.py:29-34`). Refuse overwrite (or rotate) and reject an
       in-tree backup path.
+      *(Done in v0.32.0: `make_backup` rotates (book.epub.bak, .bak2, .bak3,
+      ...) so the first backup always keeps the author original, and
+      `run_library` refuses a `--backup` directory resolved inside the
+      library root with a usage error (exit 1). The phase1 apply test's
+      fixture, which had been violating phase1's own keep-backups-outside
+      contract, was corrected in the same commit.)*
 - [ ] **Make `--workers` parallelism real and bound the daemon.** The
       epubcheck daemon holds its lock across the whole blocking
       round-trip, so every worker serializes behind it and `--workers N`
