@@ -59,10 +59,12 @@
 
 Dry-run validation for this release: the 14 staged top500candidates plus
 the 3 books_to_fix fixtures swept clean (9 accepted, 2 gate-refused
-regressions, 0 errors), and a 212-book random-order sample of the real
-library (5,228 EPUBs) under `--all --workers 4` matched the documented
-verdict mix with zero crashes and zero epubcheck failures. Read-only
-throughout.
+regressions, 0 errors), and a 200-candidate sample of the real library
+(5,228 EPUBs) under `--all --workers 4` matched the documented verdict
+mix (94 accepted, 84 equal, 16 gate-refused, 0 partial, 0 epubcheck
+errors, 0 unreadable) with zero crashes. Read-only throughout; the
+gate-refused books are the safety contract declining marginal repairs,
+left untouched for manual work.
 
 ## v0.31.0 (2026-09-09)
 

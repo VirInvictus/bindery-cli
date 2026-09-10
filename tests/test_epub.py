@@ -99,6 +99,20 @@ class TestManifestIds(unittest.TestCase):
         out, n = fix_manifest_ids(opf)
         self.assertEqual((out, n), (opf, 0))
 
+    def test_single_quoted_opf_renames_too(self):
+        # reported 2026-09-08: the double-quote-only regex made a
+        # single-quoting toolchain a silent count-0 no-op
+        opf = (
+            "<manifest>"
+            "<item id='7cgqkgid' href='a.xhtml' media-type='application/xhtml+xml'/>"
+            "</manifest>"
+            "<spine><itemref idref='7cgqkgid'/></spine>"
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 1)
+        self.assertIn("id='id_7cgqkgid'", out)
+        self.assertIn("idref='id_7cgqkgid'", out)
+
     def test_colon_id_renamed(self):
         out, n = fix_manifest_ids('<item id="a:b" href="x"/><itemref idref="a:b"/>')
         self.assertEqual(n, 1)
@@ -481,11 +495,27 @@ class TestMimetypeRepair(unittest.TestCase):
         self.assertEqual(first.filename, "mimetype")
         self.assertEqual(first.compress_type, zipfile.ZIP_STORED)
         self.assertEqual(data, b"application/epub+zip")
+        # a mimetype fix IS a change: files_changed must say so (reported
+        # 2026-09-08: it landed in report.fixes without incrementing). The
+        # CONTENT fixture's self-close fix accounts for the other file.
+        self.assertEqual(report.files_changed, 2)
 
     def test_padded_mimetype_normalized(self):
         report, _, data = self._repair("application/epub+zip\n")
         self.assertEqual(report.fixes.get("mimetype_normalized"), 1)
         self.assertEqual(data, b"application/epub+zip")
+
+    def test_archive_comment_is_carried_over(self):
+        # reported 2026-09-08: the rewrite dropped the archive comment field
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.comment = b"converted by a chatty tool"
+                z.writestr("mimetype", b"application/epub+zip")
+                z.writestr("OEBPS/c1.xhtml", CONTENT)
+            repair_epub(src, dst)
+            with zipfile.ZipFile(dst) as z:
+                self.assertEqual(z.comment, b"converted by a chatty tool")
 
     def test_correct_mimetype_untouched(self):
         report, first, data = self._repair("application/epub+zip")

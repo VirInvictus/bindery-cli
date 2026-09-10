@@ -268,6 +268,7 @@ def escape_bare_amp(s: str) -> tuple[str, int]:
     return _BARE_AMP_RE.subn("&amp;", s)
 
 
+@_outside_protected
 def strip_prolog_junk(s: str) -> tuple[str, int]:
     """Remove a BOM or stray bytes before the first `<` ("content not allowed in prolog").
 
@@ -275,7 +276,8 @@ def strip_prolog_junk(s: str) -> tuple[str, int]:
     must be the very first thing in the document). Before a DOCTYPE or the root element
     it is legal prolog whitespace and is left alone: counting it as a fix marked the
     document changed, which forced repair_epub's decode("utf-8", "replace") round-trip
-    on a file that had nothing wrong with it.
+    on a file that had nothing wrong with it. The protected-span wrapper keeps a
+    leading comment's contents out of the search.
     """
     stripped = s.lstrip("﻿ \t\r\n")
     i = stripped.find("<")
@@ -289,8 +291,13 @@ def strip_prolog_junk(s: str) -> tuple[str, int]:
     return stripped, 1
 
 
+@_outside_protected
 def drop_duplicate_xmlns(s: str) -> tuple[str, int]:
-    """Keep only the first `xmlns="..."` on the root <html> element."""
+    """Keep only the first `xmlns="..."` on the root <html> element.
+
+    The protected-span wrapper keeps an `<html ...>` mentioned inside a
+    comment out of the rewrite: comment content is not markup.
+    """
     m = _HTML_TAG_RE.search(s)
     if not m:
         return s, 0
@@ -316,20 +323,27 @@ def drop_duplicate_xmlns(s: str) -> tuple[str, int]:
 # fixes first, then ampersand/entity normalization, then void self-closing.
 @_outside_protected
 def fix_ncx_playorder(s: str) -> tuple[str, int]:
+    """Re-sequence `playOrder` integers across `<navPoint>` start tags so they
+    are strictly sequential (NCX-004/NCX-005 class findings). The edit is
+    anchored to navPoint start tags: the word `playOrder` inside a nav
+    label's text is content, not markup, and is never touched.
+    """
     count = 0
     playorder = 1
 
     def repl(m: re.Match) -> str:
         nonlocal count, playorder
-        val = m.group(2)
-        if val != str(playorder):
+        if m.group(2) != str(playorder):
             count += 1
-        res = f'{m.group(1)}"{playorder}"'
+        res = f'{m.group(1)} playOrder="{playorder}"'
         playorder += 1
         return res
 
     s, n = re.subn(
-        r'(playOrder\s*=\s*)["\']([^"\']+)["\']', repl, s, flags=re.IGNORECASE
+        r"(<navPoint\b[^>]*?)\s+playOrder\s*=\s*(\"[^\"]*\"|'[^']*')",
+        repl,
+        s,
+        flags=re.IGNORECASE,
     )
     return s, count
 
@@ -444,9 +458,11 @@ def css_protected_tags(
             for tag in tags:
                 # The trailing boundary includes . and #: `pagebreak.new:after`
                 # styles pagebreak ELEMENTS, so it must protect the name, while a
-                # LEADING . or # stays unprotected (`div.st` styles a class).
+                # LEADING . or # stays unprotected (`div.st` styles a class). The
+                # leading boundary also covers namespaced (`svg|st`) and functional
+                # (`:is(st, w)`) selector forms; the trailing one a closing paren.
                 if re.search(
-                    rf"(^|[\s,>+~]){tag}([\s,>+~:\[.#]|$)", selectors, re.IGNORECASE
+                    rf"(^|[\s,>+~|(]){tag}([\s,>+~:\[.#)|]|$)", selectors, re.IGNORECASE
                 ):
                     found.add(tag)
     return frozenset(found)

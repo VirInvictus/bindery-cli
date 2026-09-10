@@ -947,7 +947,7 @@ can be net-neutral and ships silently.*
       requires an `<html` root before it will rebuild, so a broken page
       template or other XML sidecar is returned untouched instead of
       structurally rewritten. Tests pin the sidecar shape.)*
-- [ ] **Smaller repair papercuts:** `fix_ncx_playorder` can rewrite
+- [x] **Smaller repair papercuts:** `fix_ncx_playorder` can rewrite
       `playOrder="N"`-shaped text inside nav labels (unanchored pattern,
       `transforms.py:326-328`); mimetype fixes land in `report.fixes`
       without incrementing `files_changed` (`epub.py:837-840`);
@@ -958,6 +958,17 @@ can be net-neutral and ships silently.*
       watermark `_norm` doesn't unescape entities so `OceanofPDF.com&nbsp;`
       stamps are missed; drop_duplicate_xmlns/strip_prolog_junk edit inside
       comments; the archive comment field is dropped by the rewrite.
+      *(Done in v0.32.0, all seven: playorder resequencing is anchored to
+      `<navPoint>` start tags so nav-label text is untouchable; mimetype
+      fixes increment `files_changed`; `fix_manifest_ids` and its reference
+      rewrites are quote-agnostic (the shadowed `_IDREF_ATTR_RE` definitions
+      were unified into one quote-aware regex); the css selector boundary
+      recognizes `svg|st`, `:is(st, w)`, and `:where(...)` forms, and the
+      stylesheet scan collects `.xpgt` templates too; watermark `_norm`
+      decodes entities so `OceanofPDF.com&nbsp;` pure-matches; both
+      prolog/xmlns fixes run under the protected-span wrapper; and the
+      archive comment rides the rewrite (`zout.comment = zin.comment`).
+      Tests pin every one.)*
 
 ### audit.py correctness
 

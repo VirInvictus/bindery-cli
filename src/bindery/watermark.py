@@ -27,6 +27,7 @@ one entry in WATERMARKS; the passes below are otherwise signature-agnostic.
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass, field
 
@@ -144,9 +145,11 @@ _OTHER_ANCHOR = re.compile(r"<a\b", re.IGNORECASE)
 
 
 def _norm(element: str) -> str:
-    """Visible text of an element fragment: tags stripped, nbsp and whitespace runs
-    collapsed to single spaces, stripped, lowercased."""
-    text = re.sub(r"<[^>]+>", "", element).replace("\xa0", " ")
+    """Visible text of an element fragment: tags stripped, entities decoded,
+    nbsp and whitespace runs collapsed to single spaces, stripped, lowercased.
+    Decoding matters: a stamp written as `OceanofPDF.com&nbsp;` must normalize
+    to the same text as its plain-space twin."""
+    text = html.unescape(re.sub(r"<[^>]+>", "", element)).replace("\xa0", " ")
     return re.sub(r"\s+", " ", text).strip().lower()
 
 

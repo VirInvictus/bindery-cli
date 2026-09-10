@@ -250,6 +250,17 @@ class TestRemoval(unittest.TestCase):
         self.assertIn("years ago.", cleaned)
         parse(cleaned)
 
+    def test_entity_encoded_stamp_is_detected(self):
+        # reported 2026-09-08: _norm did not unescape entities, so an
+        # anchorless `OceanofPDF.com&nbsp;` stamp never pure-matched its
+        # wrapper and was left behind
+        body = "<p>Real text.</p><div>OceanofPDF.com&nbsp;</div>"
+        cleaned, n, refused = self._clean(body)
+        self.assertEqual(n, 1)
+        self.assertEqual(refused, 0)
+        self.assertNotIn("oceanofpdf", cleaned.lower())
+        parse(cleaned)
+
     def test_unclosed_anchor_refused_not_deleted(self):
         cleaned, n, refused = self._clean(UNCLOSED_ANCHOR)
         # the whole-match fallback used to swallow both paragraphs with count 1

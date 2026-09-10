@@ -18,6 +18,7 @@ from bindery.transforms import (
     fix_id_colons,
     fix_missing_title,
     fix_named_entities,
+    fix_ncx_playorder,
     fix_ncx_src_fragments,
     self_close_void,
     strip_broken_tags,
@@ -436,6 +437,32 @@ class TestStructuralRepairsAreOptIn(unittest.TestCase):
                 self.assertGreaterEqual(n, 1)
 
 
+class TestFixNcxPlayorder(unittest.TestCase):
+    def test_resequences_navpoint_attributes(self):
+        ncx = (
+            '<navPoint id="a" playOrder="3"/><navPoint id="b" playOrder="7"/>'
+            "<navPoint id='c' playOrder='1'/>"
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual(n, 3)
+        self.assertIn('<navPoint id="a" playOrder="1"/>', out)
+        self.assertIn('<navPoint id="b" playOrder="2"/>', out)
+        self.assertIn("<navPoint id='c' playOrder=\"3\"/>", out)
+
+    def test_nav_label_text_is_not_rewritten(self):
+        # reported 2026-09-08: the unanchored pattern rewrote the words
+        # playOrder="3" inside a nav label's visible text
+        ncx = (
+            '<navPoint id="a" playOrder="5"><navLabel>'
+            '<text>Chapter playOrder="3" text</text></navLabel>'
+            '<content src="c.xhtml"/></navPoint>'
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual(n, 1)  # the attribute, not the label text
+        self.assertEqual(out.count('playOrder="1"'), 1)
+        self.assertIn("Chapter playOrder=", out)
+
+
 class TestStripInvalidValue(unittest.TestCase):
     def test_misplaced_value_is_stripped(self):
         out, n = strip_invalid_value('<li class="x" value="7">text</li>')
@@ -526,6 +553,14 @@ class TestCssProtectedTags(unittest.TestCase):
     def test_similar_names_do_not_match(self):
         # 'strong' contains 'st'; the selector-boundary regex must not care.
         self.assertNotIn("st", css_protected_tags("strong { font-weight: bold }"))
+
+    def test_namespaced_and_functional_selector_forms_protect(self):
+        # reported 2026-09-08: the `svg|st` namespaced form and the
+        # `:is(st, w)` / `:where(...)` functional forms were missed, so a
+        # styled tag could lose its protection and be unwrapped
+        self.assertIn("st", css_protected_tags("svg|st { fill: red }"))
+        self.assertIn("w", css_protected_tags(":is(st, w) { margin: 0 }"))
+        self.assertIn("st", css_protected_tags("x:where(st) { color: red }"))
 
     def test_comments_are_ignored(self):
         self.assertEqual(css_protected_tags("/* w { } */ p { }"), frozenset())

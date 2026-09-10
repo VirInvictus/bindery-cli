@@ -58,7 +58,9 @@ MARKER_NAMES = {"oceanofpdf.com"}
 # otherwise make the NCX-001 sync and OPF location silently no-op. The ([\"']) group
 # plus the tempered (?:(?!\1).)* body match a value up to its own quote character.
 _UID_ATTR_RE = re.compile(r"unique-identifier=([\"'])((?:(?!\1).)+)\1")
-_ITEM_ID_RE = re.compile(r'(<item\b[^>]*?\bid=")([^"]*)(")', re.IGNORECASE)
+_ITEM_ID_RE = re.compile(
+    r"(<item\b[^>]*?\bid=)([\"'])((?:(?!\2).)+)(\2)", re.IGNORECASE
+)
 _ROOTFILE_RE = re.compile(r"full-path=([\"'])((?:(?!\1).)+)\1")
 
 
@@ -118,30 +120,43 @@ def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
     Calibre-converted books often carry manifest ids copied from random filenames that
     start with a digit; epubcheck rejects them. The href/filenames are untouched.
     """
-    rename = _plan_renames({m.group(2) for m in _ITEM_ID_RE.finditer(opf_text)})
+    rename = _plan_renames({m.group(3) for m in _ITEM_ID_RE.finditer(opf_text)})
     if not rename:
         return opf_text, 0
 
     def repl_attr(m: re.Match) -> str:
-        return m.group(1) + rename.get(m.group(2), m.group(2)) + m.group(3)
+        # group 1 is the name= prefix (and for items the tag head), group 2 the
+        # opening quote, group 3 the value, group 4 the closing quote; the
+        # quote characters are carried through untouched.
+        return m.group(1) + m.group(2) + rename.get(m.group(3), m.group(3)) + m.group(4)
 
     out = _ITEM_ID_RE.sub(repl_attr, opf_text)
-    out = re.sub(r'(\bidref=")([^"]*)(")', repl_attr, out)
-    out = re.sub(r'(\bfallback=")([^"]*)(")', repl_attr, out)
-    out = re.sub(r'(\bmedia-overlay=")([^"]*)(")', repl_attr, out)
+    out = _IDREF_ATTR_RE.sub(repl_attr, out)
     out = re.sub(
-        r'(<spine\b[^>]*?\btoc=")([^"]*)(")', repl_attr, out, flags=re.IGNORECASE
+        r"(\bfallback=)([\"'])((?:(?!\2).)+)(\2)", repl_attr, out, flags=re.IGNORECASE
     )
-    # The EPUB 2 cover convention points at a manifest id; Calibre and most readers
-    # find the cover through it, so a renamed cover item must be re-pointed.
     out = re.sub(
-        r'(<meta\b[^>]*\bname="cover"[^>]*\bcontent=")([^"]*)(")',
+        r"(\bmedia-overlay=)([\"'])((?:(?!\2).)+)(\2)",
         repl_attr,
         out,
         flags=re.IGNORECASE,
     )
     out = re.sub(
-        r'(<meta\b[^>]*\bcontent=")([^"]*)("[^>]*\bname="cover")',
+        r"(<spine\b[^>]*?\btoc=)([\"'])((?:(?!\2).)+)(\2)",
+        repl_attr,
+        out,
+        flags=re.IGNORECASE,
+    )
+    # The EPUB 2 cover convention points at a manifest id; Calibre and most readers
+    # find the cover through it, so a renamed cover item must be re-pointed.
+    out = re.sub(
+        r"(<meta\b[^>]*\bname=[\"']cover[\"'][^>]*\bcontent=)([\"'])((?:(?!\2).)+)(\2)",
+        repl_attr,
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(<meta\b[^>]*\bcontent=)([\"'])((?:(?!\2).)+)(\2[^>]*\bname=[\"']cover[\"'])",
         repl_attr,
         out,
         flags=re.IGNORECASE,
@@ -149,8 +164,8 @@ def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
     return out, len(rename)
 
 
-# Any id attribute, either quote style (the OPF _ITEM_ID_RE is item-specific and
-# double-quote-only; NCX toolchains emit both styles).
+# Any id attribute, either quote style (the OPF _ITEM_ID_RE is item-specific;
+# NCX toolchains emit both styles).
 _XML_ID_RE = re.compile(r"""(\bid=)(["'])((?:(?!\2).)*)(\2)""", re.IGNORECASE)
 
 
@@ -406,7 +421,7 @@ _ALT_ATTR_RE = re.compile(
     r"""(?:^|\s)alt\s*=\s*(["'])((?:(?!\1).)*)\1""", re.IGNORECASE
 )
 _IDREF_ATTR_RE = re.compile(
-    r"""(?:^|\s)idref\s*=\s*(["'])((?:(?!\1).)*)\1""", re.IGNORECASE
+    r"""((?:^|\s)idref\s*=\s*)([\"'])((?:(?!\2).)+)(\2)""", re.IGNORECASE
 )
 # Removes the href attribute (with its leading whitespace) from a tag body.
 _DROP_HREF_ATTR_RE = re.compile(r"""\s+href\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE)
@@ -801,6 +816,7 @@ def repair_epub(
     # `src` is opened before `dst`, so an unreadable archive still raises before the
     # output file is created.
     with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
+        zout.comment = zin.comment
         opf = _locate_opf(zin)
         opf_text = zin.read(opf).decode("utf-8", "replace") if opf else None
         uid = opf_unique_id(opf_text) if opf_text is not None else None
@@ -836,7 +852,7 @@ def repair_epub(
             css_texts = [
                 zin.read(i).decode("utf-8", "replace")
                 for i in zin.infolist()
-                if i.filename.lower().endswith(".css")
+                if i.filename.lower().endswith((".css", ".xpgt"))
             ]
             if illegal_tags:
                 book_css_tags = css_protected_tags(*css_texts)
@@ -885,7 +901,7 @@ def repair_epub(
                         m.group(3) for m in _XML_ID_RE.finditer(t)
                     )
         if prune_missing and opf_text is not None:
-            spine_ids = {m.group(2) for m in _IDREF_ATTR_RE.finditer(opf_text)}
+            spine_ids = {m.group(3) for m in _IDREF_ATTR_RE.finditer(opf_text)}
 
         # The mimetype content is an OCF constant, so adding a missing entry and
         # normalizing wrong or whitespace-padded content is deterministic and
@@ -893,8 +909,10 @@ def repair_epub(
         src_mime = zin.getinfo("mimetype") if "mimetype" in zin.namelist() else None
         if src_mime is None:
             report.add({"mimetype_added": 1})
+            report.files_changed += 1
         elif zin.read(src_mime) != MIMETYPE:
             report.add({"mimetype_normalized": 1})
+            report.files_changed += 1
         # A bare string arcname would make zipfile stamp this entry with the current
         # clock, and it was the only such entry in the archive (every other one is
         # written from its source ZipInfo), so two repairs of one book differed in
