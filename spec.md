@@ -243,8 +243,8 @@ daemon (`_EpubcheckDaemon`, a bounded pool sized by `--workers`) that writes
 `FastDaemon.java` at runtime and launches it through Java's single-file source
 launcher (in-memory compilation by the running JVM: no javac, no version skew),
 driving the warm JVM over a pipe. The daemon answers with the counts it reads from
-the JSON that epubcheck's own `CheckingReport.generate()` serializes — the same
-document `--json` produces — so both paths measure identically by construction.
+the JSON that epubcheck's own `CheckingReport.generate()` serializes (the same
+document `--json` produces), so both paths measure identically by construction.
 (Epubcheck's JSON counts aggregated messages, not occurrences: a defect repeated
 three times is one error. The gate has always measured that scale.) Every daemon
 roundtrip is bounded by the caller's timeout, and any daemon failure tears it down

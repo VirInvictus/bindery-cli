@@ -663,7 +663,7 @@ book instead raises an uncaught `TypeError` at the `book["path"]` access.
 matches the DB's book path and format name before the batch; otherwise save
 in place and warn without touching the row, and catch the `TypeError` path.
 *(Fixed in v0.32.0: a guessed id now drives a row update only when
-metadata.db corroborates it — the books row exists, the file sits in that
+metadata.db corroborates it: the books row exists, the file sits in that
 book's catalogued directory, and when an EPUB row exists it carries that
 row's stored name. Any other guess (a stray file in a book directory, a
 stale `(N)` directory whose book is gone, the resolver's id gone from
@@ -996,7 +996,7 @@ can be net-neutral and ships silently.*
       v0.22.0 "its own verdict in every mode" promise (`audit.py:1565`,
       `1783-1803`, `1520-1558`).
       *(Done in v0.33.0: the archive and spine sections run unconditionally
-      after the selected content sections — they are always-on verdicts and
+      after the selected content sections; they are always-on verdicts and
       were already scanned and recorded in the JSON; only the console/rc
       path was dead. A CRC-corrupt book now prints its CORRUPT section and
       fails library mode with exit 1, matching directory mode. Test pins
@@ -1286,7 +1286,7 @@ can be net-neutral and ships silently.*
 
 ### Documentation (drift is real but narrow)
 
-- [ ] **Reconcile spec.md with the shipped opt-ins.** The contract's
+- [x] **Reconcile spec.md with the shipped opt-ins.** The contract's
       non-goals forbid exactly what `--reserialize` (v0.3.0, the lone
       html5lib dependency) and `--strip-bad-attrs` (v0.4.0) do, and neither
       has a spec section; the OPF half of `--fix-ids` is missing;
@@ -1294,6 +1294,10 @@ can be net-neutral and ships silently.*
       NCX sentence at spec.md:52-53 is garbled (a dangling "to the OPF
       unique identifier" tail). A contributor reading spec.md first would
       conclude two shipped flags violate the charter.
+      *(APPLIED 2026-09-10, commit 01ad173, on Brandon's verbatim go
+      recorded in the audit sheet's evening answers; shipped with
+      v0.34.0. Ticked 2026-09-11 in the main-thread double-check after
+      the verifier caught the work shipping unticked.)*
       **GATED on Brandon: spec.md is the contract file. Draft proposal,
       ready to apply on a go (do not apply without one):**
       (1) Non-goals bullet 2 ("Repairing genuinely mangled structure
