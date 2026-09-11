@@ -1,4 +1,40 @@
 # bindery-cli Patch Notes
+## v0.34.0 (2026-09-10)
+
+### Brandon's three calls: partial books are trouble, the contract reconciled, the daemon decision informed
+
+- **Partial books now fail every layer (exit-code decision, option A).**
+  A `partial` book (repaired, improved, but still unable to open) used to
+  exit 0 from `library` and `run phase3` while `run phase1` counted it
+  as trouble. All three layers now exit 2 on it: the run succeeded, but
+  a book still needs a human. README and spec updated to match, and a
+  regression test pins a 3f-to-1f book exiting 2 with `applied: 0`.
+- **spec.md reconciled with the shipped opt-ins** (applied on Brandon's
+  go, from the draft filed in v0.33.0's roadmap box). The non-goals no
+  longer prohibit what ships: "fixing RSC-005 in bulk" now names the
+  scoped, version-gated repairs as the shipped exception, and "repairing
+  genuinely mangled structure" now describes `--reserialize`'s actual
+  bounds (html root required, non-HTML XML sidecars refused). The
+  missing `--fix-ids` OPF section is written (manifest item ids, spine
+  idref/toc, fallback, media-overlay, EPUB 2 cover meta, both quote
+  styles), the garbled NCX sentence is rewritten, and "the OPF is left
+  untouched" now reads "by the default pass", naming the five opt-ins
+  that edit it on request.
+- **The daemon decision, informed:** Brandon asked whether upgrading
+  java to 27 fixes the epubcheck daemon. Investigated and answered: his
+  javac is Fedora's `java-latest-openjdk-devel` 27-ea while `java` is
+  `java-25-openjdk` (both official Fedora packages, no COPR involved),
+  but the version skew is not the real blocker. epubcheck's own JSON
+  output is deduplicated (it reports 4 errors for a book whose CLI
+  summary says 243), the daemon counts everything, and bindery's gate
+  has always measured with JSON-style counts, so a working daemon would
+  change what the gate measures. The skew itself is fixable in code
+  (Java's single-file source launcher needs no javac at all), but the
+  daemon should stay off until its counting matches the JSON oracle; it
+  already self-disables safely, and `--workers` parallelism works via
+  subprocesses. Retire-or-reconcile remains the open decision; recorded
+  in the roadmap's `:958` box.
+
 ## v0.33.0 (2026-09-10)
 
 ### Phase 14 hardening: the apply path, the audit, and the safety contract's tests

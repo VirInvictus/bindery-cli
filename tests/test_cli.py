@@ -1309,3 +1309,46 @@ class TestSweepWorkers(unittest.TestCase):
         self.assertEqual(rc, 0)
         # 1 sweep call + 1 after-validation on the single candidate
         self.assertEqual(len(checked), 2)
+
+
+class TestPartialBooksAreTrouble(unittest.TestCase):
+    """Brandon's option-A call (2026-09-10): a partial book (improved but
+    still unable to open) is trouble -- library and phase3 exit 2 on it,
+    agreeing with phase1's existing mapping."""
+
+    def test_library_exits_2_on_a_partial_book(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _phase1_book(root / "a.epub", broken=True)
+            jout = root / "lib.json"
+            results = [
+                CheckResult(3, 0, 0),  # the sweep's before-measurement
+                CheckResult(1, 0, 0),  # after: fewer fatals, still fatal
+            ]
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("bindery.cli.epubcheck_available", return_value=True),
+                mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = cli.run_library(
+                    build_parser().parse_args(
+                        [
+                            "library",
+                            str(root),
+                            "--sweep",
+                            "--only",
+                            "all",
+                            "--all",
+                            "--apply",
+                            "--json",
+                            str(jout),
+                        ]
+                    )
+                )
+            data = json.loads(jout.read_text())
+        self.assertEqual(rc, 2)
+        self.assertEqual(data["summary"]["partial"], 1)
+        # a partial book is never auto-applied
+        self.assertEqual(data["summary"]["applied"], 0)

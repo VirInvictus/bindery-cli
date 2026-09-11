@@ -187,7 +187,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
 - A per-book progress line goes to stderr (stdout stays a clean report); `--quiet` suppresses it. A corrupt or unreadable book is reported and skipped, never aborting the sweep.
 - Exit codes: 0 for a clean sweep, 1 for a usage error, 2 when any book was rejected, unreadable, or failed epubcheck (for scripts and cron). Note that argparse-level misuse (an unknown flag or a malformed argument) exits with 2 before any validation runs; the tool's own usage validations exit 1.
-- A `partial` book (improved but still unable to open) is reported for manual follow-up and does not fail a `library` run; `run phase1` counts it as trouble and exits 2.
+- A `partial` book (improved but still unable to open) is reported for manual follow-up and fails the run with exit 2, in `library`, `run phase1`, and `run phase3` alike: a book that still needs a human is trouble.
 - `repair` refuses to overwrite an existing output file unless `--force` is given.
 
 ## Run slices

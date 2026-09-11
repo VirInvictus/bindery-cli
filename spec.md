@@ -50,7 +50,11 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
    change what renders. Removed end tags are counted in the fix total.
 
 Applied to the NCX sidecar (`.ncx`): strip_prolog_junk, escape_bare_amp,
-fix_named_entities, plus **dtb:uid sync**, **fix_ncx_playorder** (sequentially rewrites duplicate playOrder attributes)  to the OPF unique identifier (NCX-001).
+fix_named_entities, plus **dtb:uid sync** (rewriting the NCX's `dtb:uid`
+meta to match the OPF's unique identifier when they drift, NCX-001) and
+**fix_ncx_playorder** (resequencing `playOrder` attributes on
+`<navPoint>` start tags so they are strictly sequential; nav-label text
+is never touched).
 With `--fix-ids`, ids in the NCX that are not valid XML names (digit-led, as when a
 converter stamps navPoint ids from UUIDs; colon-bearing) are renamed with the same
 `id_` scheme as OPF manifest ids. NCX ids are internal to the NCX (nothing in the
@@ -58,7 +62,10 @@ OPF or content documents references them), so the rename needs no cross-file
 bookkeeping.
 
 The OPF is located via `META-INF/container.xml` (falling back to the first `.opf`
-in the archive) and is left untouched, to keep Calibre's embedded metadata pristine.
+in the archive). The default pass leaves it untouched, to keep Calibre's embedded
+metadata pristine; the opt-in `--fix-ids`, `--strip-epub3-attrs`, `--fix-page-map`,
+`--prune-missing-resources`, and `--encode-url-spaces` each edit it when requested,
+and the human-facing `dc:` metadata is never altered by any of them.
 
 ### Opt-in: escape unknown entities (`--escape-unknown-entities`)
 
@@ -97,6 +104,12 @@ part of the default pipeline:
   external URL names a position in that other document and survives verbatim, and the
   NCX's `content src` fragments follow the rename (`fix_ncx_src_fragments`), so a ToC
   never dangles against the ids it references.
+- **`--fix-ids`**: renames manifest `item` ids that are not valid XML names
+  (digit-led, colon-bearing) with the deterministic `id_` scheme, and updates
+  every reference to them: spine `idref` and `toc`, item `fallback` and
+  `media-overlay`, and the EPUB 2 cover meta, in both quote styles. NCX ids are
+  renamed by the same pass (`fix_ncx_ids`); colon-bearing fragments follow the
+  rename via `--fix-id-colons`' NCX half. Href paths and filenames are untouched.
 - **`--unwrap-block-in-inline`**: drop a `<span>` that illegally wraps a
   `<div>/<p>/<blockquote>`, keeping the block element and its text.
 - **`--strip-invalid-value`**: remove misplaced `value="..."` attributes from non-form
@@ -302,8 +315,8 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
   book was rejected, unreadable, or failed epubcheck, so scripts can detect trouble.
   Argparse-level misuse (unknown flag, malformed argument) exits 2 before the tool's
   own validation runs; the tool's own usage validations exit 1. A `partial` book
-  (improved but still fatal) is reported for manual follow-up and does not fail the
-  run; `run phase1` counts it as trouble.
+  (improved but still fatal) is reported for manual follow-up and counts as trouble:
+  `library`, `run phase1`, and `run phase3` all exit 2 on it (unified 2026-09-10).
 - With `--sweep`, `--workers N` runs the candidate-selection epubcheck pass through N
   concurrent workers (default 1: serial, unchanged). Books are checked in windows of N
   consumed in input order, so the candidate set and the before-measurements are identical
@@ -376,7 +389,15 @@ verb call). Books left partial or unreadable surface as `decisions_needed`.
 
 ## Out of scope (non-goals)
 
-- Fixing RSC-005 schema/content-model violations in bulk.
-- Repairing genuinely mangled structure (unclosed non-void elements, corrupted tag
-  names, embedded VML/SVG). These are detected as `partial`/`nochange` and reported.
+- Fixing RSC-005 schema/content-model violations *in bulk*: the scoped, opt-in
+  RSC-005 repairs (`--strip-epub3-attrs`, `--downgrade-epub3-tags`, both gated on
+  the package version) ship and stay, but an indiscriminate RSC-005 sweep remains
+  out of scope.
+- Repairing genuinely mangled structure remains opt-in and bounded:
+  `--reserialize` (the lone html5lib dependency) re-parses malformed documents
+  carrying an `<html>` root and re-emits XHTML, refusing non-HTML XML sidecars;
+  corrupted tag names are covered by `--strip-bad-attrs` and
+  `--unwrap-illegal-tags`. Wholesale structural rewrites without a root to anchor
+  on stay out of scope, and anything the opt-ins cannot make deterministically
+  safe is detected as `partial`/`nochange` and reported.
 - Editing human-facing dc: metadata or creating content.

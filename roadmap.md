@@ -1068,7 +1068,7 @@ can be net-neutral and ships silently.*
       and JSON with exit 2; the resumable run journal is deliberately not
       built, since isolation plus `--json` already preserves the record
       and the journal is a second write surface next to the library.)*
-- [ ] **Drive the exit code from partial books.** The documented contract
+- [x] **Drive the exit code from partial books.** The documented contract
       says exit 2 means "ran fine but some books are in trouble", but
       partial books land in `still_fatal` and return 0, in both `library`
       and phase3, while phase1 maps partial to problem/exit 2; the layers
@@ -1089,6 +1089,11 @@ can be net-neutral and ships silently.*
       cost: scripts that care must parse the report, and the contract's
       exit-2 sentence stays subtly incomplete.
       Either way the exit-code documentation lands with the decision.
+      *(DECIDED 2026-09-10: option A, "unify on trouble". `run_library`
+      now folds `partials` into its trouble exit, and phase3 propagates
+      that rc, so all three layers exit 2 on a partial book. README and
+      spec updated to match; regression test pins a 3f->1f book exiting
+      2 with applied=0. Shipped in v0.34.0.)*
 - [x] **Give backups overwrite protection and keep them out of the
       candidate set.** `make_backup` clobbers an existing backup, so a
       second `--apply` destroys the only copy of the author original
@@ -1137,7 +1142,21 @@ can be net-neutral and ships silently.*
       `--only ncx` encrypted-archive crash is also fixed here:
       `ncx_uid_mismatch` now catches the RuntimeError that `z.read`
       raises on zip-encrypted entries, so a DRM'd book is not a candidate
-      rather than a crash.)*
+      rather than a crash.)
+      *(DECISION NOTE 2026-09-10: Brandon asked whether upgrading his
+      java to 27 would fix the daemon. Answered no: his javac is Fedora's
+      java-latest-openjdk-devel 27-ea while java is java-25-openjdk (both
+      official Fedora packages, no COPR involved), but the version skew
+      is not the real blocker: epubcheck's own JSON output is
+      deduplicated (it reports 4 errors for a book its CLI summary calls
+      243), the daemon counts everything, and bindery's gate has always
+      measured with JSON-style counts. Upgrading java would make the
+      daemon boot and start feeding different numbers into the gate. The
+      skew itself is fixable in code (single-file source launcher, no
+      javac at all), but the daemon should stay off until its counting
+      matches the JSON oracle; retire-or-reconcile remains the open
+      decision. The daemon already self-disables safely, and --workers
+      parallelism works via subprocesses.)**
 - [x] **Smaller apply papercuts:** `--limit -1` and a missing
       `--audit` file raise tracebacks instead of usage errors
       (`cli.py:434`, `373`); the fresh-format branch of `install_format`

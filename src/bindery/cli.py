@@ -680,7 +680,12 @@ def run_library(args) -> int:
 
     # 2 lets scripts and cron distinguish "ran fine but some books are in trouble"
     # from a clean sweep (0) and a usage error (1).
-    return 2 if (rejected + errors + unreadable) > 0 else 0
+    # Exit codes per the documented contract, unified on "trouble" (Brandon's
+    # option-A call, 2026-09-10): a partial book (improved but still unable
+    # to open) IS trouble -- the run itself succeeded, but a book still needs
+    # a human. phase1 already mapped partial to 2; library and phase3 (which
+    # propagates this rc) now agree with it.
+    return 2 if (rejected + errors + unreadable + partials) > 0 else 0
 
 
 def run_repair(args) -> int:
