@@ -1,4 +1,37 @@
 # bindery-cli Patch Notes
+## v0.35.0 (2026-09-10)
+
+### The epubcheck daemon, reconciled: oracle-identical counts at ~15x the speed
+
+- **FastDaemon v2 measures exactly what the subprocess oracle measures.**
+  The daemon's old Java side counted message occurrences from
+  `CheckingReport`'s counters, while the gate has always measured the
+  counts in epubcheck's own `--json` output, which aggregates identical
+  messages (one book: 243 occurrences, 4 aggregated messages). On the
+  staged-fixture corpus the two methods diverged on 11 of 14 books, so
+  the daemon could never be enabled without changing what the gate
+  measures. The new daemon calls `CheckingReport.generate()` and reads
+  `nFatal`/`nError`/`nWarning` out of the JSON epubcheck itself
+  serializes: identical numbers by construction. Verified against the
+  subprocess oracle on all 14 staged books and on a 100-book
+  real-library sample: 114/114 identical.
+- **No more javac, no more version skew.** The daemon now launches
+  through Java's single-file source launcher (JEP 330): the running JVM
+  compiles the daemon in memory with its own compiler, so the
+  javac-newer-than-java skew that kept the daemon dead on this machine
+  (javac 27-ea, java 25) cannot recur on any toolchain.
+- **Measured, working daemon throughput: ~0.27s/book warm against
+  ~4.2s/book for the subprocess oracle** (15.6x). With `--workers N`
+  each worker gets its own warm daemon from the bounded pool, and every
+  roundtrip stays bounded by the caller's timeout with the fail-safe
+  fallback to the subprocess oracle.
+- **The dedup semantics are pinned by a suite test:** a book engineered
+  with one defect repeated three times plus one different defect must
+  answer 2 errors (the aggregated count), not 4 occurrences (the old
+  daemon's answer). Skipped where no epubcheck/JDK exists, like the
+  other oracle tests. README and spec's gate sections describe the new
+  design.
+
 ## v0.34.0 (2026-09-10)
 
 ### Brandon's three calls: partial books are trouble, the contract reconciled, the daemon decision informed

@@ -78,12 +78,39 @@ def _counts_from_json(stdout: str) -> CheckResult | None:
 
 _DAEMON_JAVA = """
 import java.io.File;
+import java.io.StringWriter;
 import java.io.PrintWriter;
 import java.util.Scanner;
 import com.adobe.epubcheck.api.EpubCheck;
 import com.adobe.epubcheck.reporting.CheckingReport;
 
 public class FastDaemon {
+    // Answers with the counts from the checker block of the JSON document
+    // that CheckingReport.generate() itself serializes: the exact JSON the
+    // epubcheck CLI's --json mode carries. Counting must match the
+    // subprocess oracle by construction, never by imitation: the human
+    // summary counts message occurrences while the JSON checker block
+    // counts aggregated messages, and the gate is calibrated on the latter.
+    static int field(String json, String name) {
+        int i = json.indexOf(name);
+        while (i != -1) {
+            int j = i + name.length();
+            while (j < json.length() && (json.charAt(j) == ' '
+                    || json.charAt(j) == ':' || json.charAt(j) == '"')) {
+                j++;
+            }
+            if (j < json.length() && Character.isDigit(json.charAt(j))) {
+                int k = j;
+                while (k < json.length() && Character.isDigit(json.charAt(k))) {
+                    k++;
+                }
+                return Integer.parseInt(json.substring(j, k));
+            }
+            i = json.indexOf(name, i + 1);
+        }
+        return -1;
+    }
+
     public static void main(String[] args) throws Exception {
         Scanner scanner = new Scanner(System.in);
         while (scanner.hasNextLine()) {
@@ -95,13 +122,20 @@ public class FastDaemon {
                 continue;
             }
             try {
-                PrintWriter out = new PrintWriter(new java.io.OutputStream() {
-                    public void write(int b) {}
-                });
-                CheckingReport report = new CheckingReport(out, epub.getName());
-                EpubCheck check = new EpubCheck(epub, report);
-                check.doValidate();
-                System.out.println(report.getFatalErrorCount() + "," + report.getErrorCount() + "," + report.getWarningCount());
+                StringWriter json = new StringWriter();
+                CheckingReport report = new CheckingReport(new PrintWriter(json),
+                        epub.getName());
+                report.initialize();
+                new EpubCheck(epub, report).doValidate();
+                report.generate();
+                int f = field(json.toString(), "nFatal");
+                int e = field(json.toString(), "nError");
+                int w = field(json.toString(), "nWarning");
+                if (f < 0 || e < 0 || w < 0) {
+                    System.out.println("-1,-1,-1");
+                } else {
+                    System.out.println(f + "," + e + "," + w);
+                }
             } catch (Exception e) {
                 System.out.println("-1,-1,-1");
             }
@@ -150,14 +184,12 @@ class _EpubcheckDaemon:
             with open(java_file, "w") as f:
                 f.write(_DAEMON_JAVA)
 
-            subprocess.run(
-                ["javac", "-cp", jar_path, java_file],
-                check=True,
-                capture_output=True,
-            )
-
             self._proc = subprocess.Popen(
-                ["java", "-cp", f".:{jar_path}", "FastDaemon"],
+                # JEP 330 single-file source launcher: the JVM compiles the
+                # daemon in memory with its own compiler, so there is no
+                # javac step and no javac/java version skew (which kept the
+                # daemon dead on machines where javac is newer than java).
+                ["java", "-cp", f".:{jar_path}", java_file],
                 cwd=self.workdir,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -166,8 +198,8 @@ class _EpubcheckDaemon:
             atexit.register(self.stop)
             return True
         except Exception:
-            # Leave nothing behind: a failed compile or start must not leak
-            # the tempdir, and the failure is final for this instance.
+            # Leave nothing behind: a failed start must not leak the
+            # tempdir, and the failure is final for this instance.
             self.stop()
             return False
 

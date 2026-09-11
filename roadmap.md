@@ -1156,7 +1156,24 @@ can be net-neutral and ships silently.*
       javac at all), but the daemon should stay off until its counting
       matches the JSON oracle; retire-or-reconcile remains the open
       decision. The daemon already self-disables safely, and --workers
-      parallelism works via subprocesses.)**
+      parallelism works via subprocesses.)
+      *(DECIDED 2026-09-10: Brandon chose RECONCILE over retire. The
+      counting divergence turned out to run deeper than the daemon: the
+      CLI's human summary counts message occurrences (243 on one book)
+      while epubcheck's own --json output counts aggregated messages
+      (4 on the same book), and the gate has always measured the
+      aggregated scale. The reconciliation is therefore by construction:
+      FastDaemon v2 calls CheckingReport.generate() and reads nFatal/
+      nError/nWarning from the JSON epubcheck itself serializes, so the
+      daemon measures the subprocess oracle's numbers exactly. Verified
+      against the subprocess oracle on all 14 staged books (the same
+      corpus that diverged 11/14 under the old daemon) and on a
+      100-book real-library sample. The launch switched to Java's
+      single-file source launcher, removing javac and the version skew
+      permanently; the dedup semantics are pinned by a suite test
+      (skipped where no epubcheck/JDK exists). Daemon warm throughput
+      measured at ~0.27s/book vs ~4.2s/book subprocess. Shipped in
+      v0.35.0.)**
 - [x] **Smaller apply papercuts:** `--limit -1` and a missing
       `--audit` file raise tracebacks instead of usage errors
       (`cli.py:434`, `373`); the fresh-format branch of `install_format`

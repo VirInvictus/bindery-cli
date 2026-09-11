@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -22,7 +23,10 @@ from unittest import mock
 
 from bindery.validate import (
     CheckResult,
+    _counts_from_json,
     _DaemonPool,
+    _english_locale_env,
+    _EpubcheckDaemon,
     _readline_timeout,
     gate,
     no_worse,
@@ -203,6 +207,102 @@ class ReadlineTimeout(unittest.TestCase):
         with os.fdopen(r, "rb") as fh:
             with self.assertRaises(RuntimeError):
                 _readline_timeout(fh, 5)
+
+
+@unittest.skipUnless(_daemon_toolchain_available(), "epubcheck not installed")
+class DaemonMatchesJsonOracle(unittest.TestCase):
+    """The counting-parity contract, pinned on real books: the daemon must
+    answer with the SAME numbers the subprocess --json oracle produces,
+    because the gate is calibrated on those numbers. FastDaemon v2 extracts
+    them from the JSON document CheckingReport.generate() itself serializes,
+    so the match holds by construction; this test holds it empirically,
+    including on a book engineered with repeated identical defects (the
+    exact shape where the old occurrence-counting daemon diverged)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        # A clean book carrying exactly two distinct defects, one of them
+        # repeated three times: the JSON oracle deduplicates the repeats, so
+        # the true count is 2 errors from 4 occurrences. The old
+        # occurrence-counting daemon answered 4 here; by-construction
+        # counting must answer 2.
+        path = Path(self.tmp.name) / "dedup.epub"
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr(
+                "META-INF/container.xml",
+                '<container version="1.0" '
+                'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                '<rootfiles><rootfile full-path="content.opf" '
+                'media-type="application/oebps-package+xml"/></rootfiles>'
+                "</container>",
+            )
+            z.writestr(
+                "content.opf",
+                '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+                'unique-identifier="bid"><metadata '
+                'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                "<dc:title>t</dc:title><dc:language>en</dc:language>"
+                '<dc:identifier id="bid">pub-id</dc:identifier></metadata>'
+                "<manifest>"
+                '<item id="c1" href="d.xhtml" '
+                'media-type="application/xhtml+xml"/>'
+                '<item id="ncx" href="toc.ncx" '
+                'media-type="application/x-dtbncx+xml"/></manifest>'
+                '<spine toc="ncx"><itemref idref="c1"/></spine></package>',
+            )
+            z.writestr(
+                "toc.ncx",
+                '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" '
+                'version="2005-1"><head>'
+                '<meta name="dtb:uid" content="pub-id"/>'
+                '<meta name="dtb:depth" content="1"/>'
+                '<meta name="dtb:totalPageCount" content="0"/>'
+                '<meta name="dtb:maxPageNumber" content="0"/></head>'
+                "<docTitle><text>t</text></docTitle><navMap>"
+                '<navPoint id="n1" playOrder="1"><navLabel><text>c</text>'
+                "</navLabel>"
+                '<content src="d.xhtml"/></navPoint></navMap></ncx>',
+            )
+            z.writestr(
+                "d.xhtml",
+                '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t'
+                "</title></head><body>"
+                '<p id="1:x">a</p><p id="2:x">b</p><p id="3:x">c</p>'
+                "<bogus>x</bogus>"
+                "</body></html>",
+            )
+        self.book = path
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_daemon_counts_match_the_subprocess_json_oracle(self) -> None:
+        import subprocess
+
+        d = _EpubcheckDaemon()
+        try:
+            daemon = d.check(self.book, timeout=180)
+            self.assertIsInstance(daemon, CheckResult)
+            out = subprocess.run(
+                ["epubcheck", str(self.book), "--json", "-"],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                env=_english_locale_env(),
+                check=False,
+            )
+            oracle = _counts_from_json(out.stdout)
+            self.assertEqual(
+                (daemon.fatals, daemon.errors, daemon.warnings),
+                (oracle.fatals, oracle.errors, oracle.warnings),
+            )
+            # the dedup pin: three identical id defects plus one different
+            # error are 4 occurrences but 2 aggregated messages, and the
+            # daemon reports the aggregated count, not the occurrences
+            self.assertEqual(daemon.errors, 2)
+        finally:
+            d.stop()
 
 
 class DaemonPoolLogic(unittest.TestCase):
