@@ -6,6 +6,9 @@
   Calibre's FTS index and page counts honest automatically (the sidecar's
   dirty queue and the pages rescan flag ride the write), and the search and
   runtime fixes come along in the shared layer.
+- Adopted cquarry 1.19.0 (floor + lock): the repair lane gains its undo
+  primitive -- save_original_format/restore_original_format -- so a format
+  repair can put the original bytes back if it goes wrong.
 ## v0.35.0 (2026-09-10)
 
 ### The epubcheck daemon, reconciled: oracle-identical counts at ~15x the speed
