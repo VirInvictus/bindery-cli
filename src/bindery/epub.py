@@ -269,6 +269,136 @@ _EPUB3_ATTR_RE = re.compile(
 )
 
 
+def generate_container(opf_path: str) -> str:
+    """The standard META-INF/container.xml pointing at the located OPF.
+
+    Byte-deterministic: the same OPF path always yields the same bytes (the
+    model is upstream calibre's initialize_container). The entry itself is
+    written with the constant epoch timestamp, so repairing one book twice
+    is byte-identical.
+    """
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<container version="1.0" '
+        'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n'
+        "  <rootfiles>\n"
+        f'    <rootfile full-path="{opf_path}" '
+        'media-type="application/oebps-package+xml"/>\n'
+        "  </rootfiles>\n"
+        "</container>\n"
+    )
+
+
+# Attribute-scoped removers for the reference edges that point at manifest
+# ids (quote-aware, whitespace-anchored so data-* names stay out). The EPUB2
+# cover meta is removed whole: its only payload IS the id reference.
+_EDGE_ATTR_RES = (
+    re.compile(r"""\s+toc\s*=\s*(?:"[^"]*"|'[^']*')(?=[\s>])""", re.IGNORECASE),
+    re.compile(r"""\s+media-overlay\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE),
+    re.compile(r"""\s+fallback\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE),
+)
+_COVER_META_RE = re.compile(
+    r"""<meta\b(?=(?:[^>]*\bname=)["']cover["'])(?:(?:"[^"]*"|'[^']*'|[^>])*)>""",
+    re.IGNORECASE,
+)
+_COVER_CONTENT_RE = re.compile(
+    r"""\s+content\s*=\s*(["'])((?:(?!\1).)+)\1""", re.IGNORECASE
+)
+
+
+def prune_dangling_edges(opf_text: str, pruned_ids: set[str]) -> tuple[str, int]:
+    """Rewrite the package edges that pointed at items the prune deleted.
+
+    Removing a manifest item whose file is absent must not manufacture the
+    regression the gate then rejects: ``spine@toc``, ``item@media-overlay``,
+    ``item@fallback`` and the EPUB2 cover meta all reference manifest ids.
+    Each edge is optional, so a pruned target means the edge is removed (the
+    resource itself is gone; re-pointing at a guess would fabricate a
+    reference). Edges to live ids are never touched. Returns (text, count).
+    """
+    count = 0
+
+    def strip_attrs(m: re.Match) -> str:
+        nonlocal count
+        tag = m.group(0)
+        for attr_re in _EDGE_ATTR_RES:
+            am = attr_re.search(tag)
+            if not am:
+                continue
+            vm = re.search(r'=["\']([^"\']*)["\']', am.group(0))
+            if vm and vm.group(1) in pruned_ids:
+                tag = tag.replace(am.group(0), "")
+                count += 1
+        return tag
+
+    out = re.sub(
+        r"""<(?:spine|item|itemref)\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""",
+        strip_attrs,
+        opf_text,
+        flags=re.IGNORECASE,
+    )
+
+    def strip_cover(m: re.Match) -> str:
+        nonlocal count
+        tag = m.group(0)
+        cm = _COVER_CONTENT_RE.search(tag)
+        if cm and cm.group(2) in pruned_ids:
+            count += 1
+            return ""
+        return tag
+
+    out = _COVER_META_RE.sub(strip_cover, out)
+    return out, count
+
+
+# The media-type map is deliberately narrow: image types with an unambiguous
+# magic at offset 0, which is exactly the aggregator prevalence class (a jpg
+# stamped image/png). Extend only with a named epubcheck finding.
+_MEDIA_TYPES: dict[str, tuple[str, bytes]] = {
+    ".jpg": ("image/jpeg", b"\xff\xd8\xff"),
+    ".jpeg": ("image/jpeg", b"\xff\xd8\xff"),
+    ".png": ("image/png", b"\x89PNG"),
+    ".gif": ("image/gif", b"GIF8"),
+}
+_MEDIA_TYPE_ATTR_RE = re.compile(
+    r"""((?:^|\s)media-type\s*=\s*)(["'])((?:(?!\2).)*)(\2)""", re.IGNORECASE
+)
+
+
+def fix_manifest_media_types(opf_text: str, opf_dir: str, peek) -> tuple[str, int]:
+    """Normalize wrong manifest ``media-type`` declarations (OPF-029).
+
+    An item's expected type comes from its extension; the rewrite only fires
+    when the actual bytes at offset 0 confirm the extension (a PNG renamed
+    .jpg keeps its - wrong but honest - declaration rather than gaining a
+    worse one). Files absent from the archive are the prune's business, not
+    this pass. Quote styles are preserved. Returns (text, count).
+    """
+    changed = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal changed
+        tag = m.group(0)
+        hm = _HREF_ATTR_RE.search(tag)
+        mm = _MEDIA_TYPE_ATTR_RE.search(tag)
+        if not hm or not mm:
+            return tag
+        resolved = _resolve_href(opf_dir, hm.group(2))
+        if resolved is None:
+            return tag
+        expected = _MEDIA_TYPES.get(posixpath.splitext(resolved)[1].lower())
+        if expected is None or mm.group(3) == expected[0]:
+            return tag
+        head = peek(resolved)
+        if head is None or not head.startswith(expected[1]):
+            return tag
+        changed += 1
+        start, end = mm.span(3)
+        return tag[:start] + expected[0] + tag[end:]
+
+    return _ITEM_TAG_RE.sub(repl, opf_text), changed
+
+
 def strip_epub3_attributes(text: str) -> tuple[str, int]:
     """Scrub the EPUB3-only attributes older conversions sprinkle onto EPUB2
     documents: ``page-progression-direction``, ``epub:type`` and
@@ -451,16 +581,19 @@ _NCX_CONTENT_SRC_RE = re.compile(
 
 def prune_missing_manifest_items(
     opf_text: str, opf_dir: str, present: frozenset[str], spine_ids: set[str]
-) -> tuple[str, int]:
+) -> tuple[str, int, set[str]]:
     """Drop `<item>` manifest declarations whose file is absent from the
     archive — unless the item is a spine document.
 
     A missing spine document is a damaged fragment (the audit's
     spine-integrity check reports it); it is never silently pruned. Fonts,
     stylesheets and media the converter never copied in answer PKG-010 with a
-    dead-declaration removal instead of a stub file.
+    dead-declaration removal instead of a stub file. The pruned ids come back
+    so the caller can rewrite the edges that pointed at them
+    (prune_dangling_edges) instead of leaving dangling idrefs.
     """
     count = 0
+    pruned: set[str] = set()
 
     def repl(m: re.Match) -> str:
         nonlocal count
@@ -475,9 +608,11 @@ def prune_missing_manifest_items(
         if idm and idm.group(3) in spine_ids:
             return tag
         count += 1
+        if idm:
+            pruned.add(idm.group(3))
         return ""
 
-    return _ITEM_TAG_RE.sub(repl, opf_text), count
+    return _ITEM_TAG_RE.sub(repl, opf_text), count, pruned
 
 
 def prune_dead_links(
@@ -767,6 +902,8 @@ def repair_epub(
     prune_missing: bool = False,
     strip_anchors: bool = False,
     url_spaces: bool = False,
+    fix_container: bool = False,
+    fix_media_types: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -931,6 +1068,29 @@ def repair_epub(
         mime_info.external_attr = 0o600 << 16
         zout.writestr(mime_info, MIMETYPE, compress_type=zipfile.ZIP_STORED)
 
+        # --fix-container: when no container entry resolves to the located
+        # OPF (missing, unparseable, or pointing at an absent file), generate
+        # the standard container at the OPF the locator found. This is the
+        # gateway repair: epubcheck stays fatal while the OPF is unfindable,
+        # so no other shipped repair can ever be gate-accepted on the book.
+        container_bytes: bytes | None = None
+        if fix_container and opf:
+            cm = None
+            if "META-INF/container.xml" in zin.namelist():
+                cm = _ROOTFILE_RE.search(
+                    zin.read("META-INF/container.xml").decode("utf-8", "replace")
+                )
+            if not (cm and cm.group(2) in zin.namelist()):
+                container_bytes = generate_container(opf).encode("utf-8")
+        if container_bytes is not None and "META-INF/container.xml" not in (
+            zin.namelist()
+        ):
+            info = zipfile.ZipInfo("META-INF/container.xml", date_time=MIMETYPE_EPOCH)
+            info.external_attr = 0o600 << 16
+            zout.writestr(info, container_bytes, compress_type=zipfile.ZIP_DEFLATED)
+            report.add({"container_generated": 1})
+            report.files_changed += 1
+
         # An entry is re-encoded only when a fix actually fired; an untouched entry is
         # copied byte-for-byte. Re-encoding the decode("utf-8", "replace") round-trip
         # of an unchanged file would silently swap any non-UTF-8 bytes for U+FFFD.
@@ -941,6 +1101,14 @@ def repair_epub(
             if strip_watermarks and name.rsplit("/", 1)[-1].lower() in MARKER_NAMES:
                 report.files_changed += 1
                 report.add({"dropped_marker": 1})
+                continue
+            # A stale container entry is replaced wholesale (it names an OPF
+            # that is not in the archive); written before the generated
+            # insertion could not fire, since the entry exists here.
+            if container_bytes is not None and name == "META-INF/container.xml":
+                zout.writestr(item, container_bytes, compress_type=item.compress_type)
+                report.add({"container_generated": 1})
+                report.files_changed += 1
                 continue
             # read(item), not read(name): with duplicate entry names (seen in broken
             # EPUBs), read(name) returns the first entry's bytes for every duplicate.
@@ -1000,7 +1168,12 @@ def repair_epub(
                     report.files_changed += 1
                     data = text.encode("utf-8")
             elif low.endswith(".opf") and (
-                fix_ids or page_map or strip_epub3_attrs or prune_missing or url_spaces
+                fix_ids
+                or page_map
+                or strip_epub3_attrs
+                or prune_missing
+                or url_spaces
+                or fix_media_types
             ):
                 opf_changed = False
                 if fix_ids:
@@ -1019,11 +1192,28 @@ def repair_epub(
                         report.add({"epub3_attrs_stripped": n})
                         opf_changed = True
                 if prune_missing:
-                    text, n = prune_missing_manifest_items(
+                    text, n, pruned_ids = prune_missing_manifest_items(
                         text, opf_dir, present, spine_ids
                     )
                     if n:
                         report.add({"manifest_items_pruned": n})
+                        opf_changed = True
+                    text, n = prune_dangling_edges(text, pruned_ids)
+                    if n:
+                        report.add({"prune_edges_rewritten": n})
+                        opf_changed = True
+                if fix_media_types:
+
+                    def peek(resolved: str) -> bytes | None:
+                        try:
+                            with zin.open(resolved) as f:
+                                return f.read(8)
+                        except KeyError, OSError, RuntimeError:
+                            return None
+
+                    text, n = fix_manifest_media_types(text, opf_dir, peek)
+                    if n:
+                        report.add({"media_types_normalized": n})
                         opf_changed = True
                 if url_spaces:
                     text, n = encode_url_spaces(text)

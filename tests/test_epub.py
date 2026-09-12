@@ -1390,6 +1390,8 @@ class TestPruneDanglingEdges(unittest.TestCase):
                 z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
                 z.writestr("OEBPS/content.opf", opf)
                 z.writestr("OEBPS/k.xhtml", CONTENT)
+                # the audio file survives the prune; only its edge dies
+                z.writestr("OEBPS/s.mp3", b"ID3snd")
             report = repair_epub(src, dst, prune_missing=True)
             self.assertEqual(report.fixes.get("manifest_items_pruned"), 1)
             self.assertEqual(report.fixes.get("prune_edges_rewritten"), 3)

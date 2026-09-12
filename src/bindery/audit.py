@@ -99,6 +99,16 @@ RESET = "\033[0m" if USE_COLOR else ""
 CONTAINER_NS = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
 OPF_NS = "{http://www.idpf.org/2007/opf}"
 
+# Font-obfuscation algorithms (publisher embedding; the font is scrambled at
+# offset 0 but the entry decompresses fine). The ns.adobe.com URI is what
+# real-world ADE-processed files actually carry; the adobe.com/2005 form is
+# the spec text. Both must be recognized (Phase 16 prevalence study).
+OBFUSCATION_ALGOS = {
+    "http://www.idpf.org/2008/embedding",
+    "http://www.adobe.com/2005/pdf/enc#RC",
+    "http://ns.adobe.com/pdf/enc#RC",
+}
+
 _PCT = re.compile(r"(?:%[0-9A-Fa-f]{2})+")
 
 
@@ -126,6 +136,8 @@ class Book:
         "lang",
         "names",
         "nav",
+        "obfuscated",
+        "obfuscated_declared",
         "spine",
         "spine_missing",
         "toc_refs",
@@ -145,6 +157,8 @@ class Book:
         encrypted=None,
         spine_missing=0,
         dup_entries=0,
+        obfuscated=None,
+        obfuscated_declared=None,
     ):
         self.spine = spine  # resolved, in-order, in-archive spine doc paths
         self.nav = nav  # the nav document path, or None
@@ -152,10 +166,19 @@ class Book:
         self.docs = docs  # {path: decoded html} for every spine doc
         self.names = names  # full archive namelist (for image / marker counts)
         self.corrupt = corrupt  # entries whose full read failed (CRC/truncation)
-        # DRM: entries declared in META-INF/encryption.xml. Their unreadability
+        # DRM: entries declared in META-INF/encryption.xml whose read failed.
+        # A declared entry that reads fine is not here. Their unreadability
         # is the book's business model, not damage, so they get their own
         # verdict instead of CORRUPT / re-source.
         self.encrypted = encrypted if encrypted is not None else []
+        # Font-obfuscation declarations (Phase 16): entries encryption.xml
+        # declares under an obfuscation algorithm. Readable ones are benign
+        # publisher embedding (the OBFUSCATED advisory); an unreadable one is
+        # a broken font, not a business model.
+        self.obfuscated_declared = (
+            obfuscated_declared if obfuscated_declared is not None else set()
+        )
+        self.obfuscated = obfuscated if obfuscated is not None else []
         # itemrefs that could not be resolved to an archive file (dangling
         # idref, decoded-href vs stored-name mismatch): a large count on an
         # EMPTY-verdict book is the diagnostic, not a content-less stub.
@@ -229,6 +252,7 @@ def load_book(path: Path) -> Book:
         # Entries declared encrypted (DRM): an unreadable one is the book's
         # business model, not a damaged archive, so it gets its own verdict.
         encrypted_names: set[str] = set()
+        obfuscated_declared: set[str] = set()
         # guard on the nameset: _read records a failed probe as corrupt, and
         # most books simply have no encryption.xml at all
         enc_blob = (
@@ -238,9 +262,22 @@ def load_book(path: Path) -> Book:
         )
         if enc_blob:
             try:
-                for el in ET.fromstring(enc_blob).iter():
-                    if el.tag.split("}")[-1] == "CipherReference" and el.get("URI"):
-                        encrypted_names.add(el.get("URI"))
+                for ed in ET.fromstring(enc_blob).iter():
+                    if ed.tag.split("}")[-1] != "EncryptedData":
+                        continue
+                    algo = ""
+                    uri = ""
+                    for child in ed.iter():
+                        local = child.tag.split("}")[-1]
+                        if local == "EncryptionMethod":
+                            algo = child.get("Algorithm") or ""
+                        elif local == "CipherReference" and child.get("URI"):
+                            uri = child.get("URI")
+                    if not uri:
+                        continue
+                    encrypted_names.add(uri)
+                    if algo in OBFUSCATION_ALGOS:
+                        obfuscated_declared.add(uri)
             except ET.ParseError:
                 pass
 
@@ -305,6 +342,17 @@ def load_book(path: Path) -> Book:
             blob = raw.get(doc)
             docs[doc] = blob.decode("utf-8", "replace") if blob is not None else ""
 
+        # Readable obfuscation-declared entries are benign publisher
+        # embedding: their own advisory, never the DRM verdict. (Unreadable
+        # declared entries land in `encrypted` via _read and are split by
+        # algorithm at verdict time.) Computed after the full pass, when
+        # corrupt/encrypted are final.
+        obfuscated = [
+            n
+            for n in sorted(encrypted_names & obfuscated_declared)
+            if n not in corrupt and n not in encrypted
+        ]
+
         # ToC reference accounting: every nav/NCX anchor target checked against
         # the archive (manifest items are the spine's own source and already
         # accounted by the spine resolution). This runs INSIDE the open zip:
@@ -363,6 +411,8 @@ def load_book(path: Path) -> Book:
         encrypted=encrypted,
         spine_missing=spine_missing,
         dup_entries=dup_entries,
+        obfuscated=obfuscated,
+        obfuscated_declared=obfuscated_declared,
     )
 
 
@@ -1272,51 +1322,74 @@ def analyze_corrupt(book: Book) -> dict:
     Reported as its own verdict in every mode — a corrupt entry decompresses
     to nothing, and letting emptytext call that EMPTY mislabels a damaged
     archive as a content-less stub (the phase-1 re-source advice that follows
-    from EMPTY would then aim at the wrong disease).
+    from EMPTY would then aim at the wrong disease). Encryption.xml's font
+    obfuscation entries are reported separately: readable ones are benign
+    publisher embedding (OBFUSCATED advisory), an unreadable one is a broken
+    font (damage), and only the non-obfuscation algorithms imply DRM.
     """
+    drm_n = sum(1 for n in book.encrypted if n not in book.obfuscated_declared)
     return {
         "n": len(book.corrupt),
         "first": book.corrupt[0] if book.corrupt else "",
         "encrypted_n": len(book.encrypted),
         "encrypted_first": book.encrypted[0] if book.encrypted else "",
+        "encrypted_drm_n": drm_n,
+        "obfuscated_n": len(book.obfuscated),
+        "obfuscated_first": book.obfuscated[0] if book.obfuscated else "",
         "dup_entries": book.dup_entries,
     }
 
 
 def _corrupt_verdict(r: dict) -> tuple[bool, str, list[str]]:
-    if r.get("encrypted_n") and not r.get("n"):
-        # Pure DRM: nothing is damaged, the content is merely locked. The
-        # re-source advice is wrong for it (re-acquiring the same book
-        # yields the same lock).
-        return (
-            True,
-            "ENCRYPTED",
-            [
-                f"encrypted:{r['encrypted_n']} (first: {r['encrypted_first']})"
-                " — DRM-protected; not repairable, skip"
-            ],
-        )
-    if r.get("encrypted_n"):
+    if r.get("encrypted_n") and not r.get("encrypted_drm_n"):
+        # every unreadable declared entry is font-obfuscation: a broken
+        # font, not a business model. Damage; the re-source advice is right.
         return (
             True,
             "CORRUPT",
             [
-                f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source",
-                f"encrypted:{r['encrypted_n']} (first: {r['encrypted_first']})"
-                " — DRM-protected entries",
+                f"unreadable obfuscated font(s): {r['encrypted_n']} "
+                f"(first: {r['encrypted_first']}) — broken, not DRM; re-source"
             ],
         )
-    lines = [f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source"]
-    if r.get("dup_entries"):
+    if r.get("encrypted_n"):
+        lines = []
+        if r.get("n"):
+            lines.append(
+                f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source"
+            )
         lines.append(
-            f"duplicate entries: {r['dup_entries']} (zip resolves last-wins; "
-            "which copy wins is undefined)"
+            f"encrypted:{r['encrypted_drm_n']} (first: {r['encrypted_first']})"
+            " — DRM-protected; not repairable, skip"
         )
-    return (
-        True,
-        "CORRUPT",
-        lines,
-    )
+        return (
+            True,
+            "ENCRYPTED" if not r.get("n") else "CORRUPT",
+            lines,
+        )
+    if r.get("n"):
+        lines = [f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source"]
+        if r.get("dup_entries"):
+            lines.append(
+                f"duplicate entries: {r['dup_entries']} (zip resolves last-wins; "
+                "which copy wins is undefined)"
+            )
+        return (
+            True,
+            "CORRUPT",
+            lines,
+        )
+    if r.get("obfuscated_n"):
+        return (
+            False,
+            "OBFUSCATED",
+            [
+                f"obfuscated font(s): {r['obfuscated_n']} "
+                f"(first: {r['obfuscated_first']}) — publisher embedding, "
+                "readable; benign"
+            ],
+        )
+    return (False, "OK", [])
 
 
 # ----------------------------------------------------------------------------
@@ -1837,6 +1910,23 @@ def _completeness_sections(advisory) -> int:
     return 0
 
 
+def _obfuscated_sections(hits) -> int:
+    """Print the font-obfuscation advisories; benign, never a failure."""
+    if hits:
+        print(
+            f"{YELLOW}{BOLD}OBFUSCATED FONTS ({len(hits)}; publisher embedding;"
+            f" reported, not flagged){RESET}"
+        )
+        for book_id, title, tag, r in sorted(hits):
+            print(f"  {YELLOW}#{book_id}{RESET} [{tag}] {title}")
+            print(
+                f"    obfuscated font(s): {r['obfuscated_n']} "
+                f"(first: {r['obfuscated_first']}) — readable; benign"
+            )
+        print()
+    return 0
+
+
 # ----------------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------------
@@ -1977,6 +2067,7 @@ def run_library(
     mono_hits: list[tuple] = []
     completeness_advisory: list[tuple] = []
     corrupt_hits: list[tuple] = []
+    obfuscated_hits: list[tuple] = []
     spine_hits: list[tuple] = []
     spine_advisory: list[tuple] = []
     errors: list[tuple] = []
@@ -2007,9 +2098,11 @@ def run_library(
             corrupt_hits.append(
                 (book_id, title, tag, corrupt_r["n"], corrupt_r["first"])
             )
-            _record_verdict(record, "archive", _corrupt_verdict(corrupt_r))
-        else:
-            _record_verdict(record, "archive", (False, "OK", []))
+        if corrupt_r["obfuscated_n"]:
+            obfuscated_hits.append((book_id, title, tag, corrupt_r))
+        # the archive verdict is always recorded: OBFUSCATED (benign) and OK
+        # both come back from the verdict with problem False
+        _record_verdict(record, "archive", _corrupt_verdict(corrupt_r))
         spine_r = spine_integrity(book)
         if spine_r["class"] == "fragment":
             spine_hits.append((book_id, title, tag, spine_r))
@@ -2110,6 +2203,7 @@ def run_library(
     # leaving these branches inside the ALL loop made them dead code and let
     # a corrupt book exit 0 with "emptytext CLEAN".
     rc |= _corrupt_sections(corrupt_hits)
+    rc |= _obfuscated_sections(obfuscated_hits)
     rc |= _spine_sections(spine_hits, spine_advisory)
 
     if errors:
@@ -2301,9 +2395,11 @@ def run_directory(
             verdicts.append((key, problem, status, lines))
 
         if corrupt_r["n"]:
-            problem, status, lines = _corrupt_verdict(corrupt_r)
             book_problems = True
-            verdicts.append(("archive", problem, status, lines))
+        problem, status, lines = _corrupt_verdict(corrupt_r)
+        if problem:
+            book_problems = True
+        verdicts.append(("archive", problem, status, lines))
 
         if spine_r["class"] != "ok":
             problem, status, lines = _spine_verdict(spine_r)
@@ -2311,13 +2407,11 @@ def run_directory(
                 book_problems = True
             verdicts.append(("spine", problem, status, lines))
 
-        # JSON record: the display verdicts, then the always-on archive/spine
-        # verdicts backfilled OK when they were silent. emptytext stays absent
-        # when the archive verdict owns the book's body-text story.
+        # JSON record: the display verdicts; the spine verdict backfilled OK
+        # when it was silent (the archive verdict is always present now).
+        # emptytext stays absent when the archive verdict owns the story.
         for key, problem, status, lines in verdicts:
             _record_verdict(record, key, (problem, status, lines))
-        if "archive" not in record["verdicts"]:
-            _record_verdict(record, "archive", (False, "OK", []))
         if "spine" not in record["verdicts"]:
             _record_verdict(record, "spine", (False, "OK", []))
         if book_problems:
@@ -2472,10 +2566,10 @@ def run_single(
             problems += 1
         verdicts.append((key, problem, status, lines))
 
-    if corrupt_r["n"]:
-        problem, status, lines = _corrupt_verdict(corrupt_r)
+    problem, status, lines = _corrupt_verdict(corrupt_r)
+    if problem:
         problems += 1
-        verdicts.append(("archive", problem, status, lines))
+    verdicts.append(("archive", problem, status, lines))
 
     if spine_r["class"] != "ok":
         problem, status, lines = _spine_verdict(spine_r)
@@ -2492,8 +2586,6 @@ def run_single(
     }
     for key, problem, status, lines in verdicts:
         _record_verdict(record, key, (problem, status, lines))
-    if "archive" not in record["verdicts"]:
-        _record_verdict(record, "archive", (False, "OK", []))
     if "spine" not in record["verdicts"]:
         _record_verdict(record, "spine", (False, "OK", []))
     json_ok = True

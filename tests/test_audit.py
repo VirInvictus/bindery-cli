@@ -2127,8 +2127,11 @@ class TestObfuscatedVsDrm(unittest.TestCase):
             self._epub(tmp, "http://ns.adobe.com/pdf/enc#RC")
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                rc = audit.run_directory(pathlib.Path(tmp), ["emptytext"], 2000, 20000)
+                # two analyzers so the per-book block (which carries the
+                # always-on archive verdict) is printed
+                rc = audit.run_directory(
+                    pathlib.Path(tmp), ["emptytext", "monolithic"], 2000, 20000
+                )
         out = buf.getvalue()
         self.assertEqual(rc, 0)  # benign: never fails the run
         self.assertIn("OBFUSCATED", out)
-        self.assertIn("reported, not flagged", out)

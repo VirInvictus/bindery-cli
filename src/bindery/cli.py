@@ -80,6 +80,8 @@ def process_book(
     prune_missing: bool = False,
     strip_anchors: bool = False,
     url_spaces: bool = False,
+    fix_container: bool = False,
+    fix_media_types: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -110,6 +112,8 @@ def process_book(
         prune_missing=prune_missing,
         strip_anchors=strip_anchors,
         url_spaces=url_spaces,
+        fix_container=fix_container,
+        fix_media_types=fix_media_types,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -528,6 +532,8 @@ def run_library(args) -> int:
                     strip_anchors=args.strip_broken_anchors
                     or getattr(args, "all", False),
                     url_spaces=args.encode_url_spaces or getattr(args, "all", False),
+                    fix_container=args.fix_container or getattr(args, "all", False),
+                    fix_media_types=args.fix_media_types or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -739,6 +745,8 @@ def run_repair(args) -> int:
                 or getattr(args, "all", False),
                 strip_anchors=args.strip_broken_anchors or getattr(args, "all", False),
                 url_spaces=args.encode_url_spaces or getattr(args, "all", False),
+                fix_container=args.fix_container or getattr(args, "all", False),
+                fix_media_types=args.fix_media_types or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -1228,6 +1236,23 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         help="percent-encode raw spaces in src/href attribute values across "
         "the package (OPF href, NCX src, content docs): a literal space is "
         "not a valid URL (RSC-020)",
+    )
+    p.add_argument(
+        "--fix-container",
+        dest="fix_container",
+        action="store_true",
+        help="generate META-INF/container.xml at the located OPF when the "
+        "container is missing or names a file the archive does not contain "
+        "(the gateway defect: epubcheck stays fatal while the OPF is "
+        "unfindable)",
+    )
+    p.add_argument(
+        "--fix-media-types",
+        dest="fix_media_types",
+        action="store_true",
+        help="normalize wrong manifest media-type declarations (OPF-029): "
+        "attribute-only, fired only when the file's magic bytes confirm the "
+        "extension (jpg/png/gif)",
     )
     p.add_argument(
         "--strip-pagination",
