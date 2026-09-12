@@ -48,6 +48,8 @@ jobs:
     name: Build the Bindery Repair Calibre plugin zip
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and attach the plugin zip
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
