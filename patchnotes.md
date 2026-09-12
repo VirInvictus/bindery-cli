@@ -1,4 +1,50 @@
 # bindery-cli Patch Notes
+## v0.37.0 (2026-09-12)
+
+### The Bindery Repair Calibre plugin (Phase 3)
+
+- **Books are repaired as they are imported.** Each release now attaches
+  BinderyRepair-v<VERSION>.zip to the GitHub release: a Calibre
+  FileTypePlugin (on_import) that runs the CLI's always-on core pass, the
+  five well-formedness fixes plus the NCX pipeline, on *.epub files as they
+  are added. run() never raises and never touches the original file or
+  metadata.db: a repaired copy is built in a persistent temp file,
+  testzip()-verified, and handed back for import; any trouble returns the
+  original path and logs one line. The plugin is byte-idempotent, so
+  re-adding a format re-runs it harmlessly.
+- **The vendor slice is byte-identical to the repo.** The zip carries
+  transforms.py, epub.py, pagination.py, watermark.py, and reserialize.py
+  unchanged (the zip root is a package, so their relative imports resolve);
+  a suite drift test pins the equality, and publish.yml regenerates the zip
+  from the tag and attaches it to the release.
+- **Nothing runs ungated, ever.** The structural repairs and the lossy
+  strips stay CLI-only because their acceptance is the epubcheck gate,
+  which cannot run inside Calibre. Identity: Bindery Repair /
+  bindery_repair. Config via the plugin's customization string as JSON:
+  log, log_path (default <config dir>/bindery_repair.log), max_size_mb
+  (recorded default 150MB), and epubcheck_path, the experimental on-PATH
+  validation mode, default OFF (the three open questions, answered
+  2026-09-11).
+
+### Fixed: fix_ncx_playorder counted phantom fixes (found by the plugin)
+
+- The already-correct comparison read the attribute value with its
+  quotes, so every sequential navPoint counted as a fix on every pass
+  while the rewritten bytes stayed identical. The Long Patrol reported
+  fix_ncx_playorder=59 on every run of a repaired book; a book whose
+  only fix was phantom was rewritten instead of reported as nochange;
+  and a single-quoted sequential attribute was rewritten to double
+  quotes, touching already-correct markup. Quotes are now stripped
+  before the comparison and an already-correct attribute is returned
+  untouched: honest counts, single quotes survive, and the plugin's
+  zero-fixes contract holds end to end.
+
+### Repo records
+
+- Phase 16's FastSweep prevalence study (5,228 books) and the obfuscation
+  magic-byte validation are recorded in the roadmap with real counts for
+  every Phase 16 repair box.
+
 ## v0.36.0 (2026-09-12)
 
 ### The completeness spot-check: `audit completeness` (Phase 15)

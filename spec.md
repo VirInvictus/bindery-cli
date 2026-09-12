@@ -405,6 +405,52 @@ replacement contract is untouched. The scope refusal is mechanical: no `--ids`,
 no sweep, exit 2 (a library-wide sweep is a dedicated hours-long task, never a
 verb call). Books left partial or unreadable surface as `decisions_needed`.
 
+## The Calibre plugin (Bindery Repair)
+
+Each release vendors the repair core into a Calibre plugin zip,
+`BinderyRepair-v<VERSION>.zip`, generated from the tagged tree by
+`scripts/build_plugin.py` and attached to the GitHub release. The zip carries
+`transforms.py`, `epub.py`, `pagination.py`, `watermark.py`, and
+`reserialize.py` byte-identical to `src/bindery/` (the zip root is a package,
+so their relative imports resolve unchanged; a suite drift test pins the
+equality) plus the plugin entry `plugin/__init__.py` with the version tuple
+substituted from the single-source `VERSION`.
+
+Identity and shape: the plugin is `Bindery Repair` (import name
+`bindery_repair`, via the `plugin-import-name-` marker), a
+`FileTypePlugin` with `on_import = True`, `supported_platforms = ['linux']`
+(the loader rejects an empty platform list, which also makes other OSes an
+enforced non-goal).
+
+The active fix set is exactly the CLI's default pass: the five
+well-formedness transforms plus the NCX pipeline. All structural repairs and
+the three lossy strips stay CLI-only: their acceptance IS the epubcheck gate,
+which cannot run inside Calibre. Opt-in flags are never enabled by the
+plugin; nothing runs ungated.
+
+Behavior contract:
+
+- `run(path)` never raises. It returns the path of a repaired copy built with
+  the plugin's `temporary_file()` (Calibre imports that instead; the original
+  on disk is untouched, `metadata.db` is never written, there is no
+  `postimport` hook), or the original path on any trouble: non-`.epub`
+  suffix, over the size cap, zero fixes, a failed `testzip()` verification of
+  the rewritten archive, or an exception (each logged, never raised).
+- Byte-idempotence: an already-clean book yields zero fixes and the original
+  path, because the format-add path (`db.add_format(..., run_hooks=True)`)
+  re-enters the plugin on repaired files.
+- One log line per book (fixed / no fixes / refused / errored), appended
+  under a lock-free best-effort policy: logging failures never break an
+  import.
+- Configuration is the `site_customization` string parsed as JSON: `log`
+  (default true), `log_path` (default `<config_dir>/bindery_repair.log`),
+  `max_size_mb` (default 150: refuse absurd files rather than stall an
+  import), and `epubcheck_path` (default null). `epubcheck_path` enables the
+  experimental on-PATH validation mode: the repaired copy is re-measured with
+  the user's epubcheck binary under the `no_worse` bar and refused on a
+  regression; an unanswered measurement never refuses. The mode is off by
+  default (the latency ruling stands; the default pass is safe ungated).
+
 ## Out of scope (non-goals)
 
 - Fixing RSC-005 schema/content-model violations *in bulk*: the scoped, opt-in

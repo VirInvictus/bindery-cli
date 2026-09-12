@@ -278,8 +278,16 @@ locale hardening (5.2), in v0.10.0. Phase 5 is closed.*
 
 ## Phase 3: integration (maybe)
 
-- [ ] Calibre plugin so books are repaired on add, as a `FileTypePlugin` with
-      `on_import = True`.
+- [x] Calibre plugin so books are repaired on add, as a `FileTypePlugin` with
+      `on_import = True`. *(SHIPPED 2026-09-12 as v0.37.0: "Bindery Repair" /
+      `bindery_repair`, built to the scoped spec below. Vendor slice byte-
+      identical with a suite drift test; default pass only; testzip()
+      verification; byte-idempotent; one log line per book; site_customization
+      JSON config with the size cap at the recorded default 150MB and the
+      epubcheck-on-PATH experimental mode default OFF; publish.yml attaches
+      BinderyRepair-v<VERSION>.zip to each release. The plugin's smoke test
+      found the fix_ncx_playorder phantom-count bug (Bug Reports), which the
+      same release fixes.)*
 - [x] ~~Optional metadata.db nudge so Calibre notices the new file size~~
       **Dropped 2026-08-09: unnecessary under `on_import`.** See the decision below.
 
@@ -369,6 +377,12 @@ Scoped spec:
 Open questions (Brandon): epubcheck-on-PATH experimental mode (default no, the
 latency ruling stands); plugin identity `Bindery Repair` / `bindery_repair`;
 size-cap default.
+
+*(ANSWERED 2026-09-11 and SHIPPED 2026-09-12 as v0.37.0: epubcheck-on-PATH
+mode exists behind the `epubcheck_path` config key and defaults OFF; identity
+is `Bindery Repair` / `bindery_repair`; the size cap keeps the documented
+default, now recorded as 150MB in README and spec. See the plugin box above
+and the spec's "The Calibre plugin" section.)*
 
 
 ## Supplementary Phase (Based on Library Audit)
