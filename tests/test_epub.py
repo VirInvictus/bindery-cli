@@ -1487,3 +1487,136 @@ class TestFixMediaTypes(unittest.TestCase):
                 z.writestr("OEBPS/content.opf", opf)
             report = repair_epub(src, dst, fix_media_types=True)
             self.assertNotIn("media_types_normalized", report.fixes)
+
+
+class TestFixCover(unittest.TestCase):
+    """Phase 16 C, the cover-wiring ruling (2026-09-12: hybrid). The
+    deterministic half is the EPUB2 cover meta: a dangling content id is
+    re-pointed from the guide when the guide names an existing manifest
+    item, and removed when nothing identifies the item. The EPUB3
+    properties="cover-image" slice stays audit-only (choosing which image
+    is the cover by name is the guesswork the charter forbids)."""
+
+    OPF_HEAD = (
+        '<?xml version="1.0"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="bookid">urn:uuid:X</dc:identifier>'
+    )
+    OPF_TAIL = "</package>"
+
+    @staticmethod
+    def _build(path: Path, opf: str) -> None:
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/c1.xhtml", CONTENT)
+            z.writestr("OEBPS/cover.jpg", b"\xff\xd8\xff\xe0JFIF")
+
+    def test_dangling_meta_is_repointed_from_the_guide(self):
+        opf = (
+            self.OPF_HEAD
+            + '<meta name="cover" content="gone"/>'
+            + "</metadata><manifest>"
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="real" href="cover.jpg" media-type="image/jpeg"/>'
+            '</manifest><spine><itemref idref="c1"/></spine>'
+            '<guide><reference type="cover" title="Cover" href="cover.jpg"/></guide>'
+            + self.OPF_TAIL
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, opf)
+            report = repair_epub(src, dst)  # off by default
+            self.assertNotIn("cover_meta_repointed", report.fixes)
+            report = repair_epub(src, dst, fix_cover=True)
+            self.assertEqual(report.fixes.get("cover_meta_repointed"), 1)
+            with zipfile.ZipFile(dst) as z:
+                out = z.read("OEBPS/content.opf").decode("utf-8")
+            self.assertIn('content="real"', out)
+            self.assertNotIn('content="gone"', out)
+
+    def test_dangling_meta_without_a_guide_is_removed(self):
+        opf = (
+            self.OPF_HEAD
+            + '<meta name="cover" content="gone"/>'
+            + "</metadata><manifest>"
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            '</manifest><spine><itemref idref="c1"/></spine>' + self.OPF_TAIL
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, opf)
+            report = repair_epub(src, dst, fix_cover=True)
+            self.assertEqual(report.fixes.get("cover_meta_removed"), 1)
+            with zipfile.ZipFile(dst) as z:
+                out = z.read("OEBPS/content.opf").decode("utf-8")
+            self.assertNotIn('name="cover"', out)
+
+    def test_healthy_meta_is_untouched(self):
+        opf = (
+            self.OPF_HEAD
+            + '<meta name="cover" content="real"/>'
+            + "</metadata><manifest>"
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="real" href="cover.jpg" media-type="image/jpeg"/>'
+            '</manifest><spine><itemref idref="c1"/></spine>' + self.OPF_TAIL
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, opf)
+            report = repair_epub(src, dst, fix_cover=True)
+            self.assertNotIn("cover_meta_repointed", report.fixes)
+            self.assertNotIn("cover_meta_removed", report.fixes)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn(
+                    'content="real"', z.read("OEBPS/content.opf").decode("utf-8")
+                )
+
+    def test_single_quoted_meta_keeps_its_quote_style(self):
+        opf = (
+            self.OPF_HEAD
+            + "<meta name='cover' content='gone'/>"
+            + "</metadata><manifest>"
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="real" href="cover.jpg" media-type="image/jpeg"/>'
+            '</manifest><spine><itemref idref="c1"/></spine>'
+            '<guide><reference type="cover" title="Cover" href="cover.jpg"/></guide>'
+            + self.OPF_TAIL
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, opf)
+            report = repair_epub(src, dst, fix_cover=True)
+            self.assertEqual(report.fixes.get("cover_meta_repointed"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn(
+                    "content='real'", z.read("OEBPS/content.opf").decode("utf-8")
+                )
+
+    def test_cover_file_absent_is_left_to_the_prune(self):
+        # the meta's item EXISTS but its file is gone: --fix-cover alone
+        # leaves it (the declaration is honest), the prune removes the item
+        # and the edge completion removes the meta
+        opf = (
+            self.OPF_HEAD
+            + '<meta name="cover" content="real"/>'
+            + "</metadata><manifest>"
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="real" href="gone.jpg" media-type="image/jpeg"/>'
+            '</manifest><spine><itemref idref="c1"/></spine>' + self.OPF_TAIL
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", CONTENT)
+            report = repair_epub(src, dst, fix_cover=True)
+            self.assertNotIn("cover_meta_repointed", report.fixes)
+            self.assertNotIn("cover_meta_removed", report.fixes)
+            report = repair_epub(src, dst, fix_cover=True, prune_missing=True)
+            self.assertEqual(report.fixes.get("manifest_items_pruned"), 1)
+            self.assertEqual(report.fixes.get("prune_edges_rewritten"), 1)
