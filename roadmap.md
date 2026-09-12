@@ -1463,3 +1463,21 @@ prune-edges, media-types); C boxes record their decisions and wait.
 Each repair ships with a fixture built from the prevalence study's
 real samples, a regression test written before the fix, and the gate
 (epubcheck) accepting the result.
+
+## Tag policy (decided 2026-09-11, recorded 2026-09-12)
+
+The release-tag backlog is settled, forward-only:
+
+- **v0.35.0 is the anchor.** Every release from v0.36.0 on is tagged at
+  its release commit under auto-tag promotion (a fully qualified release
+  is tagged and pushed without asking; the blitz rulebook's decision 22).
+- **The nine untagged 0.18.0-0.26.0 entries are exempted** by decision
+  of record (2026-09-11): no backfill tags will be cut for them. Their
+  release notes live in patchnotes.md and their wheels are on PyPI; the
+  missing git tags are accepted history.
+- **Two recorded-only repairs stay force-pushes, undecided:** the
+  v0.28.0 retag (the tag points at a red commit) and the v0.33.0
+  em-dash tag message (the pushed tag carries two em-dashes the
+  proofread missed; the source patchnotes entry was fixed immediately in
+  1c374c1). Either would need publish.yml disabled around the push and
+  Brandon's explicit go; neither is ever auto-executed.
