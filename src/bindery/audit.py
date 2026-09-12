@@ -1349,18 +1349,18 @@ def _corrupt_verdict(r: dict) -> tuple[bool, str, list[str]]:
             "CORRUPT",
             [
                 f"unreadable obfuscated font(s): {r['encrypted_n']} "
-                f"(first: {r['encrypted_first']}) — broken, not DRM; re-source"
+                f"(first: {r['encrypted_first']}): broken, not DRM; re-source"
             ],
         )
     if r.get("encrypted_n"):
         lines = []
         if r.get("n"):
             lines.append(
-                f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source"
+                f"corrupt:{r['n']} (first: {r['first']}): damaged archive; re-source"
             )
         lines.append(
             f"encrypted:{r['encrypted_drm_n']} (first: {r['encrypted_first']})"
-            " — DRM-protected; not repairable, skip"
+            ": DRM-protected; not repairable, skip"
         )
         return (
             True,
@@ -1368,7 +1368,7 @@ def _corrupt_verdict(r: dict) -> tuple[bool, str, list[str]]:
             lines,
         )
     if r.get("n"):
-        lines = [f"corrupt:{r['n']} (first: {r['first']}) — damaged archive; re-source"]
+        lines = [f"corrupt:{r['n']} (first: {r['first']}): damaged archive; re-source"]
         if r.get("dup_entries"):
             lines.append(
                 f"duplicate entries: {r['dup_entries']} (zip resolves last-wins; "
@@ -1385,7 +1385,7 @@ def _corrupt_verdict(r: dict) -> tuple[bool, str, list[str]]:
             "OBFUSCATED",
             [
                 f"obfuscated font(s): {r['obfuscated_n']} "
-                f"(first: {r['obfuscated_first']}) — publisher embedding, "
+                f"(first: {r['obfuscated_first']}): publisher embedding, "
                 "readable; benign"
             ],
         )
@@ -1852,7 +1852,7 @@ def _corrupt_sections(hits) -> int:
         print(f"{RED}{BOLD}CORRUPT ARCHIVES ({len(hits)}){RESET}")
         for book_id, title, tag, n, first in sorted(hits):
             print(f"  {RED}#{book_id}{RESET} [{tag}] {title}")
-            print(f"    corrupt:{n} (first: {first}) — damaged archive; re-source")
+            print(f"    corrupt:{n} (first: {first}): damaged archive; re-source")
         print()
         print(
             f"{RED}{BOLD}archive FOUND{RESET}: {len(hits)} file(s) need re-sourcing "
@@ -1921,7 +1921,7 @@ def _obfuscated_sections(hits) -> int:
             print(f"  {YELLOW}#{book_id}{RESET} [{tag}] {title}")
             print(
                 f"    obfuscated font(s): {r['obfuscated_n']} "
-                f"(first: {r['obfuscated_first']}) — readable; benign"
+                f"(first: {r['obfuscated_first']}): readable; benign"
             )
         print()
     return 0
