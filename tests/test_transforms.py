@@ -462,6 +462,37 @@ class TestFixNcxPlayorder(unittest.TestCase):
         self.assertEqual(out.count('playOrder="1"'), 1)
         self.assertIn("Chapter playOrder=", out)
 
+    def test_already_sequential_playorder_is_not_counted_as_fixes(self):
+        # found by the plugin work (2026-09-12): the already-correct
+        # comparison read the attribute value WITH its quotes, so every
+        # sequential navPoint counted as a fix on every pass. The rewritten
+        # bytes were identical, which is why the deterministic-output tests
+        # never caught it; only the fix counts were phantom (59 on a real
+        # book, every run), and the plugin's zero-fixes contract broke.
+        ncx = "".join(
+            f'<navPoint id="p{i}" playOrder="{i}"/>' for i in range(1, 5)
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, ncx)
+
+    def test_single_quoted_sequential_playorder_is_untouched(self):
+        # the same bug's second face: already-correct markup must stay
+        # untouched (single quotes preserved), not be rewritten to doubles
+        ncx = "".join(
+            f"<navPoint id='p{i}' playOrder='{i}'/>" for i in range(1, 5)
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, ncx)
+
+    def test_resequence_count_still_counts_real_changes(self):
+        ncx = '<navPoint playOrder="2"/><navPoint playOrder="2"/>'
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual(n, 1)  # the first moves 2->1; the second is right
+        self.assertIn('playOrder="1"', out)
+        self.assertIn('playOrder="2"', out)
+
 
 class TestStripInvalidValue(unittest.TestCase):
     def test_misplaced_value_is_stripped(self):
