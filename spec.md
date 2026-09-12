@@ -14,10 +14,11 @@ schema (RSC-005) violations, which are usually harmless to readers and not safel
 mechanizable.
 
 The deliberate exceptions to "semantics-preserving" come in two kinds, both strictly
-opt-in. The twelve **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
+opt-in. The fourteen **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
 `--fix-id-colons`, `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
-`--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`) alter
+`--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
+`--fix-container`, `--fix-media-types`) alter
 markup structure or fabricate minimal content; the three
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
 content a converter injected rather than content the author wrote. The default pass runs
@@ -91,7 +92,7 @@ normal gate applies.
 
 ### Opt-in: structural repairs
 
-Twelve repairs go past well-formedness and therefore require their own flag; none is ever
+Fourteen repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
@@ -168,7 +169,20 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   strict readers; the encoded form denotes the same file and renders identically. Scope
   is fixed to the space character: extend only with a named epubcheck finding.
 
-All twelve are evaluated by the normal `gate`: unlike the lossy strips, their benefit is
+- **`--fix-container`**: generate `META-INF/container.xml` at the located OPF when the
+container is missing, unparseable, or names a file the archive does not contain. This is the
+gateway defect: epubcheck stays fatal while the OPF is unfindable, so no other repair can be
+gate-accepted on such a book. The generated file is byte-deterministic (a fixed template plus
+the OPF path; the entry's timestamp is the constant epoch), and a healthy container is never
+touched.
+- **`--fix-media-types`**: normalize wrong manifest `media-type` declarations (OPF-029: a
+file's bytes do not match the declared type). The expected type comes from the extension, and
+the rewrite fires only when the file's magic bytes at offset 0 confirm the extension (jpg,
+jpeg, png, gif): a PNG renamed `.jpg` keeps its wrong-but-honest declaration rather than
+gaining a worse one. Attribute-only, quote-style preserved; files absent from the archive
+belong to `--prune-missing-resources`.
+
+All fourteen are evaluated by the normal `gate`: unlike the lossy strips, their benefit is
 visible to epubcheck (they clear errors), so a run with no measurable improvement is a
 noop and nothing is applied. CDATA sections and comments are never rewritten, as
 everywhere else.
@@ -352,6 +366,13 @@ to render them even though the book totals normally), damaged archives (every ar
 is fully read for CRC + decompression, reporting CORRUPT rather than EMPTY), and spine integrity
 issues. Manifest/NCX references to absent files are classified as either `convention` (ToC is bloated but
 present documents form a consecutive chapter span) or `fragment` (the span itself is broken).
+
+The archive verdict distinguishes font obfuscation from DRM (Phase 16): entries
+`encryption.xml` declares under a font-obfuscation algorithm (the IDPF `2008/embedding`
+URI and both Adobe forms, including the `ns.adobe.com` URI real-world files carry) that
+read fine are the OBFUSCATED advisory — publisher embedding, benign, never a failure; an
+unreadable obfuscation entry is CORRUPT (a broken font, not a business model), and only
+non-obfuscation algorithms give the ENCRYPTED verdict with its DRM skip advice.
 
 The completeness analyzer is the phase-1 spot-check and is advisory by contract: it never
 flags a book and never moves the exit code. Per book it reports the spine doc count, the

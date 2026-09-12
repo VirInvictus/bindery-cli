@@ -1,4 +1,61 @@
 # bindery-cli Patch Notes
+## v0.38.0 (2026-09-12)
+
+### Phase 16: package-structure repairs
+
+- **`--fix-container`, the gateway repair.** A book whose
+  META-INF/container.xml is missing, unparseable, or names a file the
+  archive does not contain is locked out of every repair: epubcheck
+  stays fatal while the OPF is unfindable. The new flag generates the
+  standard container at the OPF the locator already finds by fallback
+  (a byte-deterministic template with the constant epoch timestamp).
+  Oracle-verified on a real-shaped fixture: fatal before, gate-accepted
+  after. The Phase 16 prevalence study found 0 such books in-library
+  (5,228/5,228 have valid containers); the repair ships for the
+  acquisition phase, where the class actually lives.
+- **`--prune-missing-resources` rewrites what it drops.** Removing a
+  manifest item whose file is absent used to leave every package edge
+  pointing at it dangling, manufacturing the regression the gate then
+  rejects. The prune now carries the pruned ids into a rewrite of the
+  four edge classes: `spine@toc`, `item@media-overlay`, `item@fallback`,
+  and the EPUB2 cover meta. Optional edges of dead targets are removed;
+  edges to live ids are untouched.
+- **`--fix-media-types`.** Wrong manifest media-type declarations
+  (OPF-029; 275 occurrences in 15 library books, the class being a jpg
+  stamped `image/png` by an aggregator) are normalized attribute-only,
+  preserving quote style, and only when the file's magic bytes confirm
+  the extension: a PNG renamed .jpg keeps its wrong-but-honest
+  declaration instead of a worse one. On the real Arthur sample the run
+  goes from nochange to gate-accepted with 9 declarations fixed.
+- **The audit distinguishes font obfuscation from DRM.** encryption.xml
+  entries under the obfuscation algorithms (the IDPF URI and both Adobe
+  forms, including the ns.adobe.com URI real-world files actually
+  carry, which the prevalence study caught) that read fine are the new
+  OBFUSCATED advisory: publisher font embedding, benign, problem-False,
+  exit-neutral. An unreadable obfuscation entry is CORRUPT (a broken
+  font, re-source), and only non-obfuscation algorithms give the
+  ENCRYPTED skip. 86 of the library's 5,228 books carry
+  obfuscation-only encryption.xml; the library holds no real DRM at all.
+- **Boxed, not built, with real counts.** The obfuscation-aware
+  encryption repair (the magic-byte precondition validated on 424 real
+  fonts: all genuinely scrambled, zero stale entries in-library), href
+  case/backslash resolution (1 href in 1 book; 0 backslashes), and
+  duplicate zip-entry dedupe (0 books) are recorded in the roadmap with
+  their prevalence numbers and reopen conditions. The decision-gated
+  Phase 16 C boxes (cover wiring, the metadata carve-out, the NCX<->nav
+  drift detector, CSS url() pruning) carry recorded options and wait
+  for rulings.
+
+### The prevalence study (Phase 16 A)
+
+- 5,228 library books through the FastSweep epubcheck harness plus a
+  direct zip-level pass: container.xml valid on every book; RSC-007 at
+  14,156 occurrences in 600 books and PKG-010 in 280 (the prune
+  surface, 1,538 truly-absent manifest hrefs); OPF-029 at 275 in 15;
+  case-mismatch hrefs exactly 1; encryption.xml in 86 books, all of it
+  font obfuscation. Every Phase 16 repair box now carries its real
+  count.
+
 ## v0.37.0 (2026-09-12)
 
 ### The Bindery Repair Calibre plugin (Phase 3)

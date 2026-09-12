@@ -1483,48 +1483,101 @@ an opt-in structural repair under the existing gate contract.
 
 ### B. The repairs (each: opt-in flag, dry-run default, gate-accepted)
 
-- [ ] **`--fix-container`**: generate META-INF/container.xml at the
+- [x] **`--fix-container`**: generate META-INF/container.xml at the
   located OPF (model: upstream calibre's initialize_container).
   Gateway repair, effort S, HIGH value.
+  *(shipped v0.38.0, dac7835: fires when the container is missing,
+  unparseable, or names a file the archive does not contain; the
+  generated entry carries the constant epoch so repairs stay
+  byte-deterministic. Prevalence: 0 books in-library (5,228/5,228 have
+  valid containers) — shipped anyway as the acquisition-phase gateway;
+  oracle-verified on a real-shaped fixture (fatal before, accept
+  after).)*
 - [ ] **Obfuscation-aware encryption.xml repair**: prune stale
   obfuscation entries when font magic bytes prove the fonts are
   decrypted in place; drop encryption.xml when only obfuscation entries
   remain and fonts verify. NEVER un-obfuscate. M.
-- [ ] **Audit distinction: OBFUSCATED vs DRM** in audit.py (today the
+  *(BOXED with real counts, 2026-09-12: the magic-byte validation
+  proved 424/424 readable obfuscation fonts genuinely scrambled — zero
+  stale entries in-library, so the repair has nothing to do here; its
+  precondition is validated and recognition carries both Adobe URIs.
+  The audit half of this box SHIPPED (see below). Opens only if
+  acquisition ever brings a decrypted-in-place book.)*
+- [x] **Audit distinction: OBFUSCATED vs DRM** in audit.py (today the
   ENCRYPTED verdict keys on unreadable entries and implies DRM where
   publisher obfuscation is benign). S, rides the box above.
-- [ ] **Reference-edge completion for `--prune-missing-resources`**:
+  *(shipped v0.38.0, dac7835: readable obfuscation entries are the
+  OBFUSCATED advisory (problem-False, exit-neutral; 86 library books);
+  an unreadable obfuscation entry is CORRUPT (broken font, re-source),
+  and only non-obfuscation algorithms give the ENCRYPTED skip.)*
+- [x] **Reference-edge completion for `--prune-missing-resources`**:
   rewrite `spine@toc`, `item@media-overlay`, `item@fallback`, and EPUB2
   cover-meta edges when their targets are pruned (machinery exists in
   fix_manifest_ids). Prevents manufacturing gate regressions. S/M.
-- [ ] **Manifest media-type normalization**: sniff magic bytes /
+  *(shipped v0.38.0, dac7835: prune_missing_manifest_items returns the
+  pruned ids; prune_dangling_edges removes the optional attributes and
+  a cover meta whose payload died. RSC-007 backs it at 14,156
+  occurrences in 600 books.)*
+- [x] **Manifest media-type normalization**: sniff magic bytes /
   extension map; attribute-only. S.
+  *(shipped v0.38.0, dac7835 as `--fix-media-types`: OPF-029 class,
+  275 occurrences in 15 books; jpg/png/gif only, fired only when the
+  magic bytes confirm the extension. Oracle-verified on the real
+  Arthur sample: nochange without the flag, accept with 9 normalized.)*
 - [ ] **href case/backslash resolution**: case-insensitive namemap when
   exactly one zip entry matches; backslash to slash. Kills the
   present-file RSC-007/PKG-010 slice prune cannot touch. M.
+  *(BOXED with real counts, 2026-09-12: exactly 1 case-mismatch href in
+  1 book and 0 backslash hrefs across the library — below the shipping
+  bar; reopen if acquisition changes the mix.)*
 - [ ] **Duplicate zip-entry dedupe on rewrite**: drop shadowed
   duplicates (audit already counts `dup_entries`). S.
+  *(BOXED with real counts, 2026-09-12: 0 books with duplicate entries
+  in-library.)*
 
 ### C. Decision-gated (recorded boxes; no work without a ruling)
 
 - [ ] **Cover wiring repair** (dangling `<meta name="cover">`, missing
   `properties="cover-image"`, wrong cover media-type): narrow,
   finding-driven repair vs audit-only. Needs the scope decision. M.
+  *(Recorded options, 2026-09-12: (a) narrow, finding-driven repair —
+  re-point the cover meta / add `properties="cover-image"` only when
+  the cover item is unambiguously identifiable from the existing guide
+  or meta (no content fabrication, deterministic); (b) audit-only — an
+  audit detector reporting unwired covers as `decisions_needed`. The
+  research leans (a) for EPUB2 meta re-pointing and (b) for everything
+  else, since guessing "which image is the cover" from names is exactly
+  the non-determinism the charter forbids.)*
 - [ ] **Metadata validity carve-out ruling** (non-ISO `dc:date`,
   invalid `dc:language`, missing `dcterms:modified`): bindery opt-in
   with a determinism-safe timestamp policy, or route to
   cquarry/CalibreQuarry. Needs a written charter ruling. M.
+  *(Recorded options, 2026-09-12: (a) bindery opt-in — non-ISO dates
+  and language tags are deterministic normalizations (OPF-007/OPF-012
+  class), but `dcterms:modified` needs a timestamp policy that breaks
+  byte-determinism unless pinned to the file's own zip timestamps;
+  (b) route to cquarry/CalibreQuarry — metadata quality is catalog
+  territory and the library's metadata writes already live there.
+  (b) is the cleaner charter fit; (a) only if epubcheck fatals on such
+  books show up in acquisition.)*
 - [ ] **NCX<->nav drift DETECTOR** (audit-only; structural diff feeding
   `decisions_needed`; ToC synthesis stays out of charter
   permanently). L if repair is ever attempted.
 - [ ] **CSS url() pruning** as `--prune-missing-resources` scope
-  extension: only after the prevalence study says it matters. M.
+  extension: only after the prevalence study says it matters.
+  *(Prevalence read, 2026-09-12: CSS-007/CSS-008 appear at 56/30 books
+  but are selector damage, not url() pruning candidates; no url()-class
+  count surfaced in the extract codes. Stays closed until a named
+  epubcheck finding demands it.)*
 
 Ship shape: A leads; then B in value order (container, encryption,
 prune-edges, media-types); C boxes record their decisions and wait.
 Each repair ships with a fixture built from the prevalence study's
 real samples, a regression test written before the fix, and the gate
 (epubcheck) accepting the result.
+*(2026-09-12 disposition: B shipped the four boxes with real backing
+and boxed the two zero-prevalence classes with their counts; C carries
+recorded options and waits for Brandon.)*
 
 ## Tag policy (decided 2026-09-11, recorded 2026-09-12)
 
