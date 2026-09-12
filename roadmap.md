@@ -1396,3 +1396,70 @@ Brocktree (real Epilogue doc before a trailing 520-char ToC), Mattimeo
 (Chapter 50 verified as a real heading with prose after, inside a 174k-char
 split doc), The Long Patrol (percent-encoded hrefs defeated the hand-rolled
 reader; 55/57 prose docs).*
+
+## Phase 16: package-structure repairs (proposed 2026-09-12, from REPORT-12-Sept.md)
+
+A research pass mapped the full real-world EPUB damage taxonomy against
+the shipped repair surface: bindery handles ~60-65% of damage classes
+end-to-end, and the missing slice is package-level structure — several
+classes of which are GATEWAY DEFECTS (epubcheck stays fatal, so no
+shipped repair can ever be gate-accepted on those books). Full evidence,
+producer classes, and the cross-repo routing live in
+REPORT-12-Sept.md. Lead with the prevalence study; every box below is
+an opt-in structural repair under the existing gate contract.
+
+### A. Research first (boxes cannot be honestly sized without these)
+
+- [ ] **FastSweep prevalence study**: run `fast_sweep.py
+  --mode=extract` aggregation over the full library for the new
+  classes — container.xml presence/validity, encryption.xml
+  algorithms, manifest media-type warnings, case-mismatch RSC-007s.
+  Each Phase 16 repair box gets its real count before it opens.
+- [ ] **Obfuscation magic-byte validation**: confirm the IDPF
+  (`2008/embedding`) and Adobe (`pdf/enc#RC`) font prefixes at offset 0
+  against real samples before the encryption-repair box opens.
+
+### B. The repairs (each: opt-in flag, dry-run default, gate-accepted)
+
+- [ ] **`--fix-container`**: generate META-INF/container.xml at the
+  located OPF (model: upstream calibre's initialize_container).
+  Gateway repair, effort S, HIGH value.
+- [ ] **Obfuscation-aware encryption.xml repair**: prune stale
+  obfuscation entries when font magic bytes prove the fonts are
+  decrypted in place; drop encryption.xml when only obfuscation entries
+  remain and fonts verify. NEVER un-obfuscate. M.
+- [ ] **Audit distinction: OBFUSCATED vs DRM** in audit.py (today the
+  ENCRYPTED verdict keys on unreadable entries and implies DRM where
+  publisher obfuscation is benign). S, rides the box above.
+- [ ] **Reference-edge completion for `--prune-missing-resources`**:
+  rewrite `spine@toc`, `item@media-overlay`, `item@fallback`, and EPUB2
+  cover-meta edges when their targets are pruned (machinery exists in
+  fix_manifest_ids). Prevents manufacturing gate regressions. S/M.
+- [ ] **Manifest media-type normalization**: sniff magic bytes /
+  extension map; attribute-only. S.
+- [ ] **href case/backslash resolution**: case-insensitive namemap when
+  exactly one zip entry matches; backslash to slash. Kills the
+  present-file RSC-007/PKG-010 slice prune cannot touch. M.
+- [ ] **Duplicate zip-entry dedupe on rewrite**: drop shadowed
+  duplicates (audit already counts `dup_entries`). S.
+
+### C. Decision-gated (recorded boxes; no work without a ruling)
+
+- [ ] **Cover wiring repair** (dangling `<meta name="cover">`, missing
+  `properties="cover-image"`, wrong cover media-type): narrow,
+  finding-driven repair vs audit-only. Needs the scope decision. M.
+- [ ] **Metadata validity carve-out ruling** (non-ISO `dc:date`,
+  invalid `dc:language`, missing `dcterms:modified`): bindery opt-in
+  with a determinism-safe timestamp policy, or route to
+  cquarry/CalibreQuarry. Needs a written charter ruling. M.
+- [ ] **NCX<->nav drift DETECTOR** (audit-only; structural diff feeding
+  `decisions_needed`; ToC synthesis stays out of charter
+  permanently). L if repair is ever attempted.
+- [ ] **CSS url() pruning** as `--prune-missing-resources` scope
+  extension: only after the prevalence study says it matters. M.
+
+Ship shape: A leads; then B in value order (container, encryption,
+prune-edges, media-types); C boxes record their decisions and wait.
+Each repair ships with a fixture built from the prevalence study's
+real samples, a regression test written before the fix, and the gate
+(epubcheck) accepting the result.
