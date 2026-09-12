@@ -1408,7 +1408,7 @@ everything else is backlog, not danger.*
 
 *(SHIPPED 2026-09-12 as v0.36.0: `audit completeness` rides the existing
 single decompression pass; the Redwall-shaped regression tests landed
-first (4021ce7), the analyzer second (e6156c0). Verified against the
+first (ed2589d), the analyzer second (da0d2c7). Verified against the
 real fixtures: Lord Brocktree's trailing ToC is caught with the Epilogue
 sampled as the last prose doc, The Long Patrol reads exactly 55/57
 prose docs through its percent-encoded hrefs, and Mattimeo's split doc
@@ -1486,7 +1486,7 @@ an opt-in structural repair under the existing gate contract.
 - [x] **`--fix-container`**: generate META-INF/container.xml at the
   located OPF (model: upstream calibre's initialize_container).
   Gateway repair, effort S, HIGH value.
-  *(shipped v0.38.0, dac7835: fires when the container is missing,
+  *(shipped v0.38.0, fa65c3a: fires when the container is missing,
   unparseable, or names a file the archive does not contain; the
   generated entry carries the constant epoch so repairs stay
   byte-deterministic. Prevalence: 0 books in-library (5,228/5,228 have
@@ -1506,7 +1506,7 @@ an opt-in structural repair under the existing gate contract.
 - [x] **Audit distinction: OBFUSCATED vs DRM** in audit.py (today the
   ENCRYPTED verdict keys on unreadable entries and implies DRM where
   publisher obfuscation is benign). S, rides the box above.
-  *(shipped v0.38.0, dac7835: readable obfuscation entries are the
+  *(shipped v0.38.0, fa65c3a: readable obfuscation entries are the
   OBFUSCATED advisory (problem-False, exit-neutral; 86 library books);
   an unreadable obfuscation entry is CORRUPT (broken font, re-source),
   and only non-obfuscation algorithms give the ENCRYPTED skip.)*
@@ -1514,13 +1514,13 @@ an opt-in structural repair under the existing gate contract.
   rewrite `spine@toc`, `item@media-overlay`, `item@fallback`, and EPUB2
   cover-meta edges when their targets are pruned (machinery exists in
   fix_manifest_ids). Prevents manufacturing gate regressions. S/M.
-  *(shipped v0.38.0, dac7835: prune_missing_manifest_items returns the
+  *(shipped v0.38.0, fa65c3a: prune_missing_manifest_items returns the
   pruned ids; prune_dangling_edges removes the optional attributes and
   a cover meta whose payload died. RSC-007 backs it at 14,156
   occurrences in 600 books.)*
 - [x] **Manifest media-type normalization**: sniff magic bytes /
   extension map; attribute-only. S.
-  *(shipped v0.38.0, dac7835 as `--fix-media-types`: OPF-029 class,
+  *(shipped v0.38.0, fa65c3a as `--fix-media-types`: OPF-029 class,
   275 occurrences in 15 books; jpg/png/gif only, fired only when the
   magic bytes confirm the extension. Oracle-verified on the real
   Arthur sample: nochange without the flag, accept with 9 normalized.)*
