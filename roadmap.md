@@ -1372,6 +1372,14 @@ everything else is backlog, not danger.*
 
 ## Phase 15: completeness spot-check analyzer (proposed 2026-09-10, from the phase-1 skill's own doctrine)
 
+*(SHIPPED 2026-09-12 as v0.36.0: `audit completeness` rides the existing
+single decompression pass; the Redwall-shaped regression tests landed
+first (4021ce7), the analyzer second (e6156c0). Verified against the
+real fixtures: Lord Brocktree's trailing ToC is caught with the Epilogue
+sampled as the last prose doc, The Long Patrol reads exactly 55/57
+prose docs through its percent-encoded hrefs, and Mattimeo's split doc
+stays prose. Advisory by contract; `all` and `run phase1` include it.)*
+
 *(RAISED with Brandon 2026-09-10, batched with the session-start raises;
 recommendation: APPROVE. Execution is gated on that go; the proposal
 below is filed and costed. The Redwall run it names is a ready-made

@@ -104,9 +104,14 @@ bindery audit ocr ~/docs/Calibre\ Library
 # Flag books where a single content document is too large for readers to render
 bindery audit monolithic ~/docs/Calibre\ Library
 
+# Spot-check completeness: prose coverage, first/middle/last excerpts, trailing ToC
+bindery audit completeness ~/docs/Calibre\ Library
+
 # Run all audits and generate a comprehensive CSV
 cd ~/docs/Calibre\ Library && bindery audit all
 ```
+
+**Completeness spot-check:** the `completeness` audit answers the pre-import question "does this book reach its end?" It reports, per book: the prose-document count against the spine (docs with 400+ visible characters), the opening and closing text of the first/middle/last prose doc, a trailing-ToC classification of the final spine doc (a link-dense chapter list after the real back matter), and the fraction of unreadable docs. A trailing ToC is reported as an advisory, never a failure: the closing excerpt always comes from the real back matter, so a human can confirm the book ends where the author ended it.
 
 Audits can also be run on a directory of loose `.epub` files by passing the path as the second argument:
 ```sh

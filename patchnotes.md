@@ -1,6 +1,39 @@
 # bindery-cli Patch Notes
+## v0.36.0 (2026-09-12)
 
-## Unreleased
+### The completeness spot-check: `audit completeness` (Phase 15)
+
+- **The phase-1 judgment step finally has a tool owner.** The import
+  skill's completeness step asks a human question with no tool behind
+  it: "sample early, middle, and late pages ... read the LAST content
+  page to confirm it reaches real back matter rather than cutting off
+  mid-chapter". Two consecutive phase-1 runs answered it with a
+  hand-rolled zipfile sampler in /tmp. The new analyzer rides the
+  audit's existing single decompression pass (no second decode of any
+  book) and reports, per book: spine doc count, prose-doc count (spine
+  docs with at least 400 visible characters), the opening and closing
+  120 characters of the first/middle/last prose doc, a trailing-ToC
+  classification of the final spine doc, and the fraction of unreadable
+  docs (corrupt entries plus unresolved itemrefs).
+- **A trailing ToC never impersonates the ending.** The final spine doc
+  is classified as a chapter list when short link lines dominate it and
+  no block runs to paragraph length; such a doc is book furniture and
+  is excluded from the prose sampling, so the closing excerpt comes
+  from the real back matter. Verified against the real 2026-09-10
+  Redwall fixtures: Lord Brocktree's trailing ToC is caught and the
+  Epilogue is sampled as the last prose doc; The Long Patrol reads
+  exactly 55/57 prose docs through the percent-encoded hrefs that
+  defeated the hand-rolled sampler; Mattimeo's split doc (chapter
+  headings with real prose after every one) stays prose.
+- **Advisory by contract.** The analyzer never flags a book and never
+  moves the exit code: the archive, spine, and emptytext verdicts keep
+  owning the flags. The verdict status is ADVISORY (not OK) when a
+  trailing ToC is present or the unreadable fraction reaches 10%.
+  `audit all` and `run phase1` include it through the battery, the CLI
+  grows the `completeness` mode, and `--json` records carry its
+  verdicts in the same shape as the other analyzers.
+
+### Dependencies
 
 - Adopted cquarry 1.18.0 (floor + lock): the set_format repair lane now keeps
   Calibre's FTS index and page counts honest automatically (the sidecar's
@@ -9,6 +42,15 @@
 - Adopted cquarry 1.19.0 (floor + lock): the repair lane gains its undo
   primitive -- save_original_format/restore_original_format -- so a format
   repair can put the original bytes back if it goes wrong.
+
+### Repo records
+
+- The release-tag backlog is settled forward-only from v0.35.0: the
+  nine untagged 0.18.0-0.26.0 entries are exempted by decision of
+  record (2026-09-11), and the v0.28.0 retag and the v0.33.0 em-dash
+  tag repair stay recorded-only force-pushes (roadmap.md, "Tag
+  policy").
+
 ## v0.35.0 (2026-09-10)
 
 ### The epubcheck daemon, reconciled: oracle-identical counts at ~15x the speed

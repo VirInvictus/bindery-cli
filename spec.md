@@ -343,8 +343,8 @@ crashing the sweep.
 
 ## Audit subcommand (read-only)
 
-`bindery audit {content,pagenumbers,emptytext,ocr,monolithic,all} [PATH] [--max-doc-chars N]
-[--tag TAG] [--id IDs]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0; `--id` since v0.19.0, comma-lists in v0.23.0) inspects
+`bindery audit {content,pagenumbers,emptytext,ocr,monolithic,completeness,all} [PATH] [--max-doc-chars N]
+[--tag TAG] [--id IDs]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0, `--max-doc-chars N`; `--id` since v0.19.0, comma-lists in v0.23.0; `completeness` since v0.36.0) inspects
 EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in page-number
 layers (sliding-window density heuristics), empty or thin books, systemic OCR damage, and
 single oversized content documents (one spine doc at or above 300k characters — readers refuse
@@ -352,6 +352,18 @@ to render them even though the book totals normally), damaged archives (every ar
 is fully read for CRC + decompression, reporting CORRUPT rather than EMPTY), and spine integrity
 issues. Manifest/NCX references to absent files are classified as either `convention` (ToC is bloated but
 present documents form a consecutive chapter span) or `fragment` (the span itself is broken).
+
+The completeness analyzer is the phase-1 spot-check and is advisory by contract: it never
+flags a book and never moves the exit code. Per book it reports the spine doc count, the
+prose-doc count (spine docs carrying at least 400 visible characters), the opening and closing
+120 characters of the first/middle/last prose doc, a trailing-ToC classification of the final
+spine doc, and the fraction of spine docs that could not be read (corrupt entries plus
+unresolved itemrefs). A trailing ToC (the final doc is dominated by short link lines, at
+least half its lines carry links, and no block runs to paragraph length) is book furniture:
+it is excluded from the prose sampling so the closing excerpt comes from the real back
+matter, and the verdict becomes ADVISORY (as it does at an unreadable fraction of 10% or
+more). Like emptytext it is skipped wholesale when the archive verdict owns the body-text
+story.
 
 In library mode, EPUB files are resolved through `cquarry.db.CalibreDB.get_format_path()` — the
 storage-layout logic is not duplicated here. The scan itself still writes nothing. The opt-in
