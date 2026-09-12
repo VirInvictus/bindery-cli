@@ -469,9 +469,7 @@ class TestFixNcxPlayorder(unittest.TestCase):
         # bytes were identical, which is why the deterministic-output tests
         # never caught it; only the fix counts were phantom (59 on a real
         # book, every run), and the plugin's zero-fixes contract broke.
-        ncx = "".join(
-            f'<navPoint id="p{i}" playOrder="{i}"/>' for i in range(1, 5)
-        )
+        ncx = "".join(f'<navPoint id="p{i}" playOrder="{i}"/>' for i in range(1, 5))
         out, n = fix_ncx_playorder(ncx)
         self.assertEqual(n, 0)
         self.assertEqual(out, ncx)
@@ -479,9 +477,7 @@ class TestFixNcxPlayorder(unittest.TestCase):
     def test_single_quoted_sequential_playorder_is_untouched(self):
         # the same bug's second face: already-correct markup must stay
         # untouched (single quotes preserved), not be rewritten to doubles
-        ncx = "".join(
-            f"<navPoint id='p{i}' playOrder='{i}'/>" for i in range(1, 5)
-        )
+        ncx = "".join(f"<navPoint id='p{i}' playOrder='{i}'/>" for i in range(1, 5))
         out, n = fix_ncx_playorder(ncx)
         self.assertEqual(n, 0)
         self.assertEqual(out, ncx)
