@@ -1537,17 +1537,22 @@ an opt-in structural repair under the existing gate contract.
 
 ### C. Decision-gated (recorded boxes; no work without a ruling)
 
-- [ ] **Cover wiring repair** (dangling `<meta name="cover">`, missing
+- [x] **Cover wiring repair** (dangling `<meta name="cover">`, missing
   `properties="cover-image"`, wrong cover media-type): narrow,
   finding-driven repair vs audit-only. Needs the scope decision. M.
-  *(Recorded options, 2026-09-12: (a) narrow, finding-driven repair —
-  re-point the cover meta / add `properties="cover-image"` only when
-  the cover item is unambiguously identifiable from the existing guide
-  or meta (no content fabrication, deterministic); (b) audit-only — an
-  audit detector reporting unwired covers as `decisions_needed`. The
-  research leans (a) for EPUB2 meta re-pointing and (b) for everything
-  else, since guessing "which image is the cover" from names is exactly
-  the non-determinism the charter forbids.)*
+  *(RULED 2026-09-12 (Brandon, on the researched options): hybrid.
+  SHIPPED the deterministic half as `--fix-cover` (tests 96a55ad,
+  implementation 790b5f4; v0.39.0): a dangling EPUB2 cover meta is
+  re-pointed from the guide's cover reference when exactly one manifest
+  item carries that file, removed when nothing identifies the item, and
+  a meta whose item exists is left to the prune + edge-completion pair.
+  Measured class: 21 dangling metas + 3 absent files; oracle check on a
+  real book re-pointed 1 and the gate's no_worse bar accepts it (cover
+  wiring is invisible to epubcheck, so cover-only repairs ride the
+  lossy-strips acceptance path). The EPUB3 `properties="cover-image"`
+  slice stays audit-only by ruling: picking "which image is the cover"
+  from names is the guesswork the charter forbids, and 0 library books
+  are fully unwired.)*
 - [ ] **Metadata validity carve-out ruling** (non-ISO `dc:date`,
   invalid `dc:language`, missing `dcterms:modified`): bindery opt-in
   with a determinism-safe timestamp policy, or route to
@@ -1560,6 +1565,12 @@ an opt-in structural repair under the existing gate contract.
   territory and the library's metadata writes already live there.
   (b) is the cleaner charter fit; (a) only if epubcheck fatals on such
   books show up in acquisition.)*
+  *(RULED 2026-09-12 (Brandon, on the researched options): route to
+  cquarry/CalibreQuarry. The ruling is recorded here; the cross-repo
+  handoff (a routed box in CalibreQuarry's backlog naming the class:
+  51 OPF-085 invalid-UUID warnings plus the thin date/language tail)
+  is a main-thread task for the next CQ lane. bindery's side is closed:
+  dc: metadata stays a non-goal.) *
 - [ ] **NCX<->nav drift DETECTOR** (audit-only; structural diff feeding
   `decisions_needed`; ToC synthesis stays out of charter
   permanently). L if repair is ever attempted.
@@ -1590,9 +1601,12 @@ The release-tag backlog is settled, forward-only:
   of record (2026-09-11): no backfill tags will be cut for them. Their
   release notes live in patchnotes.md and their wheels are on PyPI; the
   missing git tags are accepted history.
-- **Two recorded-only repairs stay force-pushes, undecided:** the
-  v0.28.0 retag (the tag points at a red commit) and the v0.33.0
-  em-dash tag message (the pushed tag carries two em-dashes the
-  proofread missed; the source patchnotes entry was fixed immediately in
-  1c374c1). Either would need publish.yml disabled around the push and
-  Brandon's explicit go; neither is ever auto-executed.
+- **EXECUTED 2026-09-12 on Brandon's researched go** (one
+  publish.yml-disabled session): the v0.28.0 tag now points at the
+  first green commit (aabdd7a) and its message regains the title line
+  the historic `git tag -F` defect had stripped; the v0.33.0 tag
+  message is the corrected verbatim entry (61b16ea's entry, zero
+  em-dashes); and the 10 test_facility EPUBs (plus their scratch test
+  files) are stripped from all history via git filter-repo, main and
+  all 14 tags force-pushed. The tags' verbatim messages survived the
+  rewrite; PyPI was untouched throughout.
