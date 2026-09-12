@@ -808,8 +808,9 @@ def _phase1_status(audit_rec: dict | None, repair_rec: dict | None) -> str:
 
 def _run_phase1_audit(root: Path) -> tuple[list[dict], int]:
     """Stage 1: the read-only audit battery (corruption sweep, content
-    battery, monolithic) exactly as `bindery audit all DIR` runs it, with the
-    report captured through its own --json payload in a temp file."""
+    battery, monolithic, completeness spot-check) exactly as
+    `bindery audit all DIR` runs it, with the report captured through its
+    own --json payload in a temp file."""
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "audit.json"
         rc = run_directory(
@@ -900,7 +901,7 @@ def run_phase1(args) -> int:
     print(f"Bindery run phase1 ({mode}): {root}\n")
 
     print(
-        "== stage 1/2: audit battery (corruption sweep, content battery, monolithic) =="
+        "== stage 1/2: audit battery (corruption sweep, content battery, monolithic, completeness) =="
     )
     audit_records, audit_rc = _run_phase1_audit(root)
 
@@ -1357,7 +1358,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     audit.add_argument(
         "mode",
-        choices=("content", "pagenumbers", "emptytext", "ocr", "monolithic", "all"),
+        choices=(
+            "content",
+            "pagenumbers",
+            "emptytext",
+            "ocr",
+            "monolithic",
+            "completeness",
+            "all",
+        ),
         help="which audit to run",
     )
     audit.add_argument(

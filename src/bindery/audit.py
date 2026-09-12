@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 bindery audit: read the actual text of every EPUB and flag content problems that
-metadata and structural validators cannot see. Four analyzers, one tool:
+metadata and structural validators cannot see. Six analyzers, one tool:
 
   content      non-English bodies (wrong-language editions) and injected
                foreign-language ad-notices (declared lang=eng, body Portuguese
@@ -20,7 +20,14 @@ metadata and structural validators cannot see. Four analyzers, one tool:
                their hyphenated form). Character-substitution errors ("sonic"
                for "some") are OUT OF SCOPE: catching those needs a wordlist,
                and this tool is stdlib-only by contract.
-  all          run all four in a SINGLE decompression pass per book
+  monolithic   one spine doc so large that readers refuse to render it, though
+               the book totals normally
+  completeness the phase-1 spot-check: prose-doc count against the spine, the
+               opening/closing text of the first/middle/last prose doc, a
+               trailing-ToC classification of the final doc, and the fraction
+               of unreadable docs (advisory: it reports the shape a human
+               judges, it never flags the book)
+  all          run all six in a SINGLE decompression pass per book
 
 This merges the former audit_epub_content.py / audit_epub_pagenumbers.py /
 audit_epub_emptytext.py: they shared the same spine resolution, library/
@@ -1128,6 +1135,132 @@ def scan_monolithic(path: Path) -> dict:
 
 
 # ----------------------------------------------------------------------------
+# Analyzer: completeness (the phase-1 spot-check: does the book reach its end?)
+# ----------------------------------------------------------------------------
+
+# A spine doc at or above this many visible chars is real content; under it is
+# front/back matter (title pages, colophons) or furniture.
+PROSE_DOC_MIN_CHARS = 400
+SPOT_CHARS = 120  # opening/closing excerpt length per sampled doc
+# A book this far unreadable (corrupt entries + unresolved itemrefs against
+# all spine itemrefs) draws the advisory, though it never fails a run.
+COMPLETENESS_UNREADABLE_FLAG = 0.10
+
+# Trailing-ToC detection, tuned on the 2026-09-10 Redwall run: Lord
+# Brocktree's trailing ToC is a 520-char link list sitting AFTER a real
+# Epilogue doc, while Mattimeo's final doc carries chapter headings with real
+# prose after every one of them and must never classify as a ToC. A ToC page
+# is dense with short link lines and carries no real paragraphs.
+TRAILING_TOC_MIN_BLOCKS = 4  # fewer lines is a colophon or pager, not a ToC
+TRAILING_TOC_SHORT_MAX = 100  # a chapter-heading line is short
+TRAILING_TOC_SHORT_FRAC = 0.75  # most lines are short
+TRAILING_TOC_LONG_BLOCK = 400  # a real paragraph runs longer than any ToC line
+TRAILING_TOC_LINK_FRAC = 0.5  # at least half the lines carry a link
+
+_TOC_BLOCK_SPLIT_RE = re.compile(r"</(?:p|div|li|h[1-6]|td)>", re.IGNORECASE)
+_A_TAG_RE = re.compile(r"<a[\s>]", re.IGNORECASE)
+
+
+def _trailing_toc(html_src: str) -> bool:
+    """Is this document a chapter list? Short link lines dominate and no
+    block runs to paragraph length; a heading followed by real prose (the
+    Mattimeo split-doc case) keeps a document out."""
+    body = _SCRIPT_STYLE_RE.sub(" ", html_src)
+    blocks: list[str] = []
+    for chunk in _TOC_BLOCK_SPLIT_RE.split(body):
+        text = _visible_text(chunk)
+        if text:
+            blocks.append(text)
+    if len(blocks) < TRAILING_TOC_MIN_BLOCKS:
+        return False
+    short = sum(1 for b in blocks if len(b) <= TRAILING_TOC_SHORT_MAX)
+    if short / len(blocks) < TRAILING_TOC_SHORT_FRAC:
+        return False
+    if any(len(b) > TRAILING_TOC_LONG_BLOCK for b in blocks):
+        return False
+    links = len(_A_TAG_RE.findall(body))
+    return links >= len(blocks) * TRAILING_TOC_LINK_FRAC
+
+
+def analyze_completeness(book: Book) -> dict:
+    """The phase-1 completeness spot-check, over the (pre-read) spine.
+
+    Reports the shape a human needs in order to judge "does this book reach
+    its end": the prose-doc count against the spine, opening/closing excerpts
+    of the first/middle/last prose doc, a trailing-ToC classification of the
+    final doc, and the fraction of spine docs that could not be read at all
+    (corrupt entries plus unresolved itemrefs). A trailing ToC is book
+    furniture: it is excluded from the prose sampling so the closing excerpt
+    comes from the real back matter (Lord Brocktree's Epilogue, not its
+    520-char ToC). Reuses the shared visible_texts() cache: no second pass.
+    """
+    texts = book.visible_texts()
+    spine_n = len(book.spine)
+    trailing = ""
+    if spine_n >= 2 and _trailing_toc(book.docs.get(book.spine[-1], "")):
+        trailing = book.spine[-1]
+    prose = [
+        (book.spine[i], texts[i])
+        for i in range(spine_n)
+        if len(texts[i]) >= PROSE_DOC_MIN_CHARS and book.spine[i] != trailing
+    ]
+    corrupt_set = set(book.corrupt)
+    unreadable = (
+        sum(1 for i in range(spine_n) if not texts[i] and book.spine[i] in corrupt_set)
+        + book.spine_missing
+    )
+    blank_docs = sum(
+        1 for i in range(spine_n) if not texts[i] and book.spine[i] not in corrupt_set
+    )
+    spots: list[dict] = []
+    if prose:
+        picks = sorted({0, len(prose) // 2, len(prose) - 1})
+        spots = [
+            {
+                "doc": prose[i][0],
+                "chars": len(prose[i][1]),
+                "opens": prose[i][1][:SPOT_CHARS],
+                "ends": prose[i][1][-SPOT_CHARS:],
+            }
+            for i in picks
+        ]
+    total = spine_n + book.spine_missing
+    return {
+        "spine_docs": spine_n,
+        "spine_missing": book.spine_missing,
+        "prose_docs": len(prose),
+        "unreadable": unreadable,
+        "unreadable_frac": (unreadable / total) if total else 0.0,
+        "blank_docs": blank_docs,
+        "trailing_toc": trailing,
+        "spots": spots,
+    }
+
+
+def scan_completeness(path: Path) -> dict:
+    return analyze_completeness(load_book(path))
+
+
+def _completeness_dir(r: dict) -> tuple[bool, str, list[str]]:
+    """Advisory by contract: the archive, spine, and emptytext verdicts own
+    the flags; completeness reports the shape a human judges."""
+    lines = [
+        f"prose {r['prose_docs']}/{r['spine_docs']} spine docs, "
+        f"unreadable {r['unreadable']} ({r['unreadable_frac'] * 100:.0f}%)"
+    ]
+    status = "OK"
+    if r["trailing_toc"]:
+        lines.append(f"trailing ToC: {r['trailing_toc']}")
+        status = "ADVISORY"
+    elif r["unreadable_frac"] >= COMPLETENESS_UNREADABLE_FLAG:
+        status = "ADVISORY"
+    if r["blank_docs"]:
+        lines.append(f"{r['blank_docs']} spine doc(s) present but blank")
+    lines += [f"{s['doc']}: [{s['opens']}] ... [{s['ends']}]" for s in r["spots"]]
+    return (False, status, lines)
+
+
+# ----------------------------------------------------------------------------
 # Analyzer: archive corruption (always on; owns the "empty body" story)
 # ----------------------------------------------------------------------------
 
@@ -1682,11 +1815,40 @@ def _spine_sections(hits, advisory) -> int:
     return 0
 
 
+def _completeness_sections(advisory) -> int:
+    """Print the completeness advisories; the analyzer never fails a run."""
+    if advisory:
+        print(
+            f"{YELLOW}{BOLD}COMPLETENESS SPOT-CHECK ({len(advisory)} to eyeball;"
+            f" reported, not flagged){RESET}"
+        )
+        for book_id, title, tag, r in sorted(advisory):
+            print(f"  {YELLOW}#{book_id}{RESET} [{tag}] {title}")
+            _p, _s, lines = _completeness_dir(r)
+            for ln in lines:
+                print(f"    {ln}")
+        print()
+        print(
+            f"{YELLOW}{BOLD}completeness DONE{RESET}: read the excerpts above;"
+            f" a trailing ToC or unreadable docs never fail the run."
+        )
+        return 0
+    print(f"{GREEN}{BOLD}completeness CLEAN{RESET}: every book reads whole.")
+    return 0
+
+
 # ----------------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------------
 
-ALL: tuple[str, ...] = ("content", "pagenumbers", "emptytext", "ocr", "monolithic")
+ALL: tuple[str, ...] = (
+    "content",
+    "pagenumbers",
+    "emptytext",
+    "ocr",
+    "monolithic",
+    "completeness",
+)
 
 
 def _record_verdict(
@@ -1813,6 +1975,7 @@ def run_library(
     thin_hits: list[tuple] = []
     ocr_found: list[tuple] = []
     mono_hits: list[tuple] = []
+    completeness_advisory: list[tuple] = []
     corrupt_hits: list[tuple] = []
     spine_hits: list[tuple] = []
     spine_advisory: list[tuple] = []
@@ -1908,6 +2071,15 @@ def run_library(
                 mono_hits.append((book_id, title, tag, r))
             _record_verdict(record, "monolithic", _monolithic_dir(r, max_doc_chars))
 
+        if "completeness" in selected and not corrupt_r["n"]:
+            r = analyze_completeness(book)
+            _p, status, lines = _completeness_dir(r)
+            if status != "OK":
+                completeness_advisory.append((book_id, title, tag, r))
+            # advisory by contract: problem is always False, so the record
+            # status and the exit code are never moved by this analyzer
+            _record_verdict(record, "completeness", (False, status, lines))
+
     print(f"Scanned {scanned} EPUBs in {library_root}\n")
     rc = 0
     multi = len(selected) > 1
@@ -1924,6 +2096,8 @@ def run_library(
             rc |= _empty_sections(empty_hits, partial_hits, thin_hits)
         elif key == "monolithic":
             rc |= _monolithic_sections(mono_hits)
+        elif key == "completeness":
+            rc |= _completeness_sections(completeness_advisory)
         else:
             rc |= _ocr_sections(ocr_found)
         if multi:
@@ -2104,7 +2278,7 @@ def run_directory(
         for key in ALL:
             if key not in selected:
                 continue
-            if key == "emptytext" and corrupt_r["n"]:
+            if key in ("emptytext", "completeness") and corrupt_r["n"]:
                 continue  # the archive verdict owns this book's body-text story
             if key == "content":
                 problem, status, lines = _content_dir(analyze_content(book))
@@ -2118,6 +2292,8 @@ def run_directory(
                 problem, status, lines = _monolithic_dir(
                     analyze_monolithic(book), max_doc_chars
                 )
+            elif key == "completeness":
+                problem, status, lines = _completeness_dir(analyze_completeness(book))
             else:
                 problem, status, lines = _ocr_dir(analyze_ocr(book))
             if problem:
@@ -2272,7 +2448,7 @@ def run_single(
     for key in ALL:
         if key not in selected:
             continue
-        if key == "emptytext" and corrupt_r["n"]:
+        if key in ("emptytext", "completeness") and corrupt_r["n"]:
             # Corruption owns the body-text story for this book; reporting
             # EMPTY here would be the wrong disease.
             continue
@@ -2288,6 +2464,8 @@ def run_single(
             problem, status, lines = _monolithic_dir(
                 analyze_monolithic(book), max_doc_chars
             )
+        elif key == "completeness":
+            problem, status, lines = _completeness_dir(analyze_completeness(book))
         else:
             problem, status, lines = _ocr_dir(analyze_ocr(book))
         if problem:
