@@ -1418,14 +1418,34 @@ an opt-in structural repair under the existing gate contract.
 
 ### A. Research first (boxes cannot be honestly sized without these)
 
-- [ ] **FastSweep prevalence study**: run `fast_sweep.py
+- [x] **FastSweep prevalence study**: run `fast_sweep.py
   --mode=extract` aggregation over the full library for the new
   classes — container.xml presence/validity, encryption.xml
   algorithms, manifest media-type warnings, case-mismatch RSC-007s.
   Each Phase 16 repair box gets its real count before it opens.
-- [ ] **Obfuscation magic-byte validation**: confirm the IDPF
+  *(done 2026-09-12: 5,228 books through epubcheck extract (664s) plus
+  a direct zip-level pass. Real counts: container.xml valid on
+  5,228/5,228 (zero gateway-defect books in-library); OPF-029
+  media-type mismatches 275 occurrences in 15 books; RSC-007 14,156
+  occurrences in 600 books and PKG-010 in 280 (the prune surface,
+  1,538 truly-absent manifest hrefs); case-mismatch hrefs exactly 1 in
+  1 book; backslash hrefs 0; duplicate zip entries 0 books; encryption.xml
+  in 86 books carrying 429 entries (426 Adobe `ns.adobe.com/pdf/enc#RC`
+  obfuscation + 3 IDPF `2008/embedding`), and NO real-DRM algorithm
+  anywhere in the library.)*
+- [x] **Obfuscation magic-byte validation**: confirm the IDPF
   (`2008/embedding`) and Adobe (`pdf/enc#RC`) font prefixes at offset 0
   against real samples before the encryption-repair box opens.
+  *(done 2026-09-12, same pass: all 424 readable obfuscation-declared
+  fonts carry scrambled, non-font bytes at offset 0 (no OTTO/ttf/ttc/
+  woff magic anywhere) — every in-library obfuscated font is genuinely
+  obfuscated, so the "decrypted in place" stale-entry class has ZERO
+  prevalence here; the valid-magic-at-offset-0 test is validated as the
+  right discriminator for the repair's precondition. Two CipherReference
+  targets are absent from their archives. Real-sample correction: the
+  Adobe algorithm URI in the wild is `http://ns.adobe.com/pdf/enc#RC`,
+  not the spec-text `http://www.adobe.com/2005/pdf/enc#RC`; recognition
+  must carry both.)*
 
 ### B. The repairs (each: opt-in flag, dry-run default, gate-accepted)
 
