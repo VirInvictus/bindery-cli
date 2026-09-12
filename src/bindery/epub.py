@@ -304,6 +304,79 @@ _COVER_META_RE = re.compile(
 _COVER_CONTENT_RE = re.compile(
     r"""\s+content\s*=\s*(["'])((?:(?!\1).)+)\1""", re.IGNORECASE
 )
+_GUIDE_REF_RE = re.compile(
+    r"""<reference\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""", re.IGNORECASE
+)
+
+
+def fix_cover_meta(
+    opf_text: str, opf_dir: str, present: frozenset[str]
+) -> tuple[str, dict[str, int]]:
+    """Repair the EPUB2 cover-meta wiring (the cover-wiring ruling's
+    deterministic half; hybrid scope, 2026-09-12).
+
+    A ``<meta name="cover" content="X">`` whose ``X`` names no manifest id
+    is dangling. When the OPF guide carries ``<reference type="cover"
+    href="Y">`` and exactly one manifest item resolves to that same file,
+    the meta is re-pointed at that id (the guide is the producer's own
+    cover statement, so nothing is guessed). When nothing identifies the
+    item, the dead meta is removed: a dangling declaration is worse than
+    none, and fabricating an item would be content creation. A meta whose
+    id IS in the manifest is never touched here - even when the item's
+    file is absent, where the prune + edge-completion pair owns the
+    verdict. Returns (text, counts) with cover_meta_repointed and
+    cover_meta_removed.
+    """
+    counts: dict[str, int] = {}
+
+    # the guide's cover statement, resolved to an archive path
+    guide_target: str | None = None
+    for m in _GUIDE_REF_RE.finditer(opf_text):
+        tag = m.group(0)
+        if not re.search(r"""\btype\s*=\s*["']cover["']""", tag, re.IGNORECASE):
+            continue
+        hm = _HREF_ATTR_RE.search(tag)
+        if not hm:
+            continue
+        guide_target = _resolve_href(opf_dir, hm.group(2))
+        break
+
+    # the manifest item (if any) that carries the guide's file; ambiguous
+    # when two items claim the same file, and ambiguity means no re-point
+    guide_item: str | None = None
+    if guide_target is not None:
+        matches: list[str] = []
+        for m in _ITEM_TAG_RE.finditer(opf_text):
+            tag = m.group(0)
+            im = _XML_ID_RE.search(tag)
+            hm = _HREF_ATTR_RE.search(tag)
+            if not im or not hm:
+                continue
+            resolved = _resolve_href(opf_dir, hm.group(2))
+            if resolved is not None and resolved == guide_target:
+                matches.append(im.group(3))
+        if len(matches) == 1:
+            guide_item = matches[0]
+
+    def repl(m: re.Match) -> str:
+        tag = m.group(0)
+        cm = _COVER_CONTENT_RE.search(tag)
+        if not cm:
+            return tag
+        if cm.group(2) in _manifest_ids(opf_text):
+            return tag
+        if guide_item is not None:
+            counts["cover_meta_repointed"] = counts.get("cover_meta_repointed", 0) + 1
+            start, end = cm.span(2)
+            return tag[:start] + guide_item + tag[end:]
+        counts["cover_meta_removed"] = counts.get("cover_meta_removed", 0) + 1
+        return ""
+
+    return _COVER_META_RE.sub(repl, opf_text), counts
+
+
+def _manifest_ids(opf_text: str) -> frozenset[str]:
+    return frozenset(m.group(3) for m in _ITEM_ID_RE.finditer(opf_text))
 
 
 def prune_dangling_edges(opf_text: str, pruned_ids: set[str]) -> tuple[str, int]:
@@ -904,6 +977,7 @@ def repair_epub(
     url_spaces: bool = False,
     fix_container: bool = False,
     fix_media_types: bool = False,
+    fix_cover: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -1174,6 +1248,7 @@ def repair_epub(
                 or prune_missing
                 or url_spaces
                 or fix_media_types
+                or fix_cover
             ):
                 opf_changed = False
                 if fix_ids:
@@ -1214,6 +1289,11 @@ def repair_epub(
                     text, n = fix_manifest_media_types(text, opf_dir, peek)
                     if n:
                         report.add({"media_types_normalized": n})
+                        opf_changed = True
+                if fix_cover:
+                    text, ccounts = fix_cover_meta(text, opf_dir, present)
+                    if ccounts:
+                        report.add(ccounts)
                         opf_changed = True
                 if url_spaces:
                     text, n = encode_url_spaces(text)

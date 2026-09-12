@@ -82,6 +82,7 @@ def process_book(
     url_spaces: bool = False,
     fix_container: bool = False,
     fix_media_types: bool = False,
+    fix_cover: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -114,6 +115,7 @@ def process_book(
         url_spaces=url_spaces,
         fix_container=fix_container,
         fix_media_types=fix_media_types,
+        fix_cover=fix_cover,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -148,6 +150,20 @@ def process_book(
         # 'no measurable gain' is expected; accept as long as nothing regressed. But a
         # book that still has fatals will not open: no_worse must never promote it past
         # the gate's 'partial' (still-fatal books are never auto-applied).
+        if not no_worse(before, after):
+            verdict = "reject"
+        elif after.fatals > 0:
+            verdict = "partial"
+        else:
+            verdict = "accept"
+    if report.fixes.get("cover_meta_repointed") or report.fixes.get(
+        "cover_meta_removed"
+    ):
+        # Cover wiring is invisible to epubcheck (a dangling meta is not a
+        # schema finding), so a cover-only repair always answers 'equal'
+        # from the improvement gate. The cover-wiring ruling treats the
+        # wiring as worth fixing: same bar as the lossy strips, no_worse
+        # with the partial rule intact.
         if not no_worse(before, after):
             verdict = "reject"
         elif after.fatals > 0:
@@ -534,6 +550,7 @@ def run_library(args) -> int:
                     url_spaces=args.encode_url_spaces or getattr(args, "all", False),
                     fix_container=args.fix_container or getattr(args, "all", False),
                     fix_media_types=args.fix_media_types or getattr(args, "all", False),
+                    fix_cover=args.fix_cover or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -747,6 +764,7 @@ def run_repair(args) -> int:
                 url_spaces=args.encode_url_spaces or getattr(args, "all", False),
                 fix_container=args.fix_container or getattr(args, "all", False),
                 fix_media_types=args.fix_media_types or getattr(args, "all", False),
+                fix_cover=args.fix_cover or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -1253,6 +1271,15 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         help="normalize wrong manifest media-type declarations (OPF-029): "
         "attribute-only, fired only when the file's magic bytes confirm the "
         "extension (jpg/png/gif)",
+    )
+    p.add_argument(
+        "--fix-cover",
+        dest="fix_cover",
+        action="store_true",
+        help='repair dangling EPUB2 cover wiring: re-point <meta name="cover"> '
+        "from the guide's cover reference when that names an existing manifest "
+        "item, remove the dead meta when nothing does; EPUB3 "
+        'properties="cover-image" is audit-only by ruling',
     )
     p.add_argument(
         "--strip-pagination",

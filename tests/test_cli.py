@@ -1356,3 +1356,32 @@ class TestPartialBooksAreTrouble(unittest.TestCase):
         self.assertEqual(data["summary"]["partial"], 1)
         # a partial book is never auto-applied
         self.assertEqual(data["summary"]["applied"], 0)
+
+
+class TestCoverGate(unittest.TestCase):
+    """--fix-cover's apply path: the cover wiring is invisible to epubcheck
+    (a dangling meta is no schema finding), so a cover-only repair answers
+    'equal' from the improvement gate; it is accepted under the same
+    no_worse bar the lossy strips use, with the partial rule intact."""
+
+    def _cover_verdict(self, before, after):
+        report = RepairReport(fixes={"cover_meta_repointed": 1})
+        with (
+            mock.patch("bindery.cli.repair_epub", return_value=report),
+            mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
+        ):
+            return process_book(
+                Path("x.epub"), Path("."), validate=True, fix_cover=True
+            )
+
+    def test_identical_counts_accept_via_no_worse(self):
+        o = self._cover_verdict(CheckResult(0, 0, 0), CheckResult(0, 0, 0))
+        self.assertEqual(o.status, "accept")
+
+    def test_still_fatal_book_is_partial_not_accept(self):
+        o = self._cover_verdict(CheckResult(3, 0, 0), CheckResult(1, 0, 0))
+        self.assertEqual(o.status, "partial")
+
+    def test_regression_rejects(self):
+        o = self._cover_verdict(CheckResult(0, 0, 0), CheckResult(0, 1, 0))
+        self.assertEqual(o.status, "reject")
