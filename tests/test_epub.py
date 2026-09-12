@@ -1199,3 +1199,289 @@ class TestEncodeUrlSpacesEpub(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFixContainer(unittest.TestCase):
+    """Phase 16 B1: generate META-INF/container.xml at the located OPF. The
+    gateway repair: a missing or stale container is an epubcheck fatal that
+    locks the whole book out of every shipped repair, and the locator's
+    first-.opf fallback never wrote the file it found."""
+
+    OPF = (
+        '<?xml version="1.0"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="bookid">urn:uuid:X</dc:identifier>'
+        "</metadata></package>"
+    )
+    CONTAINER = (
+        '<?xml version="1.0"?>'
+        '<container version="1.0" '
+        'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+        '<rootfile full-path="OEBPS/content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+
+    @staticmethod
+    def _build(path: Path, entries: dict) -> None:
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, data in entries.items():
+                z.writestr(name, data)
+
+    def test_missing_container_is_generated_at_the_located_opf(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(
+                src,
+                {
+                    "mimetype": "application/epub+zip",
+                    "OEBPS/content.opf": self.OPF,
+                    "OEBPS/c1.xhtml": CONTENT,
+                },
+            )
+            report = repair_epub(src, dst)  # off by default
+            self.assertNotIn("container_generated", report.fixes)
+            report = repair_epub(src, dst, fix_container=True)
+            self.assertEqual(report.fixes.get("container_generated"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIsNone(z.testzip())
+                container = z.read("META-INF/container.xml").decode("utf-8")
+            self.assertIn('full-path="OEBPS/content.opf"', container)
+            self.assertIn("urn:oasis:names:tc:opendocument:xmlns:container", container)
+            # the generated entry is timestamped from the constant epoch, so
+            # two repairs of one book are byte-identical
+            with zipfile.ZipFile(dst) as z:
+                self.assertEqual(
+                    z.getinfo("META-INF/container.xml").date_time,
+                    (1980, 1, 1, 0, 0, 0),
+                )
+
+    def test_stale_container_pointing_at_an_absent_opf_is_replaced(self):
+        stale = self.CONTAINER.replace("OEBPS/content.opf", "OLD/gone.opf")
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(
+                src,
+                {
+                    "mimetype": "application/epub+zip",
+                    "META-INF/container.xml": stale,
+                    "OEBPS/content.opf": self.OPF,
+                    "OEBPS/c1.xhtml": CONTENT,
+                },
+            )
+            report = repair_epub(src, dst, fix_container=True)
+            self.assertEqual(report.fixes.get("container_generated"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertEqual(
+                    len([n for n in z.namelist() if n == "META-INF/container.xml"]), 1
+                )
+                container = z.read("META-INF/container.xml").decode("utf-8")
+            self.assertIn('full-path="OEBPS/content.opf"', container)
+            self.assertNotIn("gone.opf", container)
+
+    def test_healthy_container_is_untouched(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            original = {
+                "mimetype": "application/epub+zip",
+                "META-INF/container.xml": self.CONTAINER,
+                "OEBPS/content.opf": self.OPF,
+                "OEBPS/c1.xhtml": CONTENT,
+            }
+            self._build(src, original)
+            report = repair_epub(src, dst, fix_container=True)
+            self.assertNotIn("container_generated", report.fixes)
+            with zipfile.ZipFile(dst) as z:
+                self.assertEqual(
+                    z.read("META-INF/container.xml"),
+                    original["META-INF/container.xml"].encode("utf-8"),
+                )
+
+    def test_no_locatable_opf_means_no_fix(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(
+                src,
+                {"mimetype": "application/epub+zip", "c1.xhtml": CONTENT},
+            )
+            report = repair_epub(src, dst, fix_container=True)
+            self.assertNotIn("container_generated", report.fixes)
+            with zipfile.ZipFile(dst) as z:
+                self.assertNotIn("META-INF/container.xml", z.namelist())
+
+    def test_generated_container_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            once, twice = Path(td) / "a.epub", Path(td) / "b.epub"
+            self._build(
+                src,
+                {
+                    "mimetype": "application/epub+zip",
+                    "OEBPS/content.opf": self.OPF,
+                    "OEBPS/c1.xhtml": CONTENT,
+                },
+            )
+            repair_epub(src, once, fix_container=True)
+            report = repair_epub(once, twice, fix_container=True)
+            self.assertNotIn("container_generated", report.fixes)
+
+
+class TestPruneDanglingEdges(unittest.TestCase):
+    """Phase 16 B2: pruning an item must rewrite the edges that point at it
+    (spine@toc, item@media-overlay, item@fallback, the EPUB2 cover meta),
+    not leave dangling idrefs the gate then rejects."""
+
+    def test_unit_rewrites_each_edge_class(self):
+        from bindery.epub import prune_dangling_edges
+
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+            '<item id="keep" href="k.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="snd" href="s.mp3" media-overlay="dead"/>'
+            '<item id="img" href="i.png" fallback="dead"/>'
+            "</manifest>"
+            '<spine toc="dead"><itemref idref="keep"/></spine>'
+            '<meta name="cover" content="dead"/>'
+            "</package>"
+        )
+        out, n = prune_dangling_edges(opf, {"dead"})
+        self.assertEqual(n, 4)
+        self.assertNotIn('toc="dead"', out)
+        self.assertNotIn('media-overlay="dead"', out)
+        self.assertNotIn('fallback="dead"', out)
+        self.assertNotIn('content="dead"', out)
+        self.assertIn("<spine>", out)  # the optional attribute, removed whole
+        self.assertIn('<itemref idref="keep"/>', out)
+
+    def test_edges_to_live_items_are_kept(self):
+        from bindery.epub import prune_dangling_edges
+
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+            '<item id="alive" href="a.png" media-type="image/png"/>'
+            "</manifest>"
+            '<spine toc="ncx"><itemref idref="alive"/></spine>'
+            '<meta name="cover" content="alive"/>'
+            "</package>"
+        )
+        out, n = prune_dangling_edges(opf, {"dead"})
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_end_to_end_prune_rewrites_what_it_drops(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:X</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            '<item id="keep" href="k.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="dead" href="dead.css" media-type="text/css"/>'
+            '<item id="snd" href="s.mp3" media-type="audio/mpeg" media-overlay="dead"/>'
+            "</manifest>"
+            '<spine toc="dead"><itemref idref="keep"/></spine>'
+            '<meta name="cover" content="dead"/>'
+            "</package>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/k.xhtml", CONTENT)
+            report = repair_epub(src, dst, prune_missing=True)
+            self.assertEqual(report.fixes.get("manifest_items_pruned"), 1)
+            self.assertEqual(report.fixes.get("prune_edges_rewritten"), 3)
+            with zipfile.ZipFile(dst) as z:
+                out = z.read("OEBPS/content.opf").decode("utf-8")
+            self.assertNotIn('"dead"', out)
+            self.assertIn('<spine><itemref idref="keep"/></spine>', out)
+            self.assertNotIn("dead.css", out)  # the item itself is gone too
+
+
+class TestFixMediaTypes(unittest.TestCase):
+    """Phase 16 B3: manifest media-type normalization. The prevalence class
+    is images declared with the wrong type (a jpg stamped image/png by an
+    aggregator); the fix is attribute-only, magic-byte-verified."""
+
+    @staticmethod
+    def _build(path: Path, media_type: str, data: bytes, quote='"') -> None:
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:X</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            f'<item id="pic" href={quote}pic.jpg{quote} '
+            f"media-type={quote}{media_type}{quote}/>"
+            "</manifest>"
+            '<spine><itemref idref="pic"/></spine></package>'
+        )
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/pic.jpg", data)
+
+    def test_wrong_media_type_is_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, "image/png", b"\xff\xd8\xff\xe0JFIF")
+            report = repair_epub(src, dst)  # off by default
+            self.assertNotIn("media_types_normalized", report.fixes)
+            report = repair_epub(src, dst, fix_media_types=True)
+            self.assertEqual(report.fixes.get("media_types_normalized"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn(
+                    'media-type="image/jpeg"',
+                    z.read("OEBPS/content.opf").decode("utf-8"),
+                )
+
+    def test_single_quoted_declaration_keeps_its_quote_style(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, "image/png", b"\xff\xd8\xff\xe0JFIF", quote="'")
+            report = repair_epub(src, dst, fix_media_types=True)
+            self.assertEqual(report.fixes.get("media_types_normalized"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn(
+                    "media-type='image/jpeg'",
+                    z.read("OEBPS/content.opf").decode("utf-8"),
+                )
+
+    def test_correct_declaration_is_untouched(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, "image/jpeg", b"\xff\xd8\xff\xe0JFIF")
+            report = repair_epub(src, dst, fix_media_types=True)
+            self.assertNotIn("media_types_normalized", report.fixes)
+
+    def test_extension_lie_is_kept_when_the_magic_disagrees(self):
+        # a PNG renamed .jpg declared image/png: the extension map alone
+        # would "normalize" it to image/jpeg and make the declaration worse
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, "image/png", b"\x89PNG\r\n\x1a\ndata")
+            report = repair_epub(src, dst, fix_media_types=True)
+            self.assertNotIn("media_types_normalized", report.fixes)
+
+    def test_absent_file_is_left_to_the_prune(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            opf = (
+                '<?xml version="1.0"?>'
+                '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+                '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                '<dc:identifier id="bookid">urn:uuid:X</dc:identifier>'
+                "</metadata>"
+                '<manifest><item id="pic" href="pic.jpg" media-type="image/png"/></manifest>'
+                '<spine><itemref idref="pic"/></spine></package>'
+            )
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
+                z.writestr("OEBPS/content.opf", opf)
+            report = repair_epub(src, dst, fix_media_types=True)
+            self.assertNotIn("media_types_normalized", report.fixes)

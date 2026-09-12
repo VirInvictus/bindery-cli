@@ -1995,3 +1995,140 @@ class TestCompletenessInAll(unittest.TestCase):
         self.assertIn("completeness", rec["verdicts"])
         self.assertEqual(rec["verdicts"]["completeness"]["status"], "OK")
         self.assertIn("prose 1/1", rec["verdicts"]["completeness"]["details"][0])
+
+
+class TestObfuscatedVsDrm(unittest.TestCase):
+    """Phase 16 B4: encryption.xml's font-obfuscation entries (publisher
+    embedding; readable; benign) surface as their own advisory instead of
+    the DRM-flavoured ENCRYPTED verdict. Prevalence: 86 of 5,228 library
+    books carry obfuscation-only encryption.xml and no real DRM at all."""
+
+    CONTAINER = TestEmptyTextScan.CONTAINER
+
+    OPF = (
+        '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="bookid">urn:uuid:X</dc:identifier></metadata>'
+        "<manifest>"
+        '<item id="c1" href="text.xhtml" media-type="application/xhtml+xml"/>'
+        '<item id="font" href="fonts/f.otf" media-type="font/otf"/>'
+        "</manifest>"
+        '<spine><itemref idref="c1"/></spine></package>'
+    )
+
+    ENC = (
+        '<?xml version="1.0"?>'
+        '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        '<enc:EncryptedData xmlns:enc="http://www.w3.org/2001/04/xmlenc#">'
+        '<enc:EncryptionMethod Algorithm="{algo}"/>'
+        '<enc:CipherData><enc:CipherReference URI="fonts/f.otf"/></enc:CipherData>'
+        "</enc:EncryptedData></encryption>"
+    )
+
+    def _epub(self, tmp, algo, corrupt_font=False):
+        import zipfile as zf
+
+        p = pathlib.Path(tmp) / "t.epub"
+        body = "<p>" + ("Ordinary prose for the audit battery. " * 60) + "</p>"
+        with zf.ZipFile(p, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", self.CONTAINER)
+            z.writestr("content.opf", self.OPF)
+            z.writestr("text.xhtml", f"<html><body>{body}</body></html>")
+            z.writestr("fonts/f.otf", b"OTTO" + b"\x00" * 64)
+            z.writestr("META-INF/encryption.xml", self.ENC.format(algo=algo))
+        if corrupt_font:
+            import struct
+
+            with zf.ZipFile(p) as z:
+                offset = z.getinfo("fonts/f.otf").header_offset
+            with open(p, "r+b") as f:
+                f.seek(offset + 26)
+                nlen, elen = struct.unpack("<HH", f.read(4))
+                f.seek(offset + 30 + nlen + elen + 10)
+                byte = f.read(1)
+                f.seek(-1, os.SEEK_CUR)
+                f.write(bytes([byte[0] ^ 0xFF]))
+        return p
+
+    def test_readable_obfuscation_is_advisory_not_drm(self):
+        # both the spec-text IDPF URI and the wild Adobe URI the prevalence
+        # study found (ns.adobe.com, not the spec's adobe.com/2005)
+        for algo in (
+            "http://www.idpf.org/2008/embedding",
+            "http://ns.adobe.com/pdf/enc#RC",
+            "http://www.adobe.com/2005/pdf/enc#RC",
+        ):
+            with self.subTest(algo=algo):
+                with tempfile.TemporaryDirectory() as tmp:
+                    book = audit.load_book(self._epub(tmp, algo))
+                    r = audit.analyze_corrupt(book)
+                self.assertEqual(r["encrypted_n"], 0)
+                self.assertEqual(r["obfuscated_n"], 1)
+                self.assertEqual(r["obfuscated_first"], "fonts/f.otf")
+                problem, status, lines = audit._corrupt_verdict(r)
+                self.assertFalse(problem)
+                self.assertEqual(status, "OBFUSCATED")
+                self.assertTrue(any("fonts/f.otf" in ln for ln in lines))
+
+    def test_unreadable_declared_non_obfuscation_is_drm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            book = audit.load_book(
+                self._epub(
+                    tmp,
+                    "http://www.w3.org/2001/04/xmlenc#aes128-cbc",
+                    corrupt_font=True,
+                )
+            )
+            r = audit.analyze_corrupt(book)
+        self.assertEqual(r["encrypted_n"], 1)
+        self.assertEqual(r["encrypted_drm_n"], 1)
+        problem, status, lines = audit._corrupt_verdict(r)
+        self.assertTrue(problem)
+        self.assertEqual(status, "ENCRYPTED")
+        self.assertIn("DRM-protected", lines[0])
+
+    def test_unreadable_obfuscation_entry_is_corrupt_not_drm(self):
+        # an obfuscated font that cannot decompress is archive damage, not
+        # a business model: the re-source advice is the right one
+        with tempfile.TemporaryDirectory() as tmp:
+            book = audit.load_book(
+                self._epub(tmp, "http://www.idpf.org/2008/embedding", corrupt_font=True)
+            )
+            r = audit.analyze_corrupt(book)
+        self.assertEqual(r["encrypted_n"], 1)
+        self.assertEqual(r["encrypted_drm_n"], 0)
+        problem, status, lines = audit._corrupt_verdict(r)
+        self.assertTrue(problem)
+        self.assertEqual(status, "CORRUPT")
+
+    def test_clean_book_archive_verdict_is_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            import zipfile as zf
+
+            body = "<p>" + ("Ordinary prose. " * 60) + "</p>"
+            with zf.ZipFile(p, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", self.CONTAINER)
+                z.writestr("content.opf", self.OPF)
+                z.writestr("text.xhtml", f"<html><body>{body}</body></html>")
+            r = audit.analyze_corrupt(audit.load_book(p))
+        problem, status, lines = audit._corrupt_verdict(r)
+        self.assertFalse(problem)
+        self.assertEqual(status, "OK")
+        self.assertEqual(lines, [])
+
+    def test_directory_run_reports_obfuscation_without_failing(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._epub(tmp, "http://ns.adobe.com/pdf/enc#RC")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = audit.run_directory(pathlib.Path(tmp), ["emptytext"], 2000, 20000)
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)  # benign: never fails the run
+        self.assertIn("OBFUSCATED", out)
+        self.assertIn("reported, not flagged", out)
