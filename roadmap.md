@@ -696,6 +696,26 @@ driven alternative was rejected because it would still silently mutate legal
 markup whenever an unrelated finding existed; the gate keeps EPUB3 books
 byte-identical.)*
 
+### fix_ncx_playorder counts phantom fixes on already-sequential NCXs (2026-09-12, plugin work)
+**Bug in the default pass's `fix_ncx_playorder`:** the already-correct
+comparison read the captured attribute value WITH its quotes
+(`m.group(2) != str(playorder)`), so every navPoint counted as a fix on
+every pass. The rewritten bytes stayed identical (which is why the
+deterministic-output tests and every gate run never caught it), but the
+fix counts were phantom: The Long Patrol reported `fix_ncx_playorder=59`
+on every run of an already-repaired book, and a book whose only "fix"
+was phantom was rewritten instead of being reported as nochange. A
+single-quoted sequential attribute was also rewritten to double quotes,
+touching already-correct markup. Found by the Calibre plugin's smoke
+test: the plugin's zero-fixes contract (return the original path) broke
+on real books. `transforms.py` `fix_ncx_playorder`.
+**Fix:** strip the quotes before comparing; an already-correct attribute
+is returned untouched (its quote style preserved) and not counted.
+*(Fixed in v0.37.0: honest counts on every NCX, single quotes survive,
+and the plugin's byte-idempotence holds end to end. The sweep's
+apply-path behavior changes only in that a phantom-only repair is now
+correctly a noop.)*
+
 ## Phase 11: Migrate install-to-calibre to native cquarry API (proposed 2026-08-31)
 
 *Context: `bindery library --install-to-calibre` currently shells out to the external `calibredb add_format` CLI binary. This is fragile (it crashed on 2026-08-31 due to a non-existent `--replace` flag) and bypasses the transaction and trigger-safety guarantees built into the `cquarry` library. Since bindery-cli already imports `cquarry` for path resolution, it should adopt the native write module.*

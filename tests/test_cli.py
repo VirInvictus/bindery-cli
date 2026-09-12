@@ -536,8 +536,8 @@ class TestApplyFailureIsolation(unittest.TestCase):
     def test_apply_oserror_is_recorded_and_run_continues(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            _phase1_book(root / "a.epub", broken=False)
-            _phase1_book(root / "b.epub", broken=False)
+            _phase1_book(root / "a.epub", broken=False, real_fix=True)
+            _phase1_book(root / "b.epub", broken=False, real_fix=True)
             jout = root / "lib.json"
             out, err = io.StringIO(), io.StringIO()
             with (
@@ -902,10 +902,13 @@ class TestAuditJsonWiring(unittest.TestCase):
         run.assert_not_called()
 
 
-def _phase1_book(path: Path, broken: bool) -> None:
+def _phase1_book(path: Path, broken: bool, real_fix: bool = False) -> None:
     """A realistic loose EPUB: proper container/OPF/NCX, >2000 chars of body
     text so the audit battery stays silent on it. `broken` leaves an unclosed
-    <p> that only --reserialize can repair (epubcheck fatal, audit-clean)."""
+    <p> that only --reserialize can repair (epubcheck fatal, audit-clean).
+    `real_fix` writes a genuinely unordered NCX playOrder so the default pass
+    reports a real fix (the 2026-09-12 playOrder counter fix made a clean
+    book a true noop, so tests exercising the apply path need this)."""
     container = (
         '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
         '<rootfiles><rootfile full-path="content.opf" '
@@ -921,11 +924,12 @@ def _phase1_book(path: Path, broken: bool) -> None:
         '<item id="ncx" href="t.ncx" media-type="application/x-dtbncx+xml"/>'
         '</manifest><spine toc="ncx"><itemref idref="c1"/></spine></package>'
     )
+    playorder_attr = 'playOrder="7"' if real_fix else 'playOrder="1"'
     ncx = (
         '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
         '<head><meta name="dtb:uid" content="x"/></head>'
         "<docTitle><text>T</text></docTitle><navMap>"
-        '<navPoint id="n1" playOrder="1"><navLabel><text>C1</text></navLabel>'
+        f'<navPoint id="n1" {playorder_attr}><navLabel><text>C1</text></navLabel>'
         '<content src="t.xhtml"/></navPoint></navMap></ncx>'
     )
     if broken:

@@ -333,9 +333,16 @@ def fix_ncx_playorder(s: str) -> tuple[str, int]:
 
     def repl(m: re.Match) -> str:
         nonlocal count, playorder
-        if m.group(2) != str(playorder):
+        # the captured value carries its quotes; strip them before comparing,
+        # or every already-correct navPoint counts as a fix on every pass
+        # (identical output bytes, phantom counts; found by the plugin work,
+        # 2026-09-12). A correct value is returned untouched, so a
+        # single-quoted correct attribute keeps its quote style.
+        if m.group(2).strip("\"'") == str(playorder):
+            res = m.group(0)
+        else:
             count += 1
-        res = f'{m.group(1)} playOrder="{playorder}"'
+            res = f'{m.group(1)} playOrder="{playorder}"'
         playorder += 1
         return res
 
