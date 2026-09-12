@@ -1,4 +1,11 @@
 # bindery-cli Patch Notes
+
+## Unreleased
+
+- Adopted cquarry 1.18.0 (floor + lock): the set_format repair lane now keeps
+  Calibre's FTS index and page counts honest automatically (the sidecar's
+  dirty queue and the pages rescan flag ride the write), and the search and
+  runtime fixes come along in the shared layer.
 ## v0.35.0 (2026-09-10)
 
 ### The epubcheck daemon, reconciled: oracle-identical counts at ~15x the speed

@@ -19,7 +19,7 @@ reserialize = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cquarry", specifier = ">=1.17.0" },
+    { name = "cquarry", specifier = ">=1.18.0" },
     { name = "html5lib", marker = "extra == 'reserialize'", specifier = ">=1.1" },
     { name = "tqdm" },
     { name = "vir-tui", specifier = ">=2.2.0" },
@@ -37,11 +37,11 @@ wheels = [
 
 [[package]]
 name = "cquarry"
-version = "1.17.0"
+version = "1.18.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4d/6b/e2c80511bf62e3b008c52d47a05b29e43e2782614cf211aadc8c965a2be1/cquarry-1.17.0.tar.gz", hash = "sha256:07ec6c43ebc11f8921645a963373537ef4808985c88ad885de5dfc05ba08d737", size = 197288, upload-time = "2026-09-09T21:48:07.208Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/60/8c/0ef7d778e5734e8cbb8eb923854907356a23f0c583ebfd0a1978d6cdf4c1/cquarry-1.18.0.tar.gz", hash = "sha256:e32bbb8095edf644e91bf35f2a2d3e00ade9eedd4b48ce93a014ee64e2ce6914", size = 229815, upload-time = "2026-09-12T16:00:24.547Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4d/5f/90f6fe1c24a3ce8616cb377cbedee3dfb82c4eca84cbb1ec8b02a7034cb1/cquarry-1.17.0-py3-none-any.whl", hash = "sha256:f01c5b4ecb0863c78379e9fc899fd0da7d2518e815ed2a9000acec09cbea054b", size = 70998, upload-time = "2026-09-09T21:48:05.798Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/77/91f162e7815f23e2b8790cb526ac6167e5ac4aadf0aa0504be7355878acb/cquarry-1.18.0-py3-none-any.whl", hash = "sha256:f9d4932a4ed603f4997990bed825e58739eddbfe638bab9908ba3dbf794d0745", size = 79928, upload-time = "2026-09-12T16:00:23.33Z" },
 ]
 
 [[package]]
