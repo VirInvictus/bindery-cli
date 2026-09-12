@@ -1712,3 +1712,286 @@ class TestLibraryTagEndToEnd(unittest.TestCase):
                 os.chdir(old)
         self.assertEqual(rc, 1)  # an EMPTY book is a finding
         self.assertEqual(tagged, [(1,)])
+
+
+class TestCompletenessAnalyzer(unittest.TestCase):
+    """Phase 15: the completeness spot-check analyzer. The fixture shapes come
+    from the 2026-09-10 Redwall phase-1 run: Lord Brocktree (a real Epilogue
+    doc sitting before a trailing 520-char ToC), Mattimeo (a 174k-char split
+    doc whose final chapter heading has real prose after it), and The Long
+    Patrol (percent-encoded hrefs the hand-rolled sampler could not read at
+    all; 55/57 prose docs). Synthetic fillers replicate each SHAPE; no real
+    text lives in this suite."""
+
+    CONTAINER = TestEmptyTextScan.CONTAINER
+
+    PARA = "The hares marched along the ridge in the fine morning light. "
+
+    def _prose(self, paras=7, heading=None, closer=""):
+        h = f"<h2>{heading}</h2>" if heading else ""
+        return h + "<p>" + (self.PARA * paras) + "</p>" + closer
+
+    def _epub(self, tmp, docs, hrefs=None):
+        # docs: list of (name, body_html); hrefs optionally remaps the
+        # manifest href (percent-encoded forms) while the archive name stays
+        import zipfile as zf
+
+        manifest = ""
+        for i, (n, _) in enumerate(docs):
+            href = (hrefs or {}).get(n, n)
+            manifest += (
+                f'<item id="d{i}" href="{href}" media-type="application/xhtml+xml"/>'
+            )
+        spine = "".join(f'<itemref idref="d{i}"/>' for i in range(len(docs)))
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            f"<manifest>{manifest}</manifest><spine>{spine}</spine></package>"
+        )
+        p = pathlib.Path(tmp) / "t.epub"
+        with zf.ZipFile(p, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", self.CONTAINER)
+            z.writestr("content.opf", opf)
+            for n, body in docs:
+                z.writestr(n, f"<html><body>{body}</body></html>")
+        return p
+
+    def test_real_back_matter_before_trailing_toc(self):
+        # Lord Brocktree shape: six real chapters and a real Epilogue doc,
+        # then a link-dense ToC (over the prose threshold at 456 visible
+        # chars, like the real 520-char one) as the FINAL spine doc. The ToC
+        # must classify as trailing furniture: never a prose sample, so the
+        # closing excerpt comes from the Epilogue's back matter.
+        chapters = [
+            (f"ch{i}.xhtml", self._prose(7, f"Chapter {i}")) for i in range(1, 7)
+        ]
+        epilogue = (
+            "epilogue.xhtml",
+            self._prose(
+                7,
+                "Epilogue",
+                closer="<p>And so the tale closes with the hares home at last.</p>",
+            ),
+        )
+        toc = (
+            "toc.xhtml",
+            "<h1>Contents</h1>"
+            + "".join(
+                f'<p><a href="ch{i}.xhtml">Chapter {i}: The March of the '
+                "Hares and the Siege of the Mountain</a></p>"
+                for i in range(1, 7)
+            )
+            + '<p><a href="epilogue.xhtml">Epilogue: Home at Salamandastron'
+            "</a></p>",
+        )
+        docs = [("title.xhtml", "<p>A Tale of the Long Patrol</p>")]
+        docs += chapters + [epilogue, toc]
+        with tempfile.TemporaryDirectory() as tmp:
+            r = audit.analyze_completeness(audit.load_book(self._epub(tmp, docs)))
+        self.assertEqual(r["spine_docs"], 9)
+        self.assertEqual(r["trailing_toc"], "toc.xhtml")
+        # six chapters + the epilogue; the 456-char ToC is excluded
+        self.assertEqual(r["prose_docs"], 7)
+        self.assertEqual(r["spots"][-1]["doc"], "epilogue.xhtml")
+        self.assertIn("home at last", r["spots"][-1]["ends"])
+
+    def test_final_split_doc_with_prose_after_heading_is_not_a_toc(self):
+        # Mattimeo shape: one huge split doc carrying fifty chapter headings,
+        # each followed by real prose (Chapter 50 was verified to have prose
+        # after it). The link-line heuristics must never read it as a ToC,
+        # and the closing excerpt must be the prose after the last heading.
+        chapters = [
+            (f"ch{i}.xhtml", self._prose(7, f"Chapter {i}")) for i in range(1, 6)
+        ]
+        split_body = "".join(
+            f"<h2>Chapter {i}</h2><p>{self.PARA * 4}</p>" for i in range(1, 51)
+        )
+        split = ("split.xhtml", split_body)
+        docs = [("title.xhtml", "<p>A Tale of the Long Patrol</p>")]
+        docs += chapters + [split]
+        with tempfile.TemporaryDirectory() as tmp:
+            r = audit.analyze_completeness(audit.load_book(self._epub(tmp, docs)))
+        self.assertEqual(r["trailing_toc"], "")
+        self.assertEqual(r["spine_docs"], 7)
+        self.assertEqual(r["prose_docs"], 6)  # five chapters + the split doc
+        self.assertEqual(r["spots"][-1]["doc"], "split.xhtml")
+        self.assertIn("fine morning light", r["spots"][-1]["ends"])
+
+    def test_percent_encoded_hrefs_resolve(self):
+        # The Long Patrol shape: manifest hrefs carry %20 runs for the spaces
+        # in the stored archive names (the hand-rolled sampler read none of
+        # these docs). The shipped audit's IRI decoding resolves them for
+        # free: every spine doc lands, short front matter stays out of the
+        # prose set, and the final doc is sampled whole.
+        docs = [
+            ("title.xhtml", "<p>A Tale of the Long Patrol</p>"),
+            ("note.xhtml", "<p>A brief historical note.</p>"),
+        ]
+        docs += [
+            (f"Chapter {i:02d}.xhtml", self._prose(7, f"Chapter {i}"))
+            for i in range(1, 6)
+        ]
+        docs.append(("The End.xhtml", self._prose(7, "Chapter Six")))
+        hrefs = {n: n.replace(" ", "%20") for n, _ in docs}
+        with tempfile.TemporaryDirectory() as tmp:
+            r = audit.analyze_completeness(
+                audit.load_book(self._epub(tmp, docs, hrefs))
+            )
+        self.assertEqual(r["spine_docs"], 8)
+        self.assertEqual(r["prose_docs"], 6)
+        self.assertEqual(r["trailing_toc"], "")
+        self.assertEqual(r["spots"][-1]["doc"], "The End.xhtml")
+        self.assertEqual(len(r["spots"]), 3)
+        self.assertTrue(r["spots"][0]["opens"])
+
+    def test_unreadable_docs_are_counted(self):
+        # A corrupt (bad-CRC) spine doc reads as empty text; the completeness
+        # record must surface it as an unreadable fraction, never as prose.
+        import struct
+        import zipfile as zf
+
+        docs = [(f"ch{i}.xhtml", self._prose(7, f"Chapter {i}")) for i in range(1, 4)]
+        docs.append(("broken.xhtml", self._prose(7, "Chapter 4")))
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._epub(tmp, docs)
+            with zf.ZipFile(p) as z:
+                offset = z.getinfo("broken.xhtml").header_offset
+            with open(p, "r+b") as f:
+                f.seek(offset + 26)
+                nlen, elen = struct.unpack("<HH", f.read(4))
+                f.seek(offset + 30 + nlen + elen + 10)
+                byte = f.read(1)
+                f.seek(-1, os.SEEK_CUR)
+                f.write(bytes([byte[0] ^ 0xFF]))
+            r = audit.analyze_completeness(audit.load_book(p))
+        self.assertEqual(r["spine_docs"], 4)
+        self.assertEqual(r["unreadable"], 1)
+        self.assertGreater(r["unreadable_frac"], 0.0)
+        self.assertEqual(r["prose_docs"], 3)
+
+
+class TestTrailingTocClassifier(unittest.TestCase):
+    """The trailing-ToC shape test directly: a chapter list is dense with
+    short link lines; any doc with real paragraphs is not a ToC."""
+
+    def test_link_list_is_toc(self):
+        body = "<h1>Contents</h1>" + "".join(
+            f'<p><a href="ch{i}.xhtml">Chapter {i}: An Entry With Some Length</a></p>'
+            for i in range(1, 9)
+        )
+        self.assertTrue(audit._trailing_toc(body))
+
+    def test_prose_doc_is_not_a_toc(self):
+        body = "<h2>Chapter One</h2><p>" + ("Ordinary prose runs here. " * 40) + "</p>"
+        self.assertFalse(audit._trailing_toc(body))
+
+    def test_heading_followed_by_prose_is_not_a_toc(self):
+        # the Mattimeo guard: a heading line followed by real paragraphs is
+        # content, even when other headings crowd the document
+        body = "".join(
+            f"<h2>Chapter {i}</h2><p>" + ("Ordinary prose runs here. " * 30) + "</p>"
+            for i in range(1, 6)
+        )
+        self.assertFalse(audit._trailing_toc(body))
+
+    def test_short_link_run_is_not_a_toc(self):
+        # a colophon or a prev/next pager: too few lines to call a ToC
+        body = "".join(
+            f'<p><a href="ch{i}.xhtml">Chapter {i}</a></p>' for i in range(1, 4)
+        )
+        self.assertFalse(audit._trailing_toc(body))
+
+    def test_prose_without_links_is_not_a_toc(self):
+        # a dialogue-heavy doc of many short paragraphs carries no links
+        body = "".join(f"<p>Said the hare, line {i}.</p>" for i in range(1, 21))
+        self.assertFalse(audit._trailing_toc(body))
+
+
+class TestCompletenessVerdict(unittest.TestCase):
+    """The completeness verdict is advisory by contract: the archive, spine,
+    and emptytext verdicts own the flags; completeness reports the shape."""
+
+    def _r(self, **over):
+        r = {
+            "spine_docs": 31,
+            "spine_missing": 0,
+            "prose_docs": 30,
+            "unreadable": 0,
+            "unreadable_frac": 0.0,
+            "blank_docs": 0,
+            "trailing_toc": "",
+            "spots": [
+                {
+                    "doc": "ch01.xhtml",
+                    "chars": 5000,
+                    "opens": "It began",
+                    "ends": "it ended",
+                }
+            ],
+        }
+        r.update(over)
+        return r
+
+    def test_clean_book_is_ok_and_never_a_problem(self):
+        problem, status, lines = audit._completeness_dir(self._r())
+        self.assertFalse(problem)
+        self.assertEqual(status, "OK")
+        self.assertTrue(any("prose 30/31" in ln for ln in lines))
+        self.assertTrue(any("ch01.xhtml" in ln for ln in lines))
+
+    def test_trailing_toc_is_advisory(self):
+        problem, status, lines = audit._completeness_dir(
+            self._r(trailing_toc="toc.xhtml", prose_docs=30)
+        )
+        self.assertFalse(problem)
+        self.assertEqual(status, "ADVISORY")
+        self.assertTrue(any("toc.xhtml" in ln for ln in lines))
+
+    def test_high_unreadable_fraction_is_advisory(self):
+        problem, status, _ = audit._completeness_dir(
+            self._r(unreadable=6, unreadable_frac=0.12)
+        )
+        self.assertFalse(problem)
+        self.assertEqual(status, "ADVISORY")
+
+    def test_blank_docs_are_reported(self):
+        _problem, _status, lines = audit._completeness_dir(self._r(blank_docs=2))
+        self.assertTrue(any("blank" in ln for ln in lines))
+
+
+class TestCompletenessInAll(unittest.TestCase):
+    """`all` runs the completeness analyzer in the same single decompression
+    pass, and the --json payload carries its verdict per book."""
+
+    def test_all_includes_completeness(self):
+        self.assertIn("completeness", audit.ALL)
+
+    def test_directory_json_record_carries_completeness(self):
+        import zipfile as zf
+
+        para = "The hares marched along the ridge in the fine morning light. "
+        body = "<h2>Chapter One</h2><p>" + (para * 8) + "</p>"
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            with zf.ZipFile(p, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", TestEmptyTextScan.CONTAINER)
+                z.writestr("content.opf", TestEmptyTextScan.OPF)
+                z.writestr("text.xhtml", f"<html><body>{body}</body></html>")
+            out = pathlib.Path(tmp) / "audit.json"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = audit.run_directory(
+                    pathlib.Path(tmp),
+                    ["completeness"],
+                    2000,
+                    20000,
+                    json_path=out,
+                )
+            payload = json.loads(out.read_text())
+        self.assertEqual(rc, 0)  # advisory: never fails the run
+        self.assertIn("completeness", payload["analyzers"])
+        rec = payload["books"][0]
+        self.assertIn("completeness", rec["verdicts"])
+        self.assertEqual(rec["verdicts"]["completeness"]["status"], "OK")
+        self.assertIn("prose 1/1", rec["verdicts"]["completeness"]["details"][0])
