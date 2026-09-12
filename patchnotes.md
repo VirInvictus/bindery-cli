@@ -1,4 +1,42 @@
 # bindery-cli Patch Notes
+## v0.39.0 (2026-09-12)
+
+### The cover-wiring repair (`--fix-cover`) and the executed rulings
+
+- **`--fix-cover` repairs dangling EPUB2 cover wiring.** A
+  `<meta name="cover">` whose content names no manifest item is
+  re-pointed when the OPF guide's own cover reference resolves to
+  exactly one manifest item (the producer's statement, so nothing is
+  guessed), and removed when nothing identifies the item. A meta whose
+  item exists is never touched: an absent cover file belongs to
+  `--prune-missing-resources` and its edge completion.
+- **Gate treatment:** cover wiring is invisible to epubcheck, so a
+  cover-only repair always answered 'equal' from the improvement gate.
+  Cover repairs now ride the same no_worse acceptance the lossy strips
+  use, with the partial rule intact: a regression rejects, a
+  still-fatal book stays partial and is never auto-applied. Verified
+  on a real dangling-meta book from the library: re-pointed 1,
+  accepted.
+- **Scope by ruling (the hybrid):** the EPUB3
+  `properties="cover-image"` slice stays audit-only. Choosing which
+  image is the cover from filenames is exactly the non-determinism the
+  charter forbids, and no library book is fully unwired (measured:
+  21 dangling EPUB2 metas, 3 absent cover files, 103 EPUB3 books
+  without the property, 0 with no wiring at all).
+- **The metadata-validity carve-out is ruled: routed to
+  cquarry/CalibreQuarry.** bindery's side is closed: human-facing dc:
+  metadata stays a non-goal. The cross-repo handoff (a routed box in
+  CalibreQuarry's backlog naming the 51 OPF-085 invalid-UUID warnings
+  and the thin date/language tail) is filed for the next CQ lane.
+- **The tag-policy force-push repairs are executed** on a researched
+  go: the v0.28.0 tag retargeted to the first green commit with its
+  title line restored (the historic `git tag -F` defect had stripped
+  it), the v0.33.0 tag message replaced with the corrected verbatim
+  entry, and the 10 test_facility EPUBs stripped from all history
+  (git filter-repo; main and all 14 tags force-pushed in one
+  publish.yml-disabled session; verbatim tag messages survived; PyPI
+  untouched). The roadmap's Tag policy section records the execution.
+
 ## v0.38.0 (2026-09-12)
 
 ### Phase 16: package-structure repairs

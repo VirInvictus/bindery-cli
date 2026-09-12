@@ -43,6 +43,7 @@ Everything below is off until its flag is passed (or all at once via `--all`). T
 - **`--encode-url-spaces`**: percent-encodes raw spaces in `src`/`href` attribute values across the package (OPF manifest, NCX, content documents). A URL with a literal space is not a valid URL (RSC-020) and unresolvable on strict readers; the encoded form denotes the same file.
 - **`--fix-container`**: generates `META-INF/container.xml` at the located OPF when the container is missing or names a file the archive does not contain. This is the gateway defect: epubcheck stays fatal while the OPF is unfindable, so no repair can be gate-accepted on such a book until the container exists.
 - **`--fix-media-types`**: normalizes wrong manifest media-type declarations (OPF-029, e.g. a jpg stamped `image/png` by an aggregator). Attribute-only and quote-preserving; it fires only when the file's magic bytes confirm the extension, so an honestly-declared misnamed file is never made worse.
+- **`--fix-cover`**: repairs dangling EPUB2 cover wiring. A `<meta name="cover">` whose content names no manifest item is re-pointed when the OPF guide's own cover reference names an existing item, and removed when nothing identifies it; EPUB3 `properties="cover-image"` is deliberately audit-only (guessing which image is the cover is not deterministic). Cover wiring is invisible to epubcheck, so cover-only repairs are accepted under the same no-worse bar the lossy strips use.
 
 
 Three opt-in fixes are **lossy** and stand apart from the semantics-preserving rest:

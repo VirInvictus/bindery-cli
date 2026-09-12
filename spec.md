@@ -18,7 +18,7 @@ opt-in. The fourteen **structural repairs** (`--fix-empty-body`, `--fix-missing-
 `--fix-id-colons`, `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
 `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
-`--fix-container`, `--fix-media-types`) alter
+`--fix-container`, `--fix-media-types`, `--fix-cover`) alter
 markup structure or fabricate minimal content; the three
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
 content a converter injected rather than content the author wrote. The default pass runs
@@ -92,7 +92,7 @@ normal gate applies.
 
 ### Opt-in: structural repairs
 
-Fourteen repairs go past well-formedness and therefore require their own flag; none is ever
+Fifteen repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
@@ -182,7 +182,17 @@ jpeg, png, gif): a PNG renamed `.jpg` keeps its wrong-but-honest declaration rat
 gaining a worse one. Attribute-only, quote-style preserved; files absent from the archive
 belong to `--prune-missing-resources`.
 
-All fourteen are evaluated by the normal `gate`: unlike the lossy strips, their benefit is
+- **`--fix-cover`**: repair dangling EPUB2 cover wiring (the cover-wiring ruling's
+deterministic half). A `<meta name="cover" content="X">` whose `X` names no manifest id is
+re-pointed when the OPF guide's `<reference type="cover">` resolves to exactly one manifest
+item (the producer's own statement; nothing is guessed), and removed when nothing identifies
+the item. A meta whose id exists in the manifest is never touched here, even when the item's
+file is absent: that class belongs to `--prune-missing-resources` and its edge completion.
+The EPUB3 `properties="cover-image"` slice is audit-only by ruling. Cover wiring is invisible
+to epubcheck, so cover-only repairs are accepted under the `no_worse` bar the lossy strips
+use, with the `partial` rule intact.
+
+All fifteen are evaluated by the normal `gate`: unlike the lossy strips, their benefit is
 visible to epubcheck (they clear errors), so a run with no measurable improvement is a
 noop and nothing is applied. CDATA sections and comments are never rewritten, as
 everywhere else.
