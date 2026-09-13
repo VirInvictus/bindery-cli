@@ -1649,3 +1649,8 @@ The release-tag backlog is settled, forward-only:
       (leads with deterministic epubcheck-gated repair); 7 topics swapped
       (add epub3/calibre-plugin/python-cli/ebook-audit); codex page still
       says calibredb; wiki off.
+
+- [ ] **DECIDED 2026-09-13: requires-python drops to ~3.12** (decision
+      63) - the PEP 758 parenthesization sweep covers src + the plugin
+      (already required for Calibre 9), the floor move widens the pip
+      audience, and CI gains a 3.12 leg.
