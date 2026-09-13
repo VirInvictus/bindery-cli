@@ -1613,44 +1613,72 @@ The release-tag backlog is settled, forward-only:
 
 ## New findings 2026-09-12 late (six-lens full audit; detail: audit/FULL-AUDIT-2026-09-12.md, Wave 15)
 
-- [ ] **HIGH: the Calibre plugin cannot load on mainstream Calibre.**
-      plugin/__init__.py:218/228 and the vendored epub.py:948/1286 use PEP
-      758 unparenthesized except tuples - SyntaxError on Python <=3.13,
-      and Calibre 9.x embeds 3.13 while minimum_calibre_version claims
-      (2,0,0). Parenthesize the ~6 sites, set the honest minimum, and add
-      a cross-version parse check to the plugin tests (CI runs 3.14 and
-      cannot see this).
+Lane 2026-09-13 shipped v0.40.0 from this section. Correction to the Wave 15
+text: released Calibre embeds Python 3.11 through the whole 8.x series
+(7.0.0 = 3.11.5, 8.16.2 = 3.11.14) and 3.14 from 9.0 (9.0.0 = 3.14.2), per
+calibre's own bypy sources.json checked against the upstream clone; the
+"Calibre 9.x embeds 3.13" line was imprecise, and no released Calibre embeds
+3.12 or 3.13 at all. CI now byte-compiles the shipped plugin zip under all
+four interpreter families.
+
+- [x] **HIGH: the Calibre plugin cannot load on mainstream Calibre**
+      (SHIPPED v0.40.0: bab3bdc + bb31308). plugin/__init__.py:218/228 and
+      the vendored epub.py:948/1286 used PEP 758 unparenthesized except
+      tuples - SyntaxError on every released Calibre (see the correction
+      above); validate.py:75/398 carried the same syntax for the CLI. All
+      six sites parenthesized; ruff's `target-version = "py312"` pin keeps
+      `ruff format` from re-stripping the parens (inference from a 3.14
+      requires-python rewrote them); CI gained the `plugin-compat` job
+      (build the zip, extract, `compileall` the zip + src under
+      3.11/3.12/3.13/3.14); `tests/test_version.py` gained the
+      syntax-floor grammar guard so the class fails a test, not a Calibre
+      install. Honest metadata: `minimum_calibre_version` is (7, 0, 0)
+      (the oldest series whose embedded interpreter CI covers; the hollow
+      (2, 0, 0) is gone) and the README plugin section documents platforms
+      (Linux-tested) and the verification story.
 - [ ] **Analyzer robustness on untrusted input:** spine_integrity
       IndexErrors on a spineless EPUB (nums[0] with an empty list) and
       the call sites sit OUTSIDE the per-book try - one malformed book
       aborts a whole run; load_book raises NameError (encrypted_names
       used before assignment) on a corrupt container.xml; DRM books get
       an EMPTY re-source verdict alongside the ENCRYPTED skip (extend the
-      emptytext gate to encrypted_drm_n).
-- [ ] **Repair-edge fixes:** generate_container does not XML-escape the
-      OPF path (--fix-container installs a fresh fatal on titles with &);
-      two FRAGMENT verdict lines still use em-dashes (audit.py:1435/:1879);
-      fix_cover_meta's present parameter is dead.
-- [ ] **Docs sweep:** README claims an audit CSV that does not exist
-      (--json is the machine surface); repair_epub docstring omits
-      fix_container/fix_media_types/fix_cover; audit.py module docstring
-      self-contradicts (six vs four analyzers; validate_metadata.py does
-      not exist; the stdlib-only claim is tool-level false); plugin is
-      Linux-only and undocumented; roman-numeral helpers duplicated
-      audit/pagination; sys.path.insert pollution in audit.py.
+      emptytext gate to encrypted_drm_n). (Not in the 09-13 lane; still
+      open.)
+- [x] **Repair-edge fixes** (SHIPPED v0.40.0: 2473bf8).
+      generate_container XML-escapes the book-controlled OPF path into its
+      double-quoted attribute and BOTH regex readers unescape before
+      comparing against zip names (the round trip is regression-tested
+      with a "Tom & Jerry.opf" fixture, including the second-repair
+      idempotence the staleness check depends on); the two remaining
+      FRAGMENT em-dash verdict lines match the colon style; fix_cover_meta's
+      dead `present` parameter is removed (the function deliberately
+      consults only OPF text, never archive membership).
+- [x] **Docs sweep, plugin-platforms half** (SHIPPED v0.40.0: bb31308):
+      the plugin is no longer undocumented; the README states supported
+      platforms and the minimum Calibre version. The rest stays open:
+      README's audit CSV claim, the repair_epub docstring's three missing
+      flags, the audit.py module-docstring contradictions, the
+      roman-numeral duplication, the sys.path.insert pollution.
 - [ ] **Blitz candidates:** the audit-refresh deep-dive (per-class deltas
       vs the 09-12 baselines; first-time counts for the two C-ruled
       classes); a cover advisory analyzer completing the hybrid ruling;
       --encode-url-spaces entry rename + reference rewrite (PKG-010, 280
-      books); plugin log rotation. requires-python floor question
-      (PENDING-BRANDON P10): 3.14 keeps house consistency, 3.12 with the
-      parenthesization sweep multiplies the installable audience.
+      books); plugin log rotation.
 - [ ] **GitHub presentation (workspace batch):** description rewrite
       (leads with deterministic epubcheck-gated repair); 7 topics swapped
       (add epub3/calibre-plugin/python-cli/ebook-audit); codex page still
       says calibredb; wiki off.
 
-- [ ] **DECIDED 2026-09-13: requires-python drops to ~3.12** (decision
-      63) - the PEP 758 parenthesization sweep covers src + the plugin
-      (already required for Calibre 9), the floor move widens the pip
-      audience, and CI gains a 3.12 leg.
+- [x] **DECIDED 2026-09-13: requires-python drops to ~3.12** (decision
+      63) - EXECUTED v0.40.0 the same day with one refinement Brandon
+      ruled on live: every cquarry (1.9.0-1.21.0) and vir-tui (2.2.0/2.3.0)
+      on PyPI declares requires-python >=3.14, so a bare floor drop would
+      have failed pip resolution for exactly the strangers it invites.
+      Decided shape (asked, markers + guard): the VirInvictus pins carry
+      `; python_version >= '3.14'` markers (3.14 installs byte-identical
+      to v0.39.0), 3.12/3.13 installs run the stack-free repair core,
+      audit.py loads its renderer through the `_LazyUI` proxy, cli.py's
+      dispatch guard turns the missing stack into one stderr line + exit
+      2, and CI's `core-compat` job runs the stack-free test modules on
+      real 3.12/3.13 (258 tests per leg, verified locally under
+      3.12.14/3.13.15). Suite 445, ruff 0.16.2 clean.

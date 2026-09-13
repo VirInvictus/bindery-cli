@@ -1,4 +1,52 @@
 # bindery-cli Patch Notes
+## v0.40.0 (2026-09-13)
+
+### The plugin loads on Calibre again: the Python floor drops to 3.12
+
+- **The plugin compatibility fix.** v0.39.0 shipped PEP 758
+  unparenthesized except tuples, which are a SyntaxError on every Python
+  before 3.14, and the Bindery Repair plugin failed to load on every
+  released Calibre with a bare SyntaxError, silently. All six sites are
+  parenthesized now (plugin/__init__.py, the vendored epub.py copies,
+  validate.py), which is valid on every Python 3 and what the plugin
+  needed all along.
+- **The compatibility matrix CI actually verifies.** Released Calibre
+  embeds Python 3.11 through the whole 8.x series (7.0.0 = 3.11.5,
+  8.16.2 = 3.11.14) and 3.14 from 9.0 (9.0.0 = 3.14.2), per calibre's own
+  build manifests. CI gained a `plugin-compat` job that builds the plugin
+  zip the way the release does, extracts it, and byte-compiles the zip
+  contents plus the CLI sources under 3.11, 3.12, 3.13 and 3.14, so the
+  class of failure that shipped in v0.39.0 is now a red build instead of
+  a silent plugin. `ruff`'s `target-version = "py312"` pin keeps the
+  formatter from re-stripping the parens, and a new grammar-floor guard
+  in the version tests parses the whole tree under the 3.12 grammar.
+- **Honest plugin metadata.** `minimum_calibre_version` is (7, 0, 0), the
+  oldest series whose embedded interpreter CI actually verifies,
+  replacing the hollow (2, 0, 0). The README plugin section now
+  documents platform support (developed and tested on Linux) and the
+  exact verification level behind the floor.
+- **requires-python drops to >=3.12, with one honest refinement.** Every
+  cquarry (1.9.0-1.21.0) and vir-tui (2.2.0/2.3.0) release on PyPI
+  declares requires-python >=3.14, so a bare floor drop would have made
+  `pip install` fail on 3.12/3.13 in dependency resolution for exactly
+  the strangers the floor is meant to invite. The VirInvictus pins
+  instead carry `; python_version >= '3.14'` markers: Python 3.14
+  installs are byte-identical to v0.39.0, and 3.12/3.13 installs get the
+  stack-free repair core, where `bindery repair` (the one broken EPUB, no
+  Calibre) works in full. `bindery audit`, `bindery library` and
+  `bindery run` print a one-line note that the command needs the Python
+  3.14 stack instead of a traceback (a lazy renderer proxy in the audit
+  module and a dispatch guard in the CLI). CI runs the stack-free test
+  modules on real 3.12 and 3.13 interpreters (258 tests per leg).
+- **Repair-edge riders from the six-lens audit.** `--fix-container`
+  XML-escapes the book-controlled OPF path when it writes
+  container.xml and unescapes at both readers, so a book with an OPF
+  named like `Tom & Jerry.opf` does not gain a fresh fatal while being
+  repaired, and the escaped form round-trips (regression-tested,
+  including second-repair idempotence). The last two FRAGMENT em-dash
+  verdict lines match the colon style. `fix_cover_meta` loses its dead
+  `present` parameter.
+
 ## v0.39.0 (2026-09-12)
 
 ### The cover-wiring repair (`--fix-cover`) and the executed rulings

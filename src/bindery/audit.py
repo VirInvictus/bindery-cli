@@ -71,7 +71,22 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).parent))
-import vir_tui as ui
+
+
+class _LazyUI:
+    # vir_tui rides the Python 3.14 VirInvictus stack, marker-gated out of
+    # 3.12/3.13 installs since the v0.40.0 floor drop. A module-level import
+    # would make the whole package unimportable there (and LOAD_GLOBAL never
+    # consults module __getattr__), so this proxy defers the import to the
+    # first render call, where cli.py's dispatch guard can answer cleanly.
+    def __getattr__(self, name: str):
+        import vir_tui
+
+        return getattr(vir_tui, name)
+
+
+ui = _LazyUI()
+
 
 # ----------------------------------------------------------------------------
 # Shared scaffolding

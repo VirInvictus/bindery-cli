@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bindery-cli"
-version = "0.39.0"
+version = "0.40.0"
 description = "Audit EPUB body text and repair broken EPUBs with deterministic, epubcheck-gated fixes; atomic in-place replacement in a Calibre library."
 readme = "README.md"
 classifiers = [
@@ -12,10 +12,12 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Utilities",
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 keywords = ["epub", "epubcheck", "calibre", "repair", "ebook", "html-repair", "watermarks"]
 license = { text = "MIT" }
 authors = [
@@ -24,10 +26,15 @@ authors = [
 # Core dependencies are minimal. html5lib is needed only for the opt-in --reserialize structural
 # repair; it is imported lazily, so every other mode works without it installed.
 # vir-tui and cquarry are pinned as PyPI ranges; uv.lock records the resolved versions.
+# Both are marker-gated to 3.14+ because every release they ship declares
+# requires-python >=3.14: without the markers a 3.12/3.13 install of this
+# package would die in dependency resolution before `bindery repair` (which
+# needs neither) could run. The audit/library surfaces degrade with a clean
+# message (cli.py's dispatch guard) instead of installing at all.
 dependencies = [
   "tqdm",
-  "vir-tui>=2.2.0",
-  "cquarry>=1.19.0",
+  "vir-tui>=2.2.0; python_version >= '3.14'",
+  "cquarry>=1.19.0; python_version >= '3.14'",
 ]
 
 [project.optional-dependencies]

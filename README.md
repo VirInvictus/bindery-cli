@@ -69,7 +69,19 @@ The lossy modes (`--strip-pagination`, `--strip-broken-tags`, and `--strip-water
 
 ## Install
 
-Python 3.14+, plus epubcheck on `PATH` for the gate. Dependencies: `tqdm` for progress output, plus the VirInvictus libraries `vir-tui` (TUI rendering) and `cquarry` (read-only Calibre database access); `html5lib` remains an optional extra, needed only for `--reserialize`.
+Python 3.12+, plus epubcheck on `PATH` for the gate. Dependencies: `tqdm` for
+progress output, plus the VirInvictus libraries `vir-tui` (TUI rendering) and
+`cquarry` (read-only Calibre database access), which install on Python 3.14+
+only; `html5lib` remains an optional extra, needed only for `--reserialize`.
+
+The floor is two-tier by those markers: on Python 3.14 everything runs. On
+3.12/3.13 the install carries the repair core only, which is the tool's core
+job: `bindery repair` on a single EPUB works in full, while `bindery audit`,
+`bindery library` and `bindery run` print a one-line note that the command
+needs the Python 3.14 stack instead of dying in a traceback. (Every vir-tui
+and cquarry release on PyPI currently declares `requires-python >=3.14`, so
+the stack itself cannot follow the floor down until they move.) CI runs the
+stack-free test modules on real 3.12 and 3.13 interpreters.
 
 ```sh
 uv tool install bindery-cli                            # core tools

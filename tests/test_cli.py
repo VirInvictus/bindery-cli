@@ -1385,3 +1385,24 @@ class TestCoverGate(unittest.TestCase):
     def test_regression_rejects(self):
         o = self._cover_verdict(CheckResult(0, 0, 0), CheckResult(0, 1, 0))
         self.assertEqual(o.status, "reject")
+
+
+class TestStackFreeFloorGuard(unittest.TestCase):
+    """Since the v0.40.0 floor drop the VirInvictus stack (vir-tui, cquarry)
+    is marker-gated out of 3.12/3.13 installs; the audit/library surfaces
+    must say so cleanly (trouble exit, one stderr line) instead of dying
+    with a traceback. Poisoning sys.modules stands in for the absent
+    library whatever the dev machine has installed."""
+
+    def test_missing_stack_is_a_clean_trouble_exit(self):
+        with tempfile.TemporaryDirectory() as td:
+            # any .epub name reaches the audit scan's first ui render, which
+            # is the first point the gated library would load
+            (Path(td) / "x.epub").write_bytes(b"not a zip")
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.dict(sys.modules, {"vir_tui": None}):
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = main(["audit", "content", td])
+            self.assertEqual(rc, 2)
+            self.assertIn("installs only on Python 3.14+", err.getvalue())
+            self.assertIn("vir_tui", err.getvalue())

@@ -31,6 +31,30 @@ jobs:
       # --reserialize tests instead of skipping them.
       - run: pip install . html5lib
       - run: PYTHONPATH=src python -m unittest discover -s tests
+  core-compat:
+    name: Run the stack-free suite on the 3.12/3.13 floor
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The install floor (decision 63): vir-tui/cquarry are marker-gated
+        # to 3.14 there, so these legs install the core (tqdm only) and run
+        # exactly the test modules that never touch the gated stack: the
+        # repair core, the plugin under calibre stubs, validate, and the
+        # version/grammar pins. audit/library/CLI-stack tests stay on the
+        # 3.14 leg above.
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install . html5lib
+      - run: >
+          PYTHONPATH=src python -m unittest
+          tests.test_transforms tests.test_epub tests.test_pagination
+          tests.test_watermark tests.test_reserialize tests.test_version
+          tests.test_plugin tests.test_validate
   plugin-compat:
     name: Parse-check the plugin zip under the interpreters Calibre embeds
     runs-on: ubuntu-latest

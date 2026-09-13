@@ -1623,6 +1623,20 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
+    except ModuleNotFoundError as e:
+        # The VirInvictus stack (vir-tui, cquarry) is marker-gated to Python
+        # 3.14+ since the v0.40.0 floor drop: a 3.12/3.13 install runs the
+        # single-book repair core, and the audit/library surfaces say what
+        # they need instead of dying with a traceback. Anything else missing
+        # is a real bug and still raises.
+        if e.name not in ("vir_tui", "cquarry"):
+            raise
+        print(
+            f"this command needs the {e.name} library, which currently "
+            "installs only on Python 3.14+; run it under Python 3.14",
+            file=sys.stderr,
+        )
+        return 2
     except KeyboardInterrupt:
         # A library run can take a long time; end a Ctrl-C cleanly instead of with a
         # traceback. In-flight work is safe: the original is only ever touched by the
