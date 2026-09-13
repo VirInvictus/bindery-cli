@@ -2,10 +2,23 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request:
+  pull_request
 permissions:
   contents: read
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # ruff is a dev-only linter; the rule set lives in pyproject.toml, so
+      # these mean the same thing locally. Checking `.` rather than named
+      # directories keeps a new top-level script from silently escaping lint.
+      - run: pip install ruff==0.16.2
+      - run: ruff check .
+      - run: ruff format --check .
   test:
     runs-on: ubuntu-latest
     steps:
@@ -13,13 +26,33 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      # html5lib is the project's declared optional `reserialize` extra (core stays
-      # stdlib-only); installing it here lets CI exercise the --reserialize tests
-      # instead of skipping them. ruff is a dev-only linter.
-      - run: pip install . html5lib ruff==0.16.2
-      # The rule set lives in pyproject.toml, so these mean the same thing locally.
-      # Checking `.` rather than named directories keeps a new top-level script from
-      # silently escaping lint.
-      - run: ruff check .
-      - run: ruff format --check .
+      # html5lib is the project's declared optional `reserialize` extra (core
+      # stays stdlib-only); installing it here lets CI exercise the
+      # --reserialize tests instead of skipping them.
+      - run: pip install . html5lib
       - run: PYTHONPATH=src python -m unittest discover -s tests
+  plugin-compat:
+    name: Parse-check the plugin zip under the interpreters Calibre embeds
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # v0.39.0 shipped 3.14-only syntax and the plugin failed to load with
+        # a bare SyntaxError on every released Calibre. The embedded
+        # interpreters are 3.11 (7.x and the whole 8.x series) and 3.14
+        # (9.0+); 3.12/3.13 bracket the gap and match the CLI's grammar
+        # floor (tests/test_version.py). The plugin cannot be imported
+        # without Calibre, but the shipped zip can be extracted and
+        # byte-compiled, which catches exactly this class.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build the plugin zip from this tree
+        run: python scripts/build_plugin.py
+      - name: Byte-compile the zip contents and the CLI sources
+        run: |
+          python -m zipfile -e dist/BinderyRepair-*.zip plugin_pkg
+          python -m compileall -q plugin_pkg src

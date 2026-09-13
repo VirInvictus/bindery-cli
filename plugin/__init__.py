@@ -215,7 +215,7 @@ class BinderyRepair(FileTypePlugin):
                 text=True,
                 timeout=300,
             )
-        except OSError, subprocess.TimeoutExpired:
+        except (OSError, subprocess.TimeoutExpired):
             return None
         try:
             data = json.loads(proc.stdout)
@@ -225,7 +225,7 @@ class BinderyRepair(FileTypePlugin):
                 int(checker["nError"]),
                 int(checker["nWarning"]),
             )
-        except json.JSONDecodeError, KeyError, TypeError, ValueError:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
 
     # ---- plugin housekeeping

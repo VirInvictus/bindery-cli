@@ -72,7 +72,7 @@ def _counts_from_json(stdout: str) -> CheckResult | None:
         return CheckResult(
             int(checker["nFatal"]), int(checker["nError"]), int(checker["nWarning"])
         )
-    except KeyError, TypeError, ValueError:
+    except (KeyError, TypeError, ValueError):
         return None
 
 
@@ -395,7 +395,7 @@ def run_epubcheck(path: Path, timeout: int = 300) -> CheckResult | None:
             env=_english_locale_env(),
             check=False,
         )
-    except FileNotFoundError, subprocess.TimeoutExpired:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     result = _counts_from_json(out.stdout)
     if result is not None:

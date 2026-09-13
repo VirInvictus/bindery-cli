@@ -945,7 +945,7 @@ def ncx_uid_mismatch(src: Path) -> bool:
             text = z.read(ncx).decode("utf-8", "replace")
             m = _DTB_UID_RE.search(text) or _DTB_UID_RE_REV.search(text)
             return bool(m and m.group(3) != uid)
-    except zipfile.BadZipFile, OSError, RuntimeError:
+    except (zipfile.BadZipFile, OSError, RuntimeError):
         # RuntimeError covers zip-encrypted entries, which raise out of
         # z.read: a DRM'd book is not a candidate, not a crash.
         return False
@@ -1283,7 +1283,7 @@ def repair_epub(
                         try:
                             with zin.open(resolved) as f:
                                 return f.read(8)
-                        except KeyError, OSError, RuntimeError:
+                        except (KeyError, OSError, RuntimeError):
                             return None
 
                     text, n = fix_manifest_media_types(text, opf_dir, peek)

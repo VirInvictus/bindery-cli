@@ -39,6 +39,14 @@ bindery = "bindery.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/bindery"]
 
+[tool.ruff]
+# Pin the rewrite level below the house interpreter on purpose: the Calibre
+# plugin vendors these modules into Calibre's embedded interpreters, so the
+# parenthesized except form must survive `ruff format`. A target inferred
+# from requires-python >=3.14 rewrites it to the PEP 758 bare form, which is
+# a SyntaxError on every released Calibre (see tests/test_version.py).
+target-version = "py312"
+
 [tool.ruff.lint]
 # Pinned explicitly so `ruff check` means the same thing locally and in CI. Without
 # this the result rode on whichever ruff was installed: 0.15 passed clean while 0.16
