@@ -1682,3 +1682,34 @@ four interpreter families.
       2, and CI's `core-compat` job runs the stack-free test modules on
       real 3.12/3.13 (258 tests per leg, verified locally under
       3.12.14/3.13.15). Suite 445, ruff 0.16.2 clean.
+
+- [ ] **Candidate (lossy lane): strip duplicate stub spine docs.** Opened
+      2026-09-13 from the phase-1 Redwall-fleet successor run: The River
+      Has Roots (bookmate platform conversion) carries 14 of 37 spine
+      docs that are identical stubs (the same short boilerplate body
+      repeated), while the book's real text is fully present (162k chars
+      across 16 prose docs). The emptytext analyzer already classifies
+      this exactly (`partial: N/M identical stub docs`, with the
+      platform signature in the detail line); nothing repairs it, so
+      the book either ships with blank-page artifacts between chapters
+      or gets re-sourced. Charter fit: the stubs are content a converter
+      injected, which is the lossy lane's definition, and the natural
+      shape is a `--strip-stub-docs`-style pass that removes non-rendering
+      spine duplicates (identical visible text under a small threshold,
+      repeated >= 3 times), drops their spine itemrefs, and rides
+      `no_worse` like the other lossy strips. Fixture: the book above
+      (kept in ~/Downloads pending Brandon's import-or-re-source call);
+      the 2026-09-13 phase-1 JSON has the analyzer verdicts.
+
+- [ ] **`run phase3`'s aggregate before/after summary mixes a rejected
+      candidate's projected after-state into the totals** (observed
+      2026-09-13, OMW batch): Ghost Brigades measured 0f/47e -> 1f/24e
+      REGRESSION and was correctly rejected, untouched; the only applied
+      repair (River Has Roots, 0f/4e -> 0f/3e) was a clean improvement.
+      The printed summary totals read `before: 0f/53e -> after:
+      1f/29e`, aggregating the rejected projection as if the set had
+      gained a fatal, which reads as a gate-contract violation and
+      cost a mid-run stop to verify no damage. The per-book JSON is
+      honest (`status: reject`, `applied: false`); the aggregate should
+      sum applied/equal states only, or carry the rejected projection
+      as its own labeled line.
