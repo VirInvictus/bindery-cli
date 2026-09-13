@@ -1610,3 +1610,42 @@ The release-tag backlog is settled, forward-only:
   files) are stripped from all history via git filter-repo, main and
   all 14 tags force-pushed. The tags' verbatim messages survived the
   rewrite; PyPI was untouched throughout.
+
+## New findings 2026-09-12 late (six-lens full audit; detail: audit/FULL-AUDIT-2026-09-12.md, Wave 15)
+
+- [ ] **HIGH: the Calibre plugin cannot load on mainstream Calibre.**
+      plugin/__init__.py:218/228 and the vendored epub.py:948/1286 use PEP
+      758 unparenthesized except tuples - SyntaxError on Python <=3.13,
+      and Calibre 9.x embeds 3.13 while minimum_calibre_version claims
+      (2,0,0). Parenthesize the ~6 sites, set the honest minimum, and add
+      a cross-version parse check to the plugin tests (CI runs 3.14 and
+      cannot see this).
+- [ ] **Analyzer robustness on untrusted input:** spine_integrity
+      IndexErrors on a spineless EPUB (nums[0] with an empty list) and
+      the call sites sit OUTSIDE the per-book try - one malformed book
+      aborts a whole run; load_book raises NameError (encrypted_names
+      used before assignment) on a corrupt container.xml; DRM books get
+      an EMPTY re-source verdict alongside the ENCRYPTED skip (extend the
+      emptytext gate to encrypted_drm_n).
+- [ ] **Repair-edge fixes:** generate_container does not XML-escape the
+      OPF path (--fix-container installs a fresh fatal on titles with &);
+      two FRAGMENT verdict lines still use em-dashes (audit.py:1435/:1879);
+      fix_cover_meta's present parameter is dead.
+- [ ] **Docs sweep:** README claims an audit CSV that does not exist
+      (--json is the machine surface); repair_epub docstring omits
+      fix_container/fix_media_types/fix_cover; audit.py module docstring
+      self-contradicts (six vs four analyzers; validate_metadata.py does
+      not exist; the stdlib-only claim is tool-level false); plugin is
+      Linux-only and undocumented; roman-numeral helpers duplicated
+      audit/pagination; sys.path.insert pollution in audit.py.
+- [ ] **Blitz candidates:** the audit-refresh deep-dive (per-class deltas
+      vs the 09-12 baselines; first-time counts for the two C-ruled
+      classes); a cover advisory analyzer completing the hybrid ruling;
+      --encode-url-spaces entry rename + reference rewrite (PKG-010, 280
+      books); plugin log rotation. requires-python floor question
+      (PENDING-BRANDON P10): 3.14 keeps house consistency, 3.12 with the
+      parenthesization sweep multiplies the installable audience.
+- [ ] **GitHub presentation (workspace batch):** description rewrite
+      (leads with deterministic epubcheck-gated repair); 7 topics swapped
+      (add epub3/calibre-plugin/python-cli/ebook-audit); codex page still
+      says calibredb; wiki off.
