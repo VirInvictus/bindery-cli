@@ -66,7 +66,14 @@ class BinderyRepair(FileTypePlugin):
     )
     author = "Brandon LaRocque"
     version = __PLUGIN_VERSION__
-    minimum_calibre_version = (2, 0, 0)
+    # (7, 0, 0), not (2, 0, 0): the vendored core must at least PARSE under
+    # the interpreter the target Calibre embeds, and CI byte-compiles the
+    # built zip under 3.11/3.12/3.13/3.14. Released Calibre embeds 3.11
+    # through the whole 8.x series and 3.14 from 9.0 (bypy sources.json),
+    # so 7.x is the oldest series the compatibility job actually covers;
+    # 2.x-6.x embed interpreters nothing verifies and the claim was hollow.
+    # The syntax floor is pinned by tests/test_version.py.
+    minimum_calibre_version = (7, 0, 0)
     supported_platforms = ["linux"]
     type = "File type"
     file_types = {"epub"}
