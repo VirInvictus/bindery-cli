@@ -1432,7 +1432,7 @@ def _spine_verdict(r: dict) -> tuple[bool, str, list[str]]:
         return (
             True,
             "FRAGMENT",
-            [f"toc {r['refs']} refs, {r['absent']} absent — span broken"],
+            [f"toc {r['refs']} refs, {r['absent']} absent: span broken"],
         )
     if r["class"] == "convention":
         return (
@@ -1876,7 +1876,7 @@ def _spine_sections(hits, advisory) -> int:
         print(f"{RED}{BOLD}SPINE FRAGMENTS ({len(hits)}){RESET}")
         for book_id, title, tag, r in sorted(hits):
             print(f"  {RED}#{book_id}{RESET} [{tag}] {title}")
-            print(f"    toc {r['refs']} refs, {r['absent']} absent — span broken")
+            print(f"    toc {r['refs']} refs, {r['absent']} absent: span broken")
         print()
         print(
             f"{RED}{BOLD}spine FOUND{RESET}: {len(hits)} file(s) are fragments "

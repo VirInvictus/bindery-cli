@@ -15,6 +15,8 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote
+from xml.sax.saxutils import escape as _xml_escape
+from xml.sax.saxutils import unescape as _xml_unescape
 
 from .pagination import collect_runheads, detect_page_layer, strip_pagination_doc
 from .reserialize import reserialize_if_broken
@@ -63,6 +65,12 @@ _ITEM_ID_RE = re.compile(
 )
 _ROOTFILE_RE = re.compile(r"full-path=([\"'])((?:(?!\1).)+)\1")
 
+# The inverse pair for the container.xml rootfile attribute: generate_container
+# escapes the book-controlled OPF path into its double-quoted attribute, and
+# every regex-based reader of that attribute unescapes before comparing against
+# zip names (which are raw). Default entities plus the quote forms.
+_XML_ATTR_ENTITIES = {"&quot;": '"', "&apos;": "'"}
+
 
 def _locate_opf(z: zipfile.ZipFile) -> str | None:
     """The package document path, from META-INF/container.xml when possible.
@@ -76,8 +84,8 @@ def _locate_opf(z: zipfile.ZipFile) -> str | None:
     except KeyError:
         container = ""
     m = _ROOTFILE_RE.search(container)
-    if m and m.group(2) in z.namelist():
-        return m.group(2)
+    if m and _xml_unescape(m.group(2), _XML_ATTR_ENTITIES) in z.namelist():
+        return _xml_unescape(m.group(2), _XML_ATTR_ENTITIES)
     return next((n for n in z.namelist() if n.lower().endswith(".opf")), None)
 
 
@@ -275,14 +283,18 @@ def generate_container(opf_path: str) -> str:
     Byte-deterministic: the same OPF path always yields the same bytes (the
     model is upstream calibre's initialize_container). The entry itself is
     written with the constant epoch timestamp, so repairing one book twice
-    is byte-identical.
+    is byte-identical. The path is book-controlled (it is a zip entry name)
+    and lands in a double-quoted XML attribute, so it is escaped: without
+    this, an OPF named like ``Tom & Jerry.opf`` would install a fresh
+    fatal into a book the repair just fixed.
     """
+    safe_path = _xml_escape(opf_path, {'"': "&quot;"})
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<container version="1.0" '
         'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n'
         "  <rootfiles>\n"
-        f'    <rootfile full-path="{opf_path}" '
+        f'    <rootfile full-path="{safe_path}" '
         'media-type="application/oebps-package+xml"/>\n'
         "  </rootfiles>\n"
         "</container>\n"
@@ -309,9 +321,7 @@ _GUIDE_REF_RE = re.compile(
 )
 
 
-def fix_cover_meta(
-    opf_text: str, opf_dir: str, present: frozenset[str]
-) -> tuple[str, dict[str, int]]:
+def fix_cover_meta(opf_text: str, opf_dir: str) -> tuple[str, dict[str, int]]:
     """Repair the EPUB2 cover-meta wiring (the cover-wiring ruling's
     deterministic half; hybrid scope, 2026-09-12).
 
@@ -1154,7 +1164,8 @@ def repair_epub(
                 cm = _ROOTFILE_RE.search(
                     zin.read("META-INF/container.xml").decode("utf-8", "replace")
                 )
-            if not (cm and cm.group(2) in zin.namelist()):
+            rootfile = _xml_unescape(cm.group(2), _XML_ATTR_ENTITIES) if cm else None
+            if not (rootfile and rootfile in zin.namelist()):
                 container_bytes = generate_container(opf).encode("utf-8")
         if container_bytes is not None and "META-INF/container.xml" not in (
             zin.namelist()
@@ -1291,7 +1302,7 @@ def repair_epub(
                         report.add({"media_types_normalized": n})
                         opf_changed = True
                 if fix_cover:
-                    text, ccounts = fix_cover_meta(text, opf_dir, present)
+                    text, ccounts = fix_cover_meta(text, opf_dir)
                     if ccounts:
                         report.add(ccounts)
                         opf_changed = True

@@ -6,12 +6,15 @@ import unittest
 import warnings
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from bindery.epub import (
+    _locate_opf,
     downgrade_epub3_tags,
     fix_manifest_ids,
     fix_ncx_ids,
     fix_pagelist_class,
+    generate_container,
     ncx_uid_mismatch,
     opf_unique_id,
     package_version,
@@ -1322,6 +1325,49 @@ class TestFixContainer(unittest.TestCase):
                 },
             )
             repair_epub(src, once, fix_container=True)
+            report = repair_epub(once, twice, fix_container=True)
+            self.assertNotIn("container_generated", report.fixes)
+
+    def test_generate_container_escapes_xml_specials(self):
+        """An OPF entry name is book-controlled and lands in a double-quoted
+        XML attribute; an unescaped '&' or quote would install a fresh fatal
+        into a book the repair just fixed (six-lens audit, 2026-09-12)."""
+        for name in ("Tom & Jerry.opf", 'weird"name.opf', "a<b>c.opf", "plain.opf"):
+            container = generate_container(name)
+            root = ET.fromstring(container)
+            rootfile = root.find(
+                ".//{urn:oasis:names:tc:opendocument:xmlns:container}rootfile"
+            )
+            self.assertEqual(rootfile.get("full-path"), name)
+
+    def test_ampersand_opf_name_round_trips_through_the_generated_container(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            once, twice = Path(td) / "a.epub", Path(td) / "b.epub"
+            opf_name = "OEBPS/Tom & Jerry.opf"
+            self._build(
+                src,
+                {
+                    "mimetype": "application/epub+zip",
+                    opf_name: self.OPF,
+                    "OEBPS/c1.xhtml": CONTENT,
+                },
+            )
+            report = repair_epub(src, once, fix_container=True)
+            self.assertEqual(report.fixes.get("container_generated"), 1)
+            with zipfile.ZipFile(once) as z:
+                self.assertIsNone(z.testzip())
+                container = z.read("META-INF/container.xml").decode("utf-8")
+                root = ET.fromstring(container)
+                rootfile = root.find(
+                    ".//{urn:oasis:names:tc:opendocument:xmlns:container}rootfile"
+                )
+                self.assertEqual(rootfile.get("full-path"), opf_name)
+                # the escaping reader: the locator resolves the escaped
+                # attribute back to the raw zip entry, not the first-.opf
+                # fallback (which a stray duplicate .opf could poison)
+                self.assertEqual(_locate_opf(z), opf_name)
+            # and the escaped container reads back as healthy, not stale
             report = repair_epub(once, twice, fix_container=True)
             self.assertNotIn("container_generated", report.fixes)
 
