@@ -33,7 +33,7 @@ authors = [
 # message (cli.py's dispatch guard) instead of installing at all.
 dependencies = [
   "tqdm",
-  "vir-tui>=2.2.0; python_version >= '3.14'",
+  "vir-tui>=2.5.0; python_version >= '3.14'",
   "cquarry>=1.19.0; python_version >= '3.14'",
 ]
 
