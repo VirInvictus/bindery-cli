@@ -239,6 +239,11 @@ Since this removes visible text from the reading experience, it is lossy by desi
 ### Opt-in, lossy: watermark strip (`--strip-watermarks`)
 Strips known producer and redistributor watermarks out of EPUBs (e.g. OceanofPDF.com, ABC Amber LIT Converter). The removal is a balanced-element surgery rather than regex slicing: it locates the stamp and deletes the outermost wrapper whose *entire visible text* is the watermark, ensuring prose that merely mentions the URL is preserved. Also drops known zero-byte marker files. Like other lossy operations, this is verified via `no_worse`.
 
+### Opt-in, lossy: stub-document strip (`--strip-stub-docs`)
+Drops spine documents whose entire visible text is one identical short placeholder repeated across the spine: the Bookmate/DRM-sample export whose chapters are all the same "content unavailable" notice, valid XHTML that epubcheck passes. The identity rule mirrors the emptytext analyzer's placeholder signals and is deliberately conservative: a candidate doc's visible text is 12-600 characters (short, not blank) and IDENTICAL to the text of at least two other spine docs, and the class covers at least 30% of the spine; only the single most common repeated class qualifies.
+
+The drop cascades fully: the placeholder archive entries, their manifest items and spine itemrefs (with every package edge rewritten), their NCX navPoints (the always-on playOrder resequencing heals the sequence afterward), and their nav toc `<li>` entries. Refusals, each reported as a no-op: no repeated class, the class under the fraction bar, and the class covering the whole spine (a book whose every spine doc is the same stub is EMPTY; it needs a re-source, never a repair). Accepted under the `no_worse` bar with the partial rule intact.
+
 When the stamp link sits inline (no clean wrapper), the bare `<a>` element may be
 deleted only when the match demonstrably holds nothing but the stamp: a tag-free
 body no longer than a stamp, or a body whose visible text is exactly the
@@ -471,6 +476,23 @@ phase 1, the epubcheck gate still governs every replacement, and the atomic
 replacement contract is untouched. The scope refusal is mechanical: no `--ids`,
 no sweep, exit 2 (a library-wide sweep is a dedicated hours-long task, never a
 verb call). Books left partial or unreadable surface as `decisions_needed`.
+The summary's before/after totals sum real post-run states only (applied
+repairs at their after measurement; unapplied books at their before counts),
+and a refused candidate's projected after-state is carried as its own labeled
+line (`rejected_projection`), never summed into the totals.
+
+`bindery doctor` is the environment self-check and the one verb that must
+always work: it reports the Python floor and stack tier (full
+vir_tui+cquarry vs the 3.12/3.13 stack-free core), the epubcheck oracle and
+its version, Java (the daemon's viability), the optional html5lib, and
+whether a Calibre library is discoverable from the current directory. It
+imports none of the VirInvictus stack (their absence is the finding, not a
+crash), never raises, and always exits 0: a diagnosis is not a failure.
+
+`bindery repair SRC [DST] [--json FILE]` writes its record in the
+`library --json` per-book vocabulary (`status`, `applied`, `before`/`after`,
+the fix `summary`) on every processing outcome, including nochange and
+reject; usage refusals (missing input, existing output) precede any record.
 
 ## The Calibre plugin (Bindery Repair)
 
@@ -493,8 +515,8 @@ enforced non-goal).
 
 The active fix set is exactly the CLI's default pass: the five
 well-formedness transforms, the NCX pipeline, and the mimetype fix. All
-structural repairs and
-the three lossy strips stay CLI-only: their acceptance IS the epubcheck gate,
+structural repairs and the lossy strips (including `--strip-stub-docs`)
+stay CLI-only: their acceptance IS the epubcheck gate,
 which cannot run inside Calibre. Opt-in flags are never enabled by the
 plugin; nothing runs ungated.
 

@@ -46,11 +46,12 @@ Everything below is off until its flag is passed (or all at once via `--all`). T
 - **`--fix-cover`**: repairs dangling EPUB2 cover wiring. A `<meta name="cover">` whose content names no manifest item is re-pointed when the OPF guide's own cover reference names an existing item, and removed when nothing identifies it; EPUB3 `properties="cover-image"` is deliberately audit-only (guessing which image is the cover is not deterministic). Cover wiring is invisible to epubcheck, so cover-only repairs are accepted under the same no-worse bar the lossy strips use.
 
 
-Three opt-in fixes are **lossy** and stand apart from the semantics-preserving rest:
+Four opt-in fixes are **lossy** and stand apart from the semantics-preserving rest:
 
 - **`--strip-pagination`**: remove print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs (so they reflow into the middle of a sentence: "where the hay cart **16** was taking him"). It removes only that injected furniture, never the author's prose: where a number split a sentence it rejoins the two paragraphs (closing up a word split like `compli-` / `mentary`), and it preserves roman chapter numbers, page-list nav anchors, and years. A roman numeral counts as a page number only when it is well-formed and under 100, so ordinary words (`mid`, `mix`, `civil`) are never mistaken for pages. A book is only treated as paginated when it has both a dense run of arabic numbers and several confident mid-sentence interrupts, so a merely chapter-numbered book is left alone. Three safety nets guard every edit (character conservation, tag balance, and an epubcheck no-regression check); any failure leaves the document untouched.
 - **`--strip-broken-tags`**: remove leaked HTML closing tags missing their open brackets (e.g. `</p>`) that render as raw text.
 - **`--strip-watermarks`**: remove known producer and distributor watermarks (e.g. OceanofPDF, ABC Amber LIT Converter) and stray marker files. It locates the stamp and deletes the outermost wrapper whose entire visible text is the watermark, ensuring prose that merely mentions the URL is preserved. An inline stamp link is deleted only when it holds nothing but the stamp; a match too large to be safe (an unclosed stamp anchor that swallowed prose) is refused and reported for manual repair rather than deleted.
+- **`--strip-stub-docs`**: drop spine documents whose entire visible text is one identical short placeholder repeated across the spine: the Bookmate-style export whose chapters are all the same "content unavailable" notice, passing epubcheck because the placeholder is valid XHTML. The drop cascades (archive entries, manifest items, spine order, NCX navPoints, nav toc entries), so the book opens straight into its real chapters. The identity rule is deliberately conservative (same text, at least 3 docs, at least 30% of the spine, each doc short but not blank) and a book whose *every* spine doc is the stub is refused outright: that book is empty and needs a re-source, never a repair.
 
 All lossy edits are invisible to epubcheck, so they are accepted when the result is *no worse* rather than measurably better.
 
@@ -88,6 +89,11 @@ Verify with `epubcheck --version`. A validated run refuses to start without it
 `--no-validate` bypasses it, and the Calibre plugin never needs it (its default
 pass runs ungated by design). `scripts/fast_sweep.py` also accepts
 `EPUBCHECK_JAR` pointing at the jar directly.
+
+`bindery doctor` runs all of these checks for you: it reports the Python
+stack tier, the epubcheck version, Java, the optional html5lib, and whether a
+Calibre library is discoverable from the current directory. It always works
+and always exits 0; the findings are the output.
 
 The floor is two-tier by those markers: on Python 3.14 everything runs. On
 3.12/3.13 the install carries the repair core only, which is the tool's core
@@ -143,8 +149,11 @@ Configuration is the plugin's customization string, parsed as JSON:
 
 ```json
 {"log": true, "log_path": "/path/bindery_repair.log", "max_size_mb": 150,
- "epubcheck_path": null}
+ "max_log_mb": 2, "epubcheck_path": null}
 ```
+
+The log rotates at `max_log_mb` (default 2MB, one `.old` generation kept;
+`0` disables rotation), so years of imports cannot grow it without bound.
 
 `epubcheck_path` opts into the experimental on-PATH validation mode: the
 repaired copy is re-measured with your epubcheck binary and refused unless it
@@ -153,11 +162,12 @@ without a gate, and the mode costs two epubcheck runs per imported book.
 
 ## Usage
 
-Four verbs: `bindery repair` fixes a single EPUB epubcheck-gated, `bindery audit`
+Five verbs: `bindery repair` fixes a single EPUB epubcheck-gated, `bindery audit`
 reports content flaws without touching anything, `bindery library` sweeps a Calibre
 library tree (dry run by default; `--apply` replaces accepted books atomically in place),
-and `bindery run` composes the acquisition pathway's EPUB slices (phase-1 pre-import
-vetting, phase-3 scoped post-import repair) for a calling agent.
+`bindery run` composes the acquisition pathway's EPUB slices (phase-1 pre-import
+vetting, phase-3 scoped post-import repair) for a calling agent, and `bindery doctor`
+checks the installation (see Install).
 The sections below take each in turn.
 
 ## Auditing
@@ -237,7 +247,14 @@ Repair one book to a new file (gated; writes only if it is an improvement):
 bindery repair broken.epub                 # -> "broken (repaired).epub"
 bindery repair broken.epub fixed.epub
 bindery repair scanned.epub --strip-pagination   # also remove baked-in page numbers
+bindery repair stubs.epub --strip-stub-docs      # drop repeated placeholder chapters
+bindery repair broken.epub fixed.epub --json report.json  # machine-readable record
 ```
+
+`repair --json FILE` writes one record in the `library --json` per-book
+vocabulary (`status`, `applied`, `before`/`after` counts, the fix `summary`),
+on every processing outcome including nochange and reject: a calling agent
+gets the same facts the console lines carry.
 
 Scan a Calibre library and see what would be fixed, writing nothing:
 
@@ -264,7 +281,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. bindery-cli may serve checks from a small persistent Java daemon (see the gate section above for how it is bounded and how it fails safe); wherever the daemon cannot serve, the run falls back to the standard per-book epubcheck subprocess at the usual seconds per book. Combine with `--only fatals` for a self-contained "find and fix the broken books" run.
 - `--workers N` runs the sweep's candidate pass through N concurrent epubcheck workers (default 1: serial, unchanged). The subprocess releases the GIL, so threads parallelize the oracle honestly; books are checked in windows of N consumed in order, so the candidate set matches the serial sweep and `--limit` stays lazy within one window of overshoot. The repair phase stays serial: that is where the shared workdir and the atomic-replacement contract live.
 - `--json FILE` writes a machine-readable report of the whole run (per-book status, before/after counts, applied flag, summary totals). `--manual-list FILE` writes the paths of every book that was not auto-repaired, one per line, ready for manual follow-up.
-- `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file.
+- `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file. `--backup-keep N` bounds the rotation: at most N backup files per book (the author original `.epub.bak` is never deleted), so a years-long apply habit cannot grow backups without bound.
 - `--install-to-calibre` resolves the Calibre book id from `metadata.db` via cquarry (one read-only path→id map per run), so a hand-renamed `Author/Title (id)/` directory can never send the repaired file to the wrong book. The directory-name regex is only a no-catalog fallback; with neither, the file is saved atomically in place.
 - `--install-to-calibre` installs the repaired EPUB through cquarry's write module: the file is placed atomically at the catalogued path (same filename, Calibre's layout never changes) and the format row is re-registered in one transaction, so the stored size stays truthful and the book lands in `metadata_dirtied`; Calibre regenerates its sidecar .opf on next start. No external `calibredb` call is involved. It falls back to atomic file replacement if the Calibre database ID cannot be resolved, and a database failure degrades to the in-place save with a warning. A directory-name-guessed id is trusted only when `metadata.db` corroborates it (the book exists and the file is that book's catalogued EPUB); an uncatalogued stray file inside a book directory is saved in place and the catalog row is left untouched.
 - `--all` automatically turns on all opt-in non-fatal fixes and lossy strips (pagination, watermarks, bad attributes, unknown entities, image alt tags, etc.) in a single run.
@@ -313,7 +330,7 @@ cd ~/docs/Calibre\ Library && bindery run phase3 --ids 5071,5072 --json phase3-r
 
 `scripts/` holds standalone, read-only utilities that are useful for EPUB maintenance but fall outside bindery-cli's repair contract (fixing what they find would be a content change, which bindery-cli makes only via the opt-in `--strip-pagination`):
 
-- `fast_sweep.py`: compiles and drives `FastSweep.java`, a parallel JVM epubcheck sweep that pays JVM startup once instead of per book (a 7,000-book dry-run sweep drops from hours to minutes). `--mode=audit` emits the `fatals,errors,warnings,path` CSV that `bindery library --audit` reads; `--mode=extract` emits per-book error codes for aggregation (`--summary` prints the per-code report). The epubcheck jar is located from the `epubcheck` launcher or `EPUBCHECK_JAR`; the harness compiles once (`--release 25`) and is cached on mtime.
+- `fast_sweep.py`: compiles and drives `FastSweep.java`, a parallel JVM epubcheck sweep that pays JVM startup once instead of per book (a 7,000-book dry-run sweep drops from hours to minutes). `--mode=audit` emits the `fatals,errors,warnings,path` CSV that `bindery library --audit` reads, with the counts taken from the same aggregated JSON surface the gate measures (not the raw occurrence counters), so selection and gating always agree; `--mode=extract` emits per-book error codes for aggregation (`--summary` prints the per-code report). The epubcheck jar is located from the `epubcheck` launcher or `EPUBCHECK_JAR`; the harness compiles once (`--release 25`) and is cached on mtime.
 
 The older `find_*.py` detection wedges and the `sweep.sh`/`FastSweepExtract.java` prototypes were removed: every detection they performed is now a shipped, tested flag (missing images are `--prune-missing-resources`, and the rest of the RSC-005/PKG-010 family shipped through Phases 6-12), and keeping two copies meant future behavior changes landed in only one of them. Git history preserves them.
 
