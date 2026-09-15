@@ -1037,6 +1037,18 @@ class TestSpineIntegrity(unittest.TestCase):
             r = audit.spine_integrity(book)
         self.assertEqual(r["class"], "ok")
 
+    def test_spineless_book_is_unknown_not_a_crash(self):
+        # final audit 2026-09-13: a book with an empty spine fell through to
+        # nums[0] and IndexError'd, aborting the whole library/directory run;
+        # an unjudgeable span is the honest verdict
+        with tempfile.TemporaryDirectory() as tmp:
+            book = self._epub(tmp, [], ["v02/ch001.xhtml", "v02/ch002.xhtml"])
+            r = audit.spine_integrity(book)
+        self.assertEqual(r["class"], "unknown")
+        self.assertEqual(r["absent"], 2)
+        problem, status, _ = audit._spine_verdict(r)
+        self.assertFalse(problem)
+
     def test_declared_absent_ncx_does_not_poison_corrupt(self):
         # reported 2026-09-08: a healthy book with a leftover declared-but-
         # absent toc.ncx manifest entry was branded CORRUPT "re-source"
@@ -1291,6 +1303,220 @@ class TestSpineIntegrity(unittest.TestCase):
         self.assertIn("FLAG   monolithic", text)
         self.assertIn("max doc", text)
         self.assertIn("FRAGMENT spine", text)
+
+
+class TestAnalyzerRobustness(unittest.TestCase):
+    """The final audit's analyzer-robustness trio (2026-09-13): one malformed
+    book costs its own verdict, never the run. A corrupt container.xml is a
+    CORRUPT archive verdict instead of a NameError from the `_read` closure
+    consulting `encrypted_names` before its declaration; a spine-integrity
+    crash after load becomes that book's error record instead of a whole-run
+    abort; a DRM book gets no false EMPTY beside its ENCRYPTED skip."""
+
+    CONTAINER = TestEmptyTextScan.CONTAINER
+    OPF = TestEmptyTextScan.OPF
+
+    def _book_bytes(self, corrupt_container=False, encrypted_body=False):
+        import io
+        import zipfile as zf
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            info = zf.ZipInfo("META-INF/container.xml")
+            z.writestr(info, self.CONTAINER, compress_type=zf.ZIP_STORED)
+            z.writestr("content.opf", self.OPF)
+            info = zf.ZipInfo("text.xhtml")
+            z.writestr(
+                info,
+                "<html><body><p>prose</p></body></html>",
+                compress_type=zf.ZIP_STORED,
+            )
+            if encrypted_body:
+                z.writestr(
+                    "META-INF/encryption.xml",
+                    '<encryption xmlns="urn:oasis:names:tc:opendocument:'
+                    'xmlns:container"><EncryptedData><CipherData>'
+                    '<CipherReference URI="text.xhtml"/>'
+                    "</CipherData></EncryptedData></encryption>",
+                )
+        raw = bytearray(buf.getvalue())
+        if corrupt_container:
+            # flip a payload byte of the STORED container entry: the archive
+            # opens fine, the entry fails its CRC exactly like real damage
+            i = raw.find(b"urn:oasis") + 3
+            raw[i] ^= 0xFF
+        if encrypted_body:
+            # set the general-purpose encryption bit on the text.xhtml entry
+            # in both headers, so zipfile raises on read exactly as for DRM
+            for sig in (b"PK\x03\x04", b"PK\x01\x02"):
+                j = raw.find(sig)
+                while j != -1:
+                    if sig == b"PK\x03\x04":
+                        name_len = int.from_bytes(raw[j + 26 : j + 28], "little")
+                        name = bytes(raw[j + 30 : j + 30 + name_len])
+                        if name == b"text.xhtml":
+                            raw[j + 6] |= 0x1
+                            break
+                    else:
+                        name_len = int.from_bytes(raw[j + 28 : j + 30], "little")
+                        name = bytes(raw[j + 46 : j + 46 + name_len])
+                        if name == b"text.xhtml":
+                            raw[j + 8] |= 0x1
+                            break
+                    j = raw.find(sig, j + 4)
+        return bytes(raw)
+
+    def test_corrupt_container_is_a_corrupt_verdict_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(self._book_bytes(corrupt_container=True))
+            book = audit.load_book(p)
+        self.assertEqual(book.corrupt, ["META-INF/container.xml"])
+        self.assertEqual(book.spine, [])
+        r = audit.analyze_corrupt(book)
+        problem, status, lines = audit._corrupt_verdict(r)
+        self.assertTrue(problem)
+        self.assertEqual(status, "CORRUPT")
+        self.assertIn("container.xml", lines[0])
+
+    def test_corrupt_container_run_completes_with_the_verdict(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(self._book_bytes(corrupt_container=True))
+            out = pathlib.Path(tmp) / "report.json"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = audit.run_directory(
+                    pathlib.Path(tmp), ["emptytext"], 2000, 20000, json_path=out
+                )
+            data = json.loads(out.read_text())
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["summary"]["errors"], 0)
+        (rec,) = data["books"]
+        self.assertEqual(rec["status"], "problem")
+        self.assertEqual(rec["verdicts"]["archive"]["status"], "CORRUPT")
+        # the archive verdict owns the body-text story
+        self.assertNotIn("emptytext", rec["verdicts"])
+
+    def test_drm_book_gets_no_false_empty_in_directory_mode(self):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "t.epub"
+            p.write_bytes(self._book_bytes(encrypted_body=True))
+            out = pathlib.Path(tmp) / "report.json"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = audit.run_directory(
+                    pathlib.Path(tmp), ["emptytext"], 2000, 20000, json_path=out
+                )
+            data = json.loads(out.read_text())
+        self.assertEqual(rc, 1)
+        (rec,) = data["books"]
+        # the spine doc is unreadable DRM, not empty text: the ENCRYPTED
+        # skip owns the record and emptytext stays silent (the gate used to
+        # test only corruption, so a DRM book read as EMPTY and was flagged
+        # as a defect beside its own skip verdict)
+        self.assertEqual(rec["verdicts"]["archive"]["status"], "ENCRYPTED")
+        self.assertNotIn("emptytext", rec["verdicts"])
+        self.assertEqual(rec["status"], "problem")
+
+    def test_drm_book_gets_no_false_empty_in_single_mode(self):
+        import contextlib
+        import io
+        import sqlite3
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            root.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(root / "metadata.db")
+            conn.executescript(
+                """
+                CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, sort TEXT,
+                    author_sort TEXT, timestamp TEXT, pubdate TEXT, has_cover INT,
+                    last_modified TEXT, series_index REAL DEFAULT 1.0, path TEXT, uuid TEXT);
+                CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+                CREATE TABLE books_authors_link (id INTEGER PRIMARY KEY, book INT, author INT);
+                CREATE TABLE series (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+                CREATE TABLE books_series_link (id INTEGER PRIMARY KEY, book INT, series INT);
+                CREATE TABLE publishers (id INTEGER PRIMARY KEY, name TEXT, sort TEXT, link TEXT);
+                CREATE TABLE books_publishers_link (id INTEGER PRIMARY KEY, book INT, publisher INT);
+                CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT, link TEXT);
+                CREATE TABLE books_tags_link (id INTEGER PRIMARY KEY, book INT, tag INT);
+                CREATE TABLE languages (id INTEGER PRIMARY KEY, lang_code TEXT, link TEXT);
+                CREATE TABLE books_languages_link (id INTEGER PRIMARY KEY, book INT, lang_code INT);
+                CREATE TABLE ratings (id INTEGER PRIMARY KEY, rating INT, link TEXT DEFAULT '');
+                CREATE TABLE books_ratings_link (id INTEGER PRIMARY KEY, book INT, rating INT);
+                CREATE TABLE data (id INTEGER PRIMARY KEY, book INT, format TEXT,
+                    name TEXT, uncompressed_size INT);
+                CREATE TABLE identifiers (book INT, type TEXT, val TEXT);
+                """
+            )
+            conn.execute(
+                "INSERT INTO books (id,title,sort,path) VALUES (1,'T','T','A/T (1)')"
+            )
+            conn.execute("INSERT INTO authors (id,name) VALUES (1,'Author')")
+            conn.execute("INSERT INTO data (book,format,name) VALUES (1,'EPUB','T - Author')")
+            conn.commit()
+            conn.close()
+            book_dir = root / "A" / "T (1)"
+            book_dir.mkdir(parents=True)
+            (book_dir / "T - Author.epub").write_bytes(
+                self._book_bytes(encrypted_body=True)
+            )
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = audit.run_single(1, ["emptytext"], 2000, 20000)
+            finally:
+                os.chdir(old)
+        self.assertEqual(rc, 1)
+        out = buf.getvalue()
+        self.assertIn("ENCRYPTED", out)
+        self.assertNotIn("EMPTY", out)
+
+    def test_analysis_crash_is_the_books_error_record_not_the_run(self):
+        # the spine-integrity call sits inside the per-book try: a crash in
+        # post-load analysis costs that book its error record, and the run
+        # goes on (it used to sit outside and abort everything)
+        import contextlib
+        import io
+
+        calls = {"n": 0}
+        real = audit.spine_integrity
+
+        def flaky(book):
+            calls["n"] += 1
+            raise RuntimeError("boom")
+
+        audit.spine_integrity = flaky
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                p = pathlib.Path(tmp) / "t.epub"
+                p.write_bytes(self._book_bytes())
+                out = pathlib.Path(tmp) / "report.json"
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = audit.run_directory(
+                        pathlib.Path(tmp), ["content"], 2000, 20000, json_path=out
+                    )
+                data = json.loads(out.read_text())
+        finally:
+            audit.spine_integrity = real
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["summary"]["errors"], 1)
+        (rec,) = data["books"]
+        self.assertEqual(rec["status"], "error")
+        self.assertIn("RuntimeError: boom", rec["error"])
 
 
 class TestAuditJson(unittest.TestCase):

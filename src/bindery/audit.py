@@ -237,6 +237,15 @@ def load_book(path: Path) -> Book:
         dup_entries = len(names) - len(nameset)  # zip resolves last-wins
         raw: dict[str, bytes] = {}
 
+        # Entries declared encrypted (DRM): an unreadable one is the book's
+        # business model, not a damaged archive, so it gets its own verdict.
+        # Declared before `_read`, whose except branch consults the set (the
+        # container read below can be the first failed read), and parsed
+        # before the container so a book with a dead container still
+        # classifies its unreadable entries by algorithm.
+        encrypted_names: set[str] = set()
+        obfuscated_declared: set[str] = set()
+
         def _read(name: str) -> bytes | None:
             """Fully read one entry (CRC + real decompression, not just the
             central directory's word). A corrupt entry is recorded and its
@@ -256,18 +265,6 @@ def load_book(path: Path) -> Book:
             raw[name] = blob
             return blob
 
-        container = ET.fromstring(_read("META-INF/container.xml"))
-        rootfile = container.find(".//c:rootfile", CONTAINER_NS)
-        opf_path = rootfile.get("full-path") if rootfile is not None else None
-        if not opf_path:
-            raise ValueError("container.xml has no rootfile")
-        opf = ET.fromstring(_read(opf_path))
-        base = os.path.dirname(opf_path)
-
-        # Entries declared encrypted (DRM): an unreadable one is the book's
-        # business model, not a damaged archive, so it gets its own verdict.
-        encrypted_names: set[str] = set()
-        obfuscated_declared: set[str] = set()
         # guard on the nameset: _read records a failed probe as corrupt, and
         # most books simply have no encryption.xml at all
         enc_blob = (
@@ -295,6 +292,40 @@ def load_book(path: Path) -> Book:
                         obfuscated_declared.add(uri)
             except ET.ParseError:
                 pass
+
+        container_blob = _read("META-INF/container.xml")
+        if container_blob is None:
+            # Corrupt (bad CRC) or absent container entry: the archive is the
+            # book's whole story. Hand back the shell book — the archive
+            # verdict names the entry and the body-text analyzers stay
+            # silent — instead of parsing None into a TypeError that reads
+            # as a generic scan error.
+            obfuscated = [
+                n
+                for n in sorted(encrypted_names & obfuscated_declared)
+                if n not in corrupt and n not in encrypted
+            ]
+            return Book(
+                [],
+                None,
+                "",
+                {},
+                names,
+                corrupt,
+                0,
+                0,
+                encrypted=encrypted,
+                dup_entries=dup_entries,
+                obfuscated=obfuscated,
+                obfuscated_declared=obfuscated_declared,
+            )
+        container = ET.fromstring(container_blob)
+        rootfile = container.find(".//c:rootfile", CONTAINER_NS)
+        opf_path = rootfile.get("full-path") if rootfile is not None else None
+        if not opf_path:
+            raise ValueError("container.xml has no rootfile")
+        opf = ET.fromstring(_read(opf_path))
+        base = os.path.dirname(opf_path)
 
         manifest: dict[str, str] = {}
         nav_href: str | None = None
@@ -1355,6 +1386,14 @@ def analyze_corrupt(book: Book) -> dict:
     }
 
 
+def _archive_owns_body(r: dict) -> bool:
+    """True when the archive verdict owns the book's body-text story: a
+    corrupt entry decompresses to nothing and DRM-encrypted spine docs read
+    as empty text, so emptytext/completeness would report the wrong disease
+    (an EMPTY verdict beside the ENCRYPTED skip)."""
+    return bool(r["n"]) or bool(r["encrypted_drm_n"])
+
+
 def _corrupt_verdict(r: dict) -> tuple[bool, str, list[str]]:
     if r.get("encrypted_n") and not r.get("encrypted_drm_n"):
         # every unreadable declared entry is font-obfuscation: a broken
@@ -1425,6 +1464,10 @@ def spine_integrity(book: Book) -> dict:
     absent, refs = book.toc_absent, book.toc_refs
     if absent == 0:
         return {"class": "ok", "refs": refs, "absent": 0}
+    if not book.spine:
+        # a spineless book has no span to judge; it used to fall through to
+        # nums[0] and IndexError the whole library/directory run
+        return {"class": "unknown", "refs": refs, "absent": absent}
     nums = []
     for doc in book.spine:
         found = re.findall(r"\d+", doc.rsplit("/", 1)[-1])
@@ -2102,6 +2145,7 @@ def run_library(
         json_records.append(record)
         try:
             book = load_book(full)
+            spine_r = spine_integrity(book)
         except Exception as e:
             errors.append((book_id, title, tag, f"{type(e).__name__}: {e}"))
             record["status"] = "error"
@@ -2118,7 +2162,6 @@ def run_library(
         # the archive verdict is always recorded: OBFUSCATED (benign) and OK
         # both come back from the verdict with problem False
         _record_verdict(record, "archive", _corrupt_verdict(corrupt_r))
-        spine_r = spine_integrity(book)
         if spine_r["class"] == "fragment":
             spine_hits.append((book_id, title, tag, spine_r))
             _record_verdict(record, "spine", _spine_verdict(spine_r))
@@ -2154,7 +2197,7 @@ def run_library(
                 pagenum_found.append((book_id, title, tag, r))
             _record_verdict(record, "pagenumbers", _pagenum_dir(r))
 
-        if "emptytext" in selected and not corrupt_r["n"]:
+        if "emptytext" in selected and not _archive_owns_body(corrupt_r):
             r = analyze_emptytext(book)
             verdict = classify(r, min_chars, thin_chars)
             if verdict == "EMPTY":
@@ -2179,7 +2222,7 @@ def run_library(
                 mono_hits.append((book_id, title, tag, r))
             _record_verdict(record, "monolithic", _monolithic_dir(r, max_doc_chars))
 
-        if "completeness" in selected and not corrupt_r["n"]:
+        if "completeness" in selected and not _archive_owns_body(corrupt_r):
             r = analyze_completeness(book)
             _p, status, lines = _completeness_dir(r)
             if status != "OK":
@@ -2371,6 +2414,7 @@ def run_directory(
         json_records.append(record)
         try:
             book = load_book(path)
+            spine_r = spine_integrity(book)
         except Exception as e:
             ui.tqdm.write(
                 f"  {YELLOW}ERROR {RESET} {path.name}\n      {type(e).__name__}: {e}"
@@ -2383,11 +2427,10 @@ def run_directory(
         verdicts = []
         book_problems = False
         corrupt_r = analyze_corrupt(book)
-        spine_r = spine_integrity(book)
         for key in ALL:
             if key not in selected:
                 continue
-            if key in ("emptytext", "completeness") and corrupt_r["n"]:
+            if key in ("emptytext", "completeness") and _archive_owns_body(corrupt_r):
                 continue  # the archive verdict owns this book's body-text story
             if key == "content":
                 problem, status, lines = _content_dir(analyze_content(book))
@@ -2522,6 +2565,7 @@ def run_single(
 
     try:
         book = load_book(path)
+        spine_r = spine_integrity(book)
     except Exception as e:
         print(f"ERROR reading {path.name}: {type(e).__name__}: {e}")
         if json_path is not None:
@@ -2553,13 +2597,12 @@ def run_single(
     multi = len(selected) > 1
     verdicts = []
     corrupt_r = analyze_corrupt(book)
-    spine_r = spine_integrity(book)
     for key in ALL:
         if key not in selected:
             continue
-        if key in ("emptytext", "completeness") and corrupt_r["n"]:
-            # Corruption owns the body-text story for this book; reporting
-            # EMPTY here would be the wrong disease.
+        if key in ("emptytext", "completeness") and _archive_owns_body(corrupt_r):
+            # Corruption or DRM owns the body-text story for this book;
+            # reporting EMPTY here would be the wrong disease.
             continue
         if key == "content":
             problem, status, lines = _content_dir(analyze_content(book))
