@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -66,6 +68,7 @@ def process_book(
     strip_pagination: bool = False,
     strip_brokentags: bool = False,
     strip_watermarks: bool = False,
+    strip_stub_docs: bool = False,
     escape_entities: bool = False,
     img_alt: bool = False,
     empty_body: bool = False,
@@ -99,6 +102,7 @@ def process_book(
         strip_pagination=strip_pagination,
         strip_brokentags=strip_brokentags,
         strip_watermarks=strip_watermarks,
+        strip_stub_docs=strip_stub_docs,
         escape_entities=escape_entities,
         img_alt=img_alt,
         empty_body=empty_body,
@@ -145,6 +149,7 @@ def process_book(
         or report.fixes.get("stripped_broken_tags")
         or report.fixes.get("stripped_watermarks")
         or report.fixes.get("dropped_marker")
+        or report.fixes.get("stub_docs_dropped")
     ):
         # The strip's gain (in-body page numbers removed) is invisible to epubcheck, so
         # 'no measurable gain' is expected; accept as long as nothing regressed. But a
@@ -415,6 +420,22 @@ def run_library(args) -> int:
         )
         return 1
 
+    keep = getattr(args, "backup_keep", None)
+    if keep is not None:
+        if backup_dir is None and not args.backup_inplace:
+            print(
+                "error: --backup-keep needs --backup DIR or --backup-inplace.",
+                file=sys.stderr,
+            )
+            return 1
+        if keep < 2:
+            print(
+                "error: --backup-keep must be at least 2: the author original "
+                ".bak is never deleted.",
+                file=sys.stderr,
+            )
+            return 1
+
     audit_path = Path(args.audit).expanduser() if args.audit else None
     if audit_path is not None and not audit_path.is_file():
         print(f"error: no such audit file: {audit_path}", file=sys.stderr)
@@ -526,6 +547,7 @@ def run_library(args) -> int:
                     or getattr(args, "all", False),
                     strip_watermarks=args.strip_watermarks
                     or getattr(args, "all", False),
+                    strip_stub_docs=args.strip_stub_docs or getattr(args, "all", False),
                     escape_entities=args.escape_unknown_entities
                     or getattr(args, "all", False),
                     img_alt=args.add_img_alt or getattr(args, "all", False),
@@ -603,7 +625,7 @@ def run_library(args) -> int:
             if args.apply:
                 try:
                     if backup_dir is not None or args.backup_inplace:
-                        make_backup(epub, backup_dir)
+                        make_backup(epub, backup_dir, keep=args.backup_keep)
                     if args.install_to_calibre:
                         # The id comes from cquarry's metadata.db view — accurate
                         # even when the (id) directory was renamed.
@@ -731,6 +753,12 @@ def run_repair(args) -> int:
         )
         return 1
 
+    def emit(record: dict) -> None:
+        if getattr(args, "json_path", None):
+            Path(args.json_path).expanduser().write_text(
+                json.dumps(record, indent=2) + "\n"
+            )
+
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         try:
@@ -744,6 +772,7 @@ def run_repair(args) -> int:
                 strip_pagination=args.strip_pagination or getattr(args, "all", False),
                 strip_brokentags=args.strip_broken_tags or getattr(args, "all", False),
                 strip_watermarks=args.strip_watermarks or getattr(args, "all", False),
+                strip_stub_docs=args.strip_stub_docs or getattr(args, "all", False),
                 escape_entities=args.escape_unknown_entities
                 or getattr(args, "all", False),
                 img_alt=args.add_img_alt or getattr(args, "all", False),
@@ -768,25 +797,53 @@ def run_repair(args) -> int:
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
+            emit(
+                {
+                    "mode": "repair",
+                    "path": str(src),
+                    "output": str(dst),
+                    "status": "error",
+                    "applied": False,
+                    "before": None,
+                    "after": None,
+                    "summary": "",
+                    "error": f"{type(e).__name__}: {e}",
+                }
+            )
             return 1
+        base_record = {
+            "mode": "repair",
+            "path": str(src),
+            "output": str(dst),
+            "status": o.status,
+            "applied": False,
+            "before": _counts_dict(o.before),
+            "after": _counts_dict(o.after),
+            "summary": o.summary,
+        }
         if o.status == "nochange":
             print("no applicable fixes; nothing written.")
+            emit(base_record)
             return 0
         if o.status == "reject":
             print(
                 f"repair REJECTED (regression): {o.before} -> {o.after}; nothing written."
             )
+            emit(base_record)
             return 1
         if o.status == "error":
             print(
                 "epubcheck failed; nothing written (pass --no-validate to skip the gate).",
                 file=sys.stderr,
             )
+            emit(base_record)
             return 1
         # Copy the exact bytes the gate accepted. Re-repairing src here would silently
         # drop the opt-in flags (--fix-ids, --reserialize, --strip-bad-attrs) and write
         # a file that differs from the one epubcheck validated.
         shutil.copyfile(work / "repaired.epub", dst)
+        base_record["applied"] = True
+        emit(base_record)
         ba = f"{o.before} -> {o.after}  " if o.before else ""
         if o.status == "partial":
             # The file is a real improvement and worth writing, but calling it
@@ -907,6 +964,111 @@ def _phase1_decisions(books: list[dict], apply: bool) -> list[dict]:
             }
         )
     return decisions
+
+
+def _probe_version(cmd: list[str]) -> str | None:
+    """First output line of a --version probe, or None on any failure."""
+    try:
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    line = (r.stdout or r.stderr).strip().splitlines()
+    return line[0].strip() if line else None
+
+
+def run_doctor(args) -> int:
+    """`bindery doctor`: the environment self-check.
+
+    The stranded stranger's first command: it must always run, never
+    traceback, and always exit 0 (a diagnosis is not a failure; the findings
+    are the output). It reports every install-shape fact the other verbs
+    assume: Python floor and stack tier, the epubcheck oracle, Java (the
+    daemon), the optional html5lib, and whether a Calibre library is
+    discoverable here. Deliberately imports none of the VirInvictus stack:
+    on a 3.12/3.13 install their absence IS the finding.
+    """
+    problems: list[str] = []
+
+    print("bindery doctor")
+    print()
+
+    py = sys.version.split()[0]
+    print(f"python:      {py} (floor 3.12)")
+
+    stack = []
+    for mod in ("vir_tui", "cquarry"):
+        if importlib.util.find_spec(mod) is not None:
+            stack.append(mod)
+    if len(stack) == 2:
+        print("stack:       full (vir_tui + cquarry importable; every verb runs)")
+    elif py.startswith(("3.12", "3.13")):
+        print(
+            "stack:       stack-free core (vir_tui/cquarry absent; they install "
+            "on 3.14+ only): repair works in full, audit/library/run print a note "
+            "instead of running"
+        )
+    else:
+        problems.append(
+            "vir_tui/cquarry are not importable on this interpreter; audit, "
+            "library, and run cannot work. Install on Python 3.14+ for the "
+            "full stack."
+        )
+        print("stack:       MISSING (audit/library/run cannot run; see note)")
+    print()
+
+    if epubcheck_available():
+        path = shutil.which("epubcheck") or ""
+        ver = _probe_version(["epubcheck", "--version"]) or "(version probe failed)"
+        print(f"epubcheck:   {ver}  [{path}]")
+    else:
+        problems.append(
+            "epubcheck was not found on PATH: every validated run refuses to "
+            "start. Install it (see README, Install) or pass --no-validate to "
+            "skip the gate."
+        )
+        print("epubcheck:   NOT FOUND (the gate refuses to run without it)")
+    print()
+
+    if shutil.which("java"):
+        ver = _probe_version(["java", "-version"]) or "(version probe failed)"
+        print(f"java:        {ver} (the epubcheck daemon can run)")
+    else:
+        print(
+            "java:        not found (optional: runs fall back to the per-book "
+            "epubcheck subprocess)"
+        )
+
+    if importlib.util.find_spec("html5lib") is not None:
+        print("html5lib:    present (--reserialize works)")
+    else:
+        print(
+            "html5lib:    not installed (optional: only --reserialize needs it; "
+            'uv tool install "bindery-cli[reserialize]")'
+        )
+    print()
+
+    root = resolve_library_root()
+    if root is not None:
+        print(f"library:     {root} (metadata.db found; audit/library/run work here)")
+    else:
+        print(
+            "library:     no metadata.db in this directory (run audit/library "
+            "from a Calibre library, or pass a directory to audit)"
+        )
+    print()
+
+    if problems:
+        for p in problems:
+            print(f"problem: {p}")
+        print(f"\n{len(problems)} problem(s) found; everything else works.")
+    else:
+        print("no problems found: the full repair toolchain is usable.")
+    return 0
 
 
 def run_phase1(args) -> int:
@@ -1330,7 +1492,14 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--strip-watermarks",
         action="store_true",
-        help="LOSSY: remove producer/distributor watermarks (e.g. OceanofPDF) (epubcheck-gated)",
+        help="remove known producer/distributor watermarks and stray marker files",
+    )
+    p.add_argument(
+        "--strip-stub-docs",
+        action="store_true",
+        help="drop spine docs whose entire text is one identical short "
+        "placeholder repeated across the spine (Bookmate/DRM-sample exports); "
+        "manifest/NCX/nav cascade; refuses a book whose whole spine is stubs",
     )
     p.add_argument(
         "--all",
@@ -1435,8 +1604,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="overwrite the output file if it already exists",
     )
+    r.add_argument(
+        "--json",
+        dest="json_path",
+        metavar="FILE",
+        help="write a machine-readable report (status, before/after counts, "
+        "fix summary) in the library --json per-book shape",
+    )
     _add_repair_flags(r)
     r.set_defaults(func=run_repair)
+
+    doc = sub.add_parser(
+        "doctor",
+        help="check the environment: Python stack tier, epubcheck, Java, "
+        "html5lib, and Calibre-library discovery",
+    )
+    doc.set_defaults(func=run_doctor)
 
     audit = sub.add_parser(
         "audit",
@@ -1554,6 +1737,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--backup-inplace",
         action="store_true",
         help="with --apply, write a .epub.bak beside each replaced file",
+    )
+    lib.add_argument(
+        "--backup-keep",
+        type=int,
+        metavar="N",
+        help="with backups, rotate: at most N backup files per book "
+        "(minimum 2; the author original .bak is never deleted). Opt-in: "
+        "without it the rotation grows unbounded",
     )
     lib.add_argument(
         "--limit", type=int, help="process at most N candidates (for sampling)"

@@ -1666,3 +1666,157 @@ class TestFixCover(unittest.TestCase):
             report = repair_epub(src, dst, fix_cover=True, prune_missing=True)
             self.assertEqual(report.fixes.get("manifest_items_pruned"), 1)
             self.assertEqual(report.fixes.get("prune_edges_rewritten"), 1)
+
+
+class TestStripStubDocs(unittest.TestCase):
+    """--strip-stub-docs (the lossy lane's live fixture): a Bookmate-style
+    export whose chapters are all the same short "content unavailable"
+    placeholder. The identity rule mirrors the emptytext analyzer's
+    placeholder signals: short (not blank), the SAME text across >= 3 spine
+    docs and >= 30% of the spine; the whole-spine-stubs book is refused (it
+    is EMPTY: re-source, never repair)."""
+
+    STUB_TEXT = "This content is not available."
+    CONTAINER = (
+        '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+
+    def _build(self, td, *, stubs=3, chapters=5, stub_text=STUB_TEXT, interleave=True):
+        """A Bookmate-like book: `chapters` real chapters plus `stubs` spine
+        docs carrying one identical short placeholder."""
+        src = Path(td) / "in.epub"
+        manifest = [
+            f'<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>'
+            for i in range(chapters)
+        ]
+        spine = [f'<itemref idref="c{i}"/>' for i in range(chapters)]
+        stub_ids = [f"s{i}" for i in range(stubs)]
+        for sid in stub_ids:
+            manifest.append(
+                f'<item id="{sid}" href="{sid}.xhtml" '
+                'media-type="application/xhtml+xml"/>'
+            )
+        if interleave:
+            # stubs woven through the spine, the real export's shape
+            order = []
+            for i in range(chapters):
+                order.append(f"c{i}")
+                if i < stubs:
+                    order.append(f"s{i}")
+        else:
+            order = [f"c{i}" for i in range(chapters)] + stub_ids[:stubs]
+        spine = [f'<itemref idref="{i}"/>' for i in order]
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:STUB-BOOK</dc:identifier>'
+            "</metadata>"
+            f"<manifest>{''.join(manifest)}</manifest>"
+            f"<spine>{''.join(spine)}</spine></package>"
+        )
+        ncx_points = "".join(
+            f'<navPoint id="np-{i}" playOrder="{n + 1}">'
+            f"<navLabel><text>{i}</text></navLabel>"
+            f'<content src="{i}.xhtml"/></navPoint>'
+            for n, i in enumerate(order)
+        )
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
+            '<meta name="dtb:uid" content="urn:uuid:STUB-BOOK"/>'
+            "</head><docTitle><text>T</text></docTitle>"
+            f"<navMap>{ncx_points}</navMap></ncx>"
+        )
+        nav_lis = "".join(f'<li><a href="{i}.xhtml">{i}</a></li>' for i in order)
+        nav = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+            f'<nav id="toc"><ol>{nav_lis}</ol></nav></body></html>'
+        )
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", self.CONTAINER)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/toc.ncx", ncx)
+            z.writestr("OEBPS/nav.xhtml", nav)
+            for i in range(chapters):
+                z.writestr(
+                    f"OEBPS/c{i}.xhtml",
+                    f"<html><body><p>Chapter {i}: "
+                    + ("Real chapter prose lives here. " * 40)
+                    + "</p></body></html>",
+                )
+            for sid in stub_ids[:stubs]:
+                z.writestr(
+                    f"OEBPS/{sid}.xhtml",
+                    f"<html><body><p>{stub_text}</p></body></html>",
+                )
+        return src
+
+    def test_stub_class_dropped_with_full_cascade(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(src, dst, strip_stub_docs=True)
+            self.assertEqual(report.fixes.get("stub_docs_dropped"), 3)
+            self.assertEqual(report.fixes.get("stub_manifest_items_dropped"), 3)
+            self.assertEqual(report.fixes.get("stub_itemrefs_dropped"), 3)
+            self.assertEqual(report.fixes.get("stub_navpoints_dropped"), 3)
+            self.assertEqual(report.fixes.get("stub_nav_items_dropped"), 3)
+            with zipfile.ZipFile(dst) as z:
+                names = z.namelist()
+                opf = z.read("OEBPS/content.opf").decode()
+                ncx = z.read("OEBPS/toc.ncx").decode()
+                nav = z.read("OEBPS/nav.xhtml").decode()
+        self.assertNotIn("s0.xhtml", "\n".join(names))
+        self.assertIn("c0.xhtml", "\n".join(names))
+        self.assertNotIn('idref="s0"', opf)
+        self.assertNotIn('id="s0"', opf)
+        self.assertNotIn('src="s0.xhtml"', ncx)
+        # the navPoint removal runs before the always-on playOrder
+        # resequencing, so the surviving sequence is strictly 1..5
+        self.assertNotIn('playOrder="6"', ncx)
+        self.assertIn('playOrder="5"', ncx)
+        self.assertNotIn('href="s1.xhtml"', nav)
+
+    def test_off_by_default(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(src, dst)
+        self.assertNotIn("stub_docs_dropped", report.fixes)
+
+    def test_whole_spine_of_stubs_is_refused(self):
+        # every doc is the same stub: the book is EMPTY, not repairable
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td, stubs=4, chapters=0)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(src, dst, strip_stub_docs=True)
+        self.assertNotIn("stub_docs_dropped", report.fixes)
+
+    def test_no_repeat_is_refused(self):
+        # short docs with DISTINCT text are furniture, not a placeholder class
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td, stubs=3, chapters=5)
+            # rewrite the three stub docs with distinct texts
+            with zipfile.ZipFile(src) as zin:
+                entries = {n: zin.read(n) for n in zin.namelist()}
+            for i, t in enumerate(("one", "two", "three")):
+                entries[f"OEBPS/s{i}.xhtml"] = (
+                    f"<html><body><p>{t}</p></body></html>".encode()
+                )
+            with zipfile.ZipFile(src, "w") as zout:
+                for n, b in entries.items():
+                    zout.writestr(n, b)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(src, dst, strip_stub_docs=True)
+        self.assertNotIn("stub_docs_dropped", report.fixes)
+
+    def test_below_fraction_is_refused(self):
+        # 3 identical stubs across a 14-doc spine (21%) is under the 30% bar
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td, stubs=3, chapters=12)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(src, dst, strip_stub_docs=True)
+        self.assertNotIn("stub_docs_dropped", report.fixes)

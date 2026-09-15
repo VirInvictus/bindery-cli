@@ -19,11 +19,13 @@ run_hooks=True re-entry requires.
 Configuration is the plain site_customization string, parsed as JSON::
 
     {"log": true, "log_path": "/path/bindery_repair.log",
-     "max_size_mb": 150, "epubcheck_path": null}
+     "max_size_mb": 150, "max_log_mb": 2, "epubcheck_path": null}
 
 log_path defaults to <calibre config dir>/bindery_repair.log. The size cap
 refuses absurd files rather than stalling an import; 150MB is the recorded
-default. epubcheck_path opts into the experimental on-PATH validation mode:
+default. The log itself rotates at max_log_mb (default 2, one .old
+generation; 0 disables rotation). epubcheck_path opts into the experimental
+on-PATH validation mode:
 the repaired copy is re-measured with the epubcheck binary and refused unless
 it is no worse than the original (the CLI's no_worse bar). It defaults to
 off, keeping the import fast; the default pass is safe without a gate.
@@ -53,6 +55,7 @@ from calibre.customize import FileTypePlugin
 from . import epub as _bindery_epub
 
 DEFAULT_MAX_SIZE_MB = 150
+DEFAULT_MAX_LOG_MB = 2
 _EPUB_SUFFIXES = (".epub",)
 # the slice of validate.CheckResult the experimental mode needs
 _EcCounts = namedtuple("_EcCounts", "fatals errors warnings")
@@ -188,14 +191,41 @@ class BinderyRepair(FileTypePlugin):
             return None
 
     def _log(self, line: str, log_path: str | None) -> None:
-        """One line per book, appended; logging must never break an import."""
+        """One line per book, appended; logging must never break an import.
+
+        The log rotates at max_log_mb (default 2MB; 0 disables), one `.old`
+        generation kept. The append-only file used to grow without bound in
+        Calibre's config directory. Rotation reads the config quietly (no
+        logging inside logging: a broken-config warning that logged through
+        here would recurse)."""
         if not log_path:
             return
         try:
+            cap = self._cfg_quiet().get("max_log_mb", DEFAULT_MAX_LOG_MB)
+            if (
+                isinstance(cap, (int, float))
+                and cap > 0
+                and os.path.exists(log_path)
+                and os.path.getsize(log_path) >= cap * 1024 * 1024
+            ):
+                os.replace(log_path, log_path + ".old")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(line.rstrip() + "\n")
         except OSError:
             pass
+
+    def _cfg_quiet(self) -> dict:
+        """The parsed site_customization, with no logging on bad JSON: the
+        rotation path consults it, and logging inside logging must never
+        happen."""
+        raw = getattr(self, "site_customization", None)
+        if not raw:
+            return {}
+        try:
+            cfg = json.loads(raw)
+        except ValueError:
+            return {}
+        return cfg if isinstance(cfg, dict) else {}
 
     # ---- experimental epubcheck-on-PATH validation (default off)
 

@@ -250,6 +250,31 @@ class TestPluginRun(unittest.TestCase):
         self.assertEqual(out, str(p))
         self.assertIn("no fixes:", self._log())
 
+    def test_log_rotates_at_the_cap_keeping_one_generation(self):
+        log = pathlib.Path(self.tmp.name) / "plugin.log"
+        self.plugin.site_customization = json.dumps(
+            {"log_path": str(log), "max_log_mb": 0.001}  # ~1KB
+        )
+        log.write_text("x" * 4096 + "\n")
+        p = self._epub()
+        self.plugin.run(str(p))
+        old = pathlib.Path(str(log) + ".old")
+        self.assertTrue(old.exists())
+        self.assertGreater(old.stat().st_size, 2048)
+        self.assertLess(log.stat().st_size, old.stat().st_size)
+        self.assertIn("no fixes:", log.read_text())
+
+    def test_zero_cap_disables_rotation(self):
+        log = pathlib.Path(self.tmp.name) / "plugin.log"
+        self.plugin.site_customization = json.dumps(
+            {"log_path": str(log), "max_log_mb": 0}
+        )
+        log.write_text("x" * 4096)
+        p = self._epub()
+        self.plugin.run(str(p))
+        self.assertFalse(pathlib.Path(str(log) + ".old").exists())
+        self.assertIn("no fixes:", log.read_text())
+
     def test_idempotent_second_run_reports_no_fixes(self):
         p = self._epub(doc="\ufeff<html><body><p>junk</p></body></html>")
         first = self.plugin.run(str(p))

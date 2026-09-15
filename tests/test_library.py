@@ -83,6 +83,63 @@ class TestAtomicReplace(unittest.TestCase):
         self.assertTrue(made.exists())
         self.assertEqual(made.read_bytes(), b"OLD CONTENT")
 
+    def test_backup_keep_bounds_the_rotation_and_keeps_the_original(self):
+        # the audit's slow-burn finding: .bak/.bak2/.bak3... rotate unbounded
+        # across thousands of books; --backup-keep N rings the .bak2+ slots
+        # and never deletes the author original
+        def bak_names():
+            return sorted(p.name for p in self.d.iterdir() if ".bak" in p.name)
+
+        make_backup(self.target, None)  # .bak holds OLD CONTENT
+        self.target.write_bytes(b"V2")
+        make_backup(self.target, None, keep=2)  # .bak2 = V2
+        self.target.write_bytes(b"V3")
+        make_backup(self.target, None, keep=2)  # at cap: ring, .bak2 = V3
+        self.target.write_bytes(b"V4")
+        make_backup(self.target, None, keep=2)
+        self.assertEqual(bak_names(), ["book.epub.bak", "book.epub.bak2"])
+        # the author original is untouched by the cap
+        self.assertEqual((self.d / "book.epub.bak").read_bytes(), b"OLD CONTENT")
+        # the newest rotation holds the newest state
+        self.assertEqual((self.d / "book.epub.bak2").read_bytes(), b"V4")
+
+    def test_backup_keep_three_rings_the_middle_slots(self):
+        def bak_names():
+            return sorted(p.name for p in self.d.iterdir() if ".bak" in p.name)
+
+        make_backup(self.target, None)  # .bak = original
+        for content in ("V2", "V3", "V4"):
+            self.target.write_bytes(content.encode())
+            make_backup(self.target, None, keep=3)
+        self.assertEqual(
+            bak_names(),
+            ["book.epub.bak", "book.epub.bak2", "book.epub.bak3"],
+        )
+        # ring order: the newest content sits at the highest name
+        self.assertEqual((self.d / "book.epub.bak2").read_bytes(), b"V3")
+        self.assertEqual((self.d / "book.epub.bak3").read_bytes(), b"V4")
+        self.assertEqual((self.d / "book.epub.bak").read_bytes(), b"OLD CONTENT")
+
+    def test_backup_keep_without_cap_stays_unbounded(self):
+        # opt-in: the default behavior is unchanged
+        def bak_names():
+            return sorted(p.name for p in self.d.iterdir() if ".bak" in p.name)
+
+        make_backup(self.target, None)
+        for content in ("V2", "V3", "V4", "V5"):
+            self.target.write_bytes(content.encode())
+            make_backup(self.target, None)
+        self.assertEqual(
+            bak_names(),
+            [
+                "book.epub.bak",
+                "book.epub.bak2",
+                "book.epub.bak3",
+                "book.epub.bak4",
+                "book.epub.bak5",
+            ],
+        )
+
 
 def make_library(root: Path, dir_id: int = 1) -> Path:
     """A minimal real metadata.db plus one catalogued EPUB (book id 1).

@@ -193,6 +193,142 @@ class TestRepairWritesGatedBytes(unittest.TestCase):
         ET.fromstring(out)  # reserialize ran: the document is now well-formed
 
 
+class TestRepairJson(unittest.TestCase):
+    """repair --json: the one machine-readable gap in the four-verb CLI. The
+    record speaks the library --json per-book vocabulary (status, applied,
+    before/after, summary) and lands on every processing outcome, including
+    the refusals."""
+
+    def test_accepted_repair_writes_a_record(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            dst = Path(td) / "out.epub"
+            build(src)
+            jout = Path(td) / "repair.json"
+            results = [CheckResult(1, 0, 0), CheckResult(0, 0, 0)]
+            out = io.StringIO()
+            with (
+                mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                redirect_stdout(out),
+            ):
+                rc = main(["repair", str(src), str(dst), "--json", str(jout)])
+            data = json.loads(jout.read_text())
+            self.assertTrue(dst.exists())
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["mode"], "repair")
+        self.assertEqual(data["status"], "accept")
+        self.assertTrue(data["applied"])
+        self.assertEqual(data["before"]["fatals"], 1)
+        self.assertEqual(data["after"]["fatals"], 0)
+
+    def test_nochange_and_reject_records_are_written(self):
+        with tempfile.TemporaryDirectory() as td:
+            src2 = Path(td) / "in2.epub"
+            dst = Path(td) / "out.epub"
+            build(src2)
+            j1 = Path(td) / "n1.json"
+            j2 = Path(td) / "n2.json"
+            # nochange: a book the default pass cannot improve never validates
+            clean = Path(td) / "clean.epub"
+            with zipfile.ZipFile(clean, "w") as z:
+                z.writestr(
+                    "mimetype",
+                    "application/epub+zip",
+                    compress_type=zipfile.ZIP_STORED,
+                )
+                z.writestr(
+                    "META-INF/container.xml",
+                    '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>',
+                    compress_type=zipfile.ZIP_STORED,
+                )
+            with redirect_stdout(io.StringIO()):
+                rc1 = main(
+                    [
+                        "repair",
+                        str(clean),
+                        str(dst),
+                        "--json",
+                        str(j1),
+                        "--reserialize",
+                    ]
+                )
+            # reject: the mocked candidate measurement regresses
+            results = [CheckResult(0, 4, 0), CheckResult(1, 2, 0)]
+            with (
+                mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                redirect_stdout(io.StringIO()),
+            ):
+                rc2 = main(
+                    ["repair", str(src2), str(dst), "--json", str(j2), "--reserialize"]
+                )
+            d1 = json.loads(j1.read_text())
+            d2 = json.loads(j2.read_text())
+            self.assertFalse(dst.exists())  # neither path wrote the output
+        self.assertEqual(rc1, 0)
+        self.assertEqual(d1["status"], "nochange")
+        self.assertFalse(d1["applied"])
+        self.assertEqual(rc2, 1)
+        self.assertEqual(d2["status"], "reject")
+        self.assertFalse(d2["applied"])
+
+
+class TestDoctor(unittest.TestCase):
+    """bindery doctor: the stranded stranger's first command. It must always
+    run, never traceback, and always exit 0; the findings ARE the output."""
+
+    def test_reports_full_toolchain(self):
+        out = io.StringIO()
+        with (
+            mock.patch("bindery.cli.epubcheck_available", return_value=True),
+            mock.patch("bindery.cli.shutil.which", return_value="/usr/bin/java"),
+            mock.patch("bindery.cli._probe_version", return_value="epubcheck v5.2.1"),
+            mock.patch("bindery.cli.resolve_library_root", return_value=Path("/lib")),
+            redirect_stdout(out),
+        ):
+            rc = main(["doctor"])
+        text = out.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("bindery doctor", text)
+        self.assertIn("epubcheck:   epubcheck v5.2.1", text)
+        self.assertIn("no problems found", text)
+
+    def test_missing_oracle_is_a_finding_not_a_failure(self):
+        out = io.StringIO()
+        with (
+            mock.patch("bindery.cli.epubcheck_available", return_value=False),
+            mock.patch("bindery.cli.shutil.which", return_value=None),
+            mock.patch("bindery.cli.resolve_library_root", return_value=None),
+            redirect_stdout(out),
+        ):
+            rc = main(["doctor"])
+        text = out.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("NOT FOUND", text)
+        self.assertIn("problem:", text)
+        self.assertIn("1 problem(s) found", text)
+
+    def test_stack_absence_never_raises(self):
+        # the doctor audience is exactly the install where vir_tui/cquarry are
+        # missing; on a 3.12/3.13 interpreter that is the documented stack-free
+        # tier, not a problem line
+        real_find = mock.patch(
+            "bindery.cli.importlib.util.find_spec", return_value=None
+        )
+        out = io.StringIO()
+        with (
+            real_find,
+            mock.patch("bindery.cli.epubcheck_available", return_value=True),
+            mock.patch.object(sys, "version", "3.12.10 (main) [MSC v.]"),
+            redirect_stdout(out),
+        ):
+            rc = main(["doctor"])
+        text = out.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("stack-free core", text)
+
+
 class TestLibraryGuards(unittest.TestCase):
     def test_only_fatals_requires_audit(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1498,3 +1634,31 @@ class TestStackFreeFloorGuard(unittest.TestCase):
             self.assertEqual(rc, 2)
             self.assertIn("installs only on Python 3.14+", err.getvalue())
             self.assertIn("vir_tui", err.getvalue())
+
+
+class TestStripStubDocsGate(unittest.TestCase):
+    """--strip-stub-docs rides the no_worse bar like the other lossy strips:
+    identical counts accept, a still-fatal book stays partial (never
+    auto-applied), a regression rejects."""
+
+    def _strip_verdict(self, before, after):
+        report = RepairReport(fixes={"stub_docs_dropped": 3})
+        with (
+            mock.patch("bindery.cli.repair_epub", return_value=report),
+            mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
+        ):
+            return process_book(
+                Path("x.epub"), Path("."), validate=True, strip_stub_docs=True
+            )
+
+    def test_identical_counts_accept_via_no_worse(self) -> None:
+        o = self._strip_verdict(CheckResult(0, 0, 0), CheckResult(0, 0, 0))
+        self.assertEqual(o.status, "accept")
+
+    def test_still_fatal_book_is_partial_not_accept(self) -> None:
+        o = self._strip_verdict(CheckResult(3, 0, 0), CheckResult(1, 0, 0))
+        self.assertEqual(o.status, "partial")
+
+    def test_regression_rejects(self) -> None:
+        o = self._strip_verdict(CheckResult(0, 1, 0), CheckResult(0, 2, 0))
+        self.assertEqual(o.status, "reject")

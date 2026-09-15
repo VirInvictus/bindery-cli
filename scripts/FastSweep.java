@@ -31,6 +31,31 @@ import com.adobe.epubcheck.reporting.CheckingReport;
 public class FastSweep {
     private static final Pattern CODE = Pattern.compile("([A-Z]{3}-\\d{3})");
 
+    // Counts must match the subprocess oracle by construction, never by
+    // imitation: the live report getters count message occurrences while the
+    // JSON checker block that generate() serializes (what epubcheck --json
+    // emits and what bindery's gate is calibrated on) counts aggregated
+    // messages. Same scan shape the embedded FastDaemon uses (validate.py).
+    private static int field(String json, String name) {
+        int i = json.indexOf(name);
+        while (i != -1) {
+            int j = i + name.length();
+            while (j < json.length() && (json.charAt(j) == ' '
+                    || json.charAt(j) == ':' || json.charAt(j) == '"')) {
+                j++;
+            }
+            if (j < json.length() && Character.isDigit(json.charAt(j))) {
+                int k = j;
+                while (k < json.length() && Character.isDigit(json.charAt(k))) {
+                    k++;
+                }
+                return Integer.parseInt(json.substring(j, k));
+            }
+            i = json.indexOf(name, i + 1);
+        }
+        return -1;
+    }
+
     public static void main(String[] args) throws Exception {
         String mode = "audit";
         for (String a : args) {
@@ -86,8 +111,22 @@ public class FastSweep {
                                 + String.join(",", codes));
                     }
                 } else {
-                    String res = report.getFatalErrorCount() + "," + report.getErrorCount()
-                            + "," + report.getWarningCount() + "," + epub.getCanonicalPath();
+                    // generate() first, then read the aggregated checker
+                    // totals out of the JSON document itself: the getters
+                    // alone answer in raw occurrences, which would feed
+                    // `bindery library --audit` a different count scale
+                    // than the gate measures (the 2026-09-15 pin).
+                    report.generate();
+                    out.flush();
+                    String json = sw.toString();
+                    int f = field(json, "nFatal");
+                    int e = field(json, "nError");
+                    int w = field(json, "nWarning");
+                    if (f < 0 || e < 0 || w < 0) {
+                        return;
+                    }
+                    String res = f + "," + e + "," + w + ","
+                            + epub.getCanonicalPath();
                     synchronized (System.out) {
                         System.out.println(res);
                     }

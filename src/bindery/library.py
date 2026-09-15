@@ -35,16 +35,35 @@ def backup_path(epub: Path, backup_dir: Path | None) -> Path:
     return backup_dir / epub.parent.name / epub.name
 
 
-def make_backup(epub: Path, backup_dir: Path | None) -> Path:
+def make_backup(epub: Path, backup_dir: Path | None, keep: int | None = None) -> Path:
     """Back `epub` up, never overwriting an earlier backup.
 
     The first backup of a book is the only copy of the author original, so a
     second --apply must not clobber it (the 2026-09-08 finding: a second
     --apply destroyed the only copy). Later backups rotate:
     book.epub.bak, book.epub.bak2, book.epub.bak3, ...
+
+    `keep` (--backup-keep, opt-in) bounds the rotation: when the `.bak2`+
+    count would exceed keep-1, the oldest rotation backup is dropped and the
+    newer ones shift down one name, so the new backup takes the highest name
+    and the set never grows past `keep` files per book. The original `.bak`
+    is never removed by the cap: it is the only copy of the author original.
     """
     dst = backup_path(epub, backup_dir)
     dst.parent.mkdir(parents=True, exist_ok=True)
+    if keep is not None and keep >= 2:
+        existing: list[Path] = []
+        i = 2
+        while True:
+            candidate = dst.with_name(f"{dst.name}{i}")
+            if not candidate.exists():
+                break
+            existing.append(candidate)
+            i += 1
+        if len(existing) >= keep - 1:
+            existing[0].unlink(missing_ok=True)
+            for src_p, dst_p in zip(existing[1:], existing, strict=False):
+                os.replace(src_p, dst_p)
     final = dst
     n = 1
     while final.exists():

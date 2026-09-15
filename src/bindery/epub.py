@@ -16,7 +16,9 @@ from __future__ import annotations
 import posixpath
 import re
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from html import unescape as _html_unescape
 from pathlib import Path
 from urllib.parse import unquote
 from xml.sax.saxutils import escape as _xml_escape
@@ -658,6 +660,11 @@ _IMG_TAG_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _ITEM_TAG_RE = re.compile(r"""<item\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""", re.IGNORECASE)
+# `<itemref` must not be swallowed by the `<item\b` matcher above (\b has no
+# boundary before the 'r'), and its own idref carries the spine order.
+_SPINE_ITEM_RE = re.compile(
+    r"""<itemref\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""", re.IGNORECASE
+)
 # `\b` is what keeps `<item\b` from matching `<itemref`: "itemref" has a word
 # character right after "item", so there is no boundary there.
 _NCX_CONTENT_SRC_RE = re.compile(
@@ -700,6 +707,196 @@ def prune_missing_manifest_items(
         return ""
 
     return _ITEM_TAG_RE.sub(repl, opf_text), count, pruned
+
+
+# ---- --strip-stub-docs: the lossy drop of repeated placeholder spine docs.
+# The conservative identity rule mirrors the emptytext analyzer's
+# placeholder-stub signals (audit.py): a stub is short but not blank, the
+# SAME text repeats across several spine docs, and it dominates a real
+# fraction of the spine. One shared placeholder class per book, only.
+
+PLACEHOLDER_STUB_MIN = 12
+PLACEHOLDER_STUB_MAX = 600
+STUB_MIN_REPEAT = 3
+STUB_MIN_FRAC = 0.30
+
+_STUB_SCRIPT_STYLE_RE = re.compile(
+    r"<(script|style)\b.*?</\1>", re.IGNORECASE | re.DOTALL
+)
+_STUB_TAG_RE = re.compile(r"<[^>]+>")
+_STUB_WS_RE = re.compile(r"\s+")
+
+
+def _stub_visible_text(html: str) -> str:
+    """Rendered text for stub identity (mirrors audit._visible_text): drop
+    script/style, strip tags, unescape entities, collapse whitespace."""
+    t = _STUB_SCRIPT_STYLE_RE.sub(" ", html)
+    t = _STUB_TAG_RE.sub(" ", t)
+    t = _html_unescape(t)
+    return _STUB_WS_RE.sub(" ", t).strip()
+
+
+def detect_stub_docs(z: zipfile.ZipFile, opf_text: str, opf_dir: str) -> frozenset[str]:
+    """The stub docs this repair may drop: spine content documents whose
+    entire visible text is one identical short placeholder repeated across
+    STUB_MIN_REPEAT docs and at least STUB_MIN_FRAC of the spine.
+
+    Refusals (empty set): no repeated short class, or the class IS the whole
+    spine (that book is EMPTY: it needs a re-source, never a repair). A doc
+    that cannot be read is never a stub. Returns resolved archive paths so
+    the manifest, NCX, nav, and archive-copy passes agree on the targets.
+    """
+    from collections import Counter
+
+    spine_ids = [m.group(3) for m in _IDREF_ATTR_RE.finditer(opf_text)]
+    if not spine_ids:
+        return frozenset()
+    id_to_href: dict[str, str] = {}
+    for m in _ITEM_TAG_RE.finditer(opf_text):
+        tag = m.group(0)
+        idm = _XML_ID_RE.search(tag)
+        hm = _HREF_ATTR_RE.search(tag)
+        if idm and hm:
+            resolved = _resolve_href(opf_dir, hm.group(2))
+            if resolved is not None:
+                id_to_href[idm.group(3)] = resolved
+    nameset = set(z.namelist())
+    hrefs = [id_to_href.get(i) for i in spine_ids]
+    texts: list[str] = []
+    for h in hrefs:
+        doc = ""
+        if h and h in nameset:
+            try:
+                doc = z.read(h).decode("utf-8", "replace")
+            except Exception:
+                doc = ""
+        texts.append(_stub_visible_text(doc) if doc else "")
+    counts = Counter(
+        t for t in texts if PLACEHOLDER_STUB_MIN <= len(t) <= PLACEHOLDER_STUB_MAX
+    )
+    if not counts:
+        return frozenset()
+    stub_text, n = counts.most_common(1)[0]
+    if n < STUB_MIN_REPEAT or n / len(texts) < STUB_MIN_FRAC:
+        return frozenset()
+    if n == len(texts):
+        return frozenset()  # every doc is the same stub: EMPTY book, re-source
+    return frozenset(
+        hrefs[i] for i, t in enumerate(texts) if t == stub_text and hrefs[i]
+    )
+
+
+def strip_stub_manifest(
+    opf_text: str, opf_dir: str, stub_hrefs: frozenset[str]
+) -> tuple[str, int, int, set[str]]:
+    """Drop the manifest `<item>` of each dropped stub doc and its spine
+    `<itemref>`; the pruned ids go to prune_dangling_edges by the caller so
+    the media-overlay/fallback/toc/cover-meta edges are rewritten, never left
+    dangling. Required together with the archive-copy skip: a manifest item
+    whose file the copy no longer carries would be a fresh RSC-007. Returns
+    (text, items dropped, itemrefs dropped, pruned ids).
+    """
+    items = 0
+    pruned: set[str] = set()
+
+    def item_repl(m: re.Match) -> str:
+        nonlocal items
+        tag = m.group(0)
+        hm = _HREF_ATTR_RE.search(tag)
+        if not hm:
+            return tag
+        resolved = _resolve_href(opf_dir, hm.group(2))
+        if resolved is None or resolved not in stub_hrefs:
+            return tag
+        items += 1
+        idm = _XML_ID_RE.search(tag)
+        if idm:
+            pruned.add(idm.group(3))
+        return ""
+
+    text = _ITEM_TAG_RE.sub(item_repl, opf_text)
+
+    refs = 0
+
+    def itemref_repl(m: re.Match) -> str:
+        nonlocal refs
+        tag = m.group(0)
+        idm = _IDREF_ATTR_RE.search(tag)
+        if idm and idm.group(3) in pruned:
+            refs += 1
+            return ""
+        return tag
+
+    text = _SPINE_ITEM_RE.sub(itemref_repl, text)
+    return text, items, refs, pruned
+
+
+def _drop_balanced_elements(
+    text: str, tag: str, matches: Callable[[str], bool]
+) -> tuple[str, int]:
+    """Remove whole balanced `<tag>...</tag>` elements (nesting respected:
+    a non-greedy match would end at the first inner end tag) where
+    `matches(inner_html)` holds. Used for NCX navPoints and nav `<li>`s."""
+    token = re.compile(rf"<{tag}\b[^>]*>|</{tag}\s*>", re.IGNORECASE)
+    out: list[tuple[int, int]] = []  # (start, end) spans to drop
+    depth = 0
+    top_start = -1
+    for m in token.finditer(text):
+        if m.group(0).startswith("</"):
+            depth -= 1
+            if depth == 0 and top_start != -1:
+                inner = text[text.index(">", top_start) + 1 : m.start()]
+                if matches(inner):
+                    out.append((top_start, m.end()))
+                top_start = -1
+        else:
+            if depth == 0:
+                top_start = m.start()
+            depth += 1
+    if not out:
+        return text, 0
+    result = []
+    pos = 0
+    for start, end in out:
+        result.append(text[pos:start])
+        pos = end
+    result.append(text[pos:])
+    return "".join(result), len(out)
+
+
+def strip_ncx_stub_navpoints(
+    text: str, doc_dir: str, stub_hrefs: frozenset[str]
+) -> tuple[str, int]:
+    """Remove navPoint elements whose <content src> targets a dropped stub
+    doc. The chapter is gone from the reading order; a ToC entry that opens
+    the placeholder page is exactly the defect this flag removes. Runs
+    before the always-on playOrder resequencing, so the sequence heals."""
+
+    def matches(inner: str) -> bool:
+        sm = _NCX_CONTENT_SRC_RE.search(inner)
+        if not sm:
+            return False
+        resolved = _resolve_href(doc_dir, sm.group(3))
+        return resolved is not None and resolved in stub_hrefs
+
+    return _drop_balanced_elements(text, "navPoint", matches)
+
+
+def strip_nav_stub_items(
+    text: str, doc_dir: str, stub_hrefs: frozenset[str]
+) -> tuple[str, int]:
+    """The EPUB3 nav half: drop toc `<li>` entries whose first link targets
+    a dropped stub doc. Same shape as the NCX half; `<li>` nests, so the
+    balanced scanner is required here too."""
+
+    def matches(inner: str) -> bool:
+        hm = _HREF_ATTR_RE.search(inner)
+        if not hm:
+            return False
+        resolved = _resolve_href(doc_dir, hm.group(2))
+        return resolved is not None and resolved in stub_hrefs
+
+    return _drop_balanced_elements(text, "li", matches)
 
 
 def prune_dead_links(
@@ -992,6 +1189,7 @@ def repair_epub(
     fix_container: bool = False,
     fix_media_types: bool = False,
     fix_cover: bool = False,
+    strip_stub_docs: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -1045,6 +1243,13 @@ def repair_epub(
     With `fix_cover`, repair dangling EPUB2 cover wiring: re-point the <meta
     name="cover"> whose content names no manifest id when the OPF guide's cover
     reference resolves to exactly one item, remove it otherwise.
+    With `strip_stub_docs` (lossy, the no_worse bar), drop spine documents whose
+    entire visible text is one identical short placeholder repeated across the
+    spine (the Bookmate/DRM-sample export whose chapters are all the same
+    "content unavailable" notice): the placeholder files, their manifest items,
+    spine itemrefs, NCX navPoints, and nav toc entries all go together. Refuses
+    when no repeated stub class exists or when the class IS the whole spine (an
+    EMPTY book needs a re-source, never a repair).
     """
     report = RepairReport()
 
@@ -1105,6 +1310,14 @@ def repair_epub(
         opf_dir = posixpath.dirname(opf) if opf else ""
         if prune_missing or strip_anchors:
             present = frozenset(_norm_path(n) for n in zin.namelist())
+
+        # --strip-stub-docs: the whole-book stub identity decision needs the
+        # spine order and every spine doc's visible text, so it runs once up
+        # front (like the runhead detection) and every rewrite below targets
+        # the resolved paths it returns.
+        stub_hrefs: frozenset[str] = frozenset()
+        if strip_stub_docs and opf_text is not None:
+            stub_hrefs = detect_stub_docs(zin, opf_text, opf_dir)
         if strip_anchors:
             for i in zin.infolist():
                 if i.filename.lower().endswith(CONTENT_SUFFIXES):
@@ -1199,6 +1412,12 @@ def repair_epub(
                 report.files_changed += 1
                 report.add({"dropped_marker": 1})
                 continue
+            # A dropped stub doc stays in the archive only as an unreferenced
+            # file: the copy skips it, so the reading order no longer opens it.
+            if strip_stub_docs and _norm_path(name) in stub_hrefs:
+                report.files_changed += 1
+                report.add({"stub_docs_dropped": 1})
+                continue
             # A stale container entry is replaced wholesale (it names an OPF
             # that is not in the archive); written before the generated
             # insertion could not fire, since the entry exists here.
@@ -1232,6 +1451,16 @@ def repair_epub(
                     continue
 
             if low.endswith(".ncx"):
+                ncx_changed = False
+                if strip_stub_docs and stub_hrefs:
+                    text, n = strip_ncx_stub_navpoints(
+                        text, posixpath.dirname(name), stub_hrefs
+                    )
+                    if n:
+                        report.add({"stub_navpoints_dropped": n})
+                        # the write-back gate below is per-transform counts;
+                        # a navPoint-only edit must still be written
+                        ncx_changed = True
                 text, counts = apply_transforms(text, XML_TRANSFORMS)
                 if fix_ids:
                     text, n = fix_ncx_ids(text)
@@ -1260,7 +1489,7 @@ def repair_epub(
                     text, synced = sync_ncx_uid(text, uid)
                     if synced:
                         report.ncx_uid_synced = True
-                if counts or synced:
+                if counts or synced or ncx_changed:
                     report.add(counts)
                     report.files_changed += 1
                     data = text.encode("utf-8")
@@ -1272,6 +1501,7 @@ def repair_epub(
                 or url_spaces
                 or fix_media_types
                 or fix_cover
+                or strip_stub_docs
             ):
                 opf_changed = False
                 if fix_ids:
@@ -1299,6 +1529,22 @@ def repair_epub(
                     text, n = prune_dangling_edges(text, pruned_ids)
                     if n:
                         report.add({"prune_edges_rewritten": n})
+                        opf_changed = True
+                if strip_stub_docs and stub_hrefs:
+                    text, n_items, n_refs, stub_ids = strip_stub_manifest(
+                        text, opf_dir, stub_hrefs
+                    )
+                    if n_items:
+                        report.add(
+                            {
+                                "stub_manifest_items_dropped": n_items,
+                                "stub_itemrefs_dropped": n_refs,
+                            }
+                        )
+                        opf_changed = True
+                    text, n = prune_dangling_edges(text, stub_ids)
+                    if n:
+                        report.add({"stub_edges_rewritten": n})
                         opf_changed = True
                 if fix_media_types:
 
@@ -1328,6 +1574,13 @@ def repair_epub(
                     data = text.encode("utf-8")
             elif low.endswith(CONTENT_SUFFIXES):
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
+                if strip_stub_docs and stub_hrefs:
+                    # the EPUB3 nav toc: drop li entries linking a stub doc
+                    text, n = strip_nav_stub_items(
+                        text, posixpath.dirname(name), stub_hrefs
+                    )
+                    if n:
+                        counts["stub_nav_items_dropped"] = n
                 if escape_entities:
                     text, n = escape_unknown_entities(text)
                     if n:
