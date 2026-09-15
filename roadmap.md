@@ -1721,16 +1721,131 @@ four interpreter families.
       sum applied/equal states only, or carry the rejected projection
       as its own labeled line.
 
-### Final audit 2026-09-13 (THE FINAL AUDIT: NEW findings, one line each; full detail in audit-final/bindery-cli/FINAL-REPORT.md)
-- [ ] MED — Analyzer-robustness trio verified still open: spineless-EPUB IndexError aborts whole library/directory runs (audit.py:1436 computes nums[0]; call sites 2121/2386/2556 sit OUTSIDE the per-book try); corrupt container.xml dies as NameError (the _read closure at :251 references encrypted_names defined at :269) and is misreported as generic scan error instead of CORRUPT; DRM books get a false EMPTY verdict beside their ENCRYPTED skip (the gate at :2157/:2390/:2560 tests only corrupt_r["n"] — extend to encrypted_drm_n).
-- [ ] MED — phase3 aggregate-summary defect (recorded today, verified in code): _pre_post_summary (cli.py:1040-1050) sums rejected candidates' projected after-states into printed totals (the OMW incident: clean run read 0f→1f; per-book JSON honest). Sum applied/equal only or label the projection; regression-test the Ghost Brigades shape.
-- [ ] MED — PRIVACY: testing_facility/top500candidates/REPORT.md is TRACKED on a public repo and lists 14 absolute /home/bdkl/docs/Calibre Library paths with real titles, authors, and internal book ids plus full-library error counts — the same library class the repo already untracked AND history-stripped for test_facility EPUBs. git rm --cached forward-only; history-strip is the force-push call. (Its fast_sweep.py docstring reference stays valid — the path remains the --summary target.)
-- [ ] MED — GitHub: the three newest release pages (incl. Latest, v0.40.0) render EMPTY bodies — the plugin-zip job passes files: only; extract the tag's verbatim patchnotes entry via body_path + backfill the three. The recorded batch items still open: description leads with the daemon; 7 of 20 topics wasted; wiki enabled and empty. NEW: PyPI project page has no URLs at all (add [project.urls]); releases coverage 4 of 16 (record forward-only-from-v0.37.0 or backfill).
-- [ ] MED — Docs truth: spec.md self-contradicts on the repair inventory (Scope "fourteen" enumerating 15; opt-in "Fifteen" listing 16; "all fifteen ride the normal gate" vs --fix-cover's no_worse) — build one canonical list; the audit verb's 0/1/2/3 exit contract is documented nowhere top-level (it inverts the tool-wide shape); the epubcheck install-guidance paragraph (Wave 15's "likely first-contact failure") still unwritten; README:246 bullets --min-chars/--thin-chars/--max-doc-chars in the library flag list (audit-parser-only; argparse exit 2); README:172 CSV claim (console + --json only); repair_epub docstring missing fix_container/fix_media_types/fix_cover; audit.py module docstring (six-vs-four analyzers, four non-runnable invocations, pre-absorption staleness, "changes nothing" vs --tag).
-- [ ] LOW — Code tail: apply-failure double-counts accepted and duplicates the JSON record (cli.py:599+619); three regexes use bare [^>]* instead of the quote-aware matcher (phantom fix counts on attribute ">" cases); fix_media_types peek() opens percent-decoded names against raw zip entries (silent no-op on wild-style books); epub.relative_to outside the per-book try (bare ValueError aborts runs); make_backup copy2's onto the final .bak (non-atomic author original); directory-mode rglob lacks is_file(); uid read from replace-decoded OPF can drive a mojibake sync_ncx_uid (gate blocks auto-apply, counts lie); dead code (_daemon alias, done_count); daemon tempdirs leak on hard kill; informational: xml.etree entity-expansion + no per-entry size cap on load_book (the 150MB cap is plugin-only) — eventual defusedxml/size-cap hardening is a dependency ask.
-- [ ] LOW — Comment/docstring truth batch: epub.py header's blanket "OPF left untouched" (seven opt-in flags rewrite it); transforms comment stranded above the wrong function + header's "no semantics change" vs the opt-in lossy transforms; pagination.py points at a CQ file merged away at v3.1.0; no_worse docstring understates its users; validate header contradicts the two-tier gate; __init__ docstring advertises one lossy strip and none of the audit/library/run/plugin surface; fast_sweep.py references the stripped top500candidates path as in-repo; "oceanstrip" in present tense ×3; backup_path docstring overstates the mirror depth; roman grammar duplicated with silent drift (pagination excludes 1500-2099 inside number_value, audit compensates inline).
-- [ ] LOW — Hygiene: REPORT-12-Sept.md at root (retire-and-absorb per the BINDERY_REPORT precedent once the blitz tail closes, or move to docs/); test_facility/ + testing_facility/ consolidation (two local book facilities); test_facility/__pycache__ (14 .pyc from sources that no longer exist anywhere); FastSweepExtract.class orphan (source retired v0.33.0); venv/ + .venv_ci/ (55M pre-rename scratch; the recorded delete pass never happened); README screenshot shows 16 real library rows (synthetic regeneration removes the class); roadmap phase numbers non-monotonic/duplicated (add the historical-identifiers note); the --encode-url-spaces blitz line should name the actual remainder (entry renames; the reference half shipped v0.28.0).
-- [ ] Feature candidates logged (FINAL-REPORT L4, ranked): phase3 aggregate fix; --strip-stub-docs (the lossy lane's live fixture: 14/37 identical stub spine docs); bindery doctor (epubcheck version, java/daemon viability, html5lib, stack tier, library discovery — the stranger's first always-works command); repair --json FILE; cover advisory analyzer (completes the ruled hybrid); --encode-url-spaces entry renames (PKG-010, top-6 class, 280 books); audit-refresh deep-dive (sizes the next two for free); NCX<->nav drift detector; plugin log rotation; fast_sweep count-scale pin; backup-rotation cap preserving the original.
+### Final audit 2026-09-13 (THE FINAL AUDIT: executed in the 2026-09-15 blitz; full detail in audit-final/bindery-cli/FINAL-REPORT.md)
 
-**CONFIRMED-prior (final-audit verification):** the analyzer trio, phase3 aggregate, GitHub batch survivors (description/topics/wiki), docs-sweep open items (CSV claim, docstrings, sys.path, roman duplication), epubcheck-guidance gap, release-gap note. SUPERSEDED (verified fixed in v0.40.0): the PEP 758 plugin HIGH (guard verified live, ruff py312, CI byte-compiles 3.11-3.14), minimum_calibre_version honesty, plugin documentation, FRAGMENT verdicts, container escaping, non-goals reconciliation, calibredb contradiction, codex homepage claim (fixed 2026-09-13). RECORD CORRECTION: the docs lens' initial "zero em-dashes" claim was false — 47 live em-dashes (README 9, spec 12, CLAUDE 6, roadmap current blocks 8, REPORT 12); the repo-wide "honest" tic runs 9 sites. Audit-side: the sheet's line cites have drifted (atomic replace = library.py:56-83; install_format = :179). Slop-reader verdict: prose quality genuinely high; the em-dash layer is the one systemic defect.
+- [x] **Analyzer-robustness trio** (SHIPPED 2026-09-15, 2b9f24e):
+      spineless-EPUB IndexError returns "unknown" and the three call
+      sites sit inside the per-book try; the corrupt-container NameError
+      is fixed by declaring encrypted_names before `_read` and handing
+      back the shell book so the archive verdict says CORRUPT; the
+      emptytext/completeness skip gate is the shared
+      `_archive_owns_body` helper, extended to encrypted_drm_n at all
+      three sites. Tested at every layer.
+- [x] **phase3 aggregate-summary defect** (SHIPPED 2026-09-15, d4ffcc1):
+      the after total sums real post-run states only (applied at after,
+      unapplied at before); the refused candidates' projection is its
+      own labeled line and `rejected_projection` in the JSON; the Ghost
+      Brigades shape is a regression test.
+- [x] **PRIVACY: top500candidates/REPORT.md untracked** (2026-09-15,
+      b82afac; Brandon ruled forward-only, no history strip): git rm
+      --cached, the path gitignored, the file stays on disk as the
+      fast_sweep --summary target. Reopen condition: the history-strip
+      recipe (rewrite 16 release tags, publish.yml disabled around the
+      push) if the reachable copy is ever judged unacceptable.
+- [x] **GitHub batch** (2026-09-15, 365ee75 + live repo edits):
+      publish.yml extracts the tag's verbatim patchnotes entry into
+      body_path; the v0.38.0/v0.39.0/v0.40.0 release bodies are
+      backfilled from their tag objects; the description now leads with
+      deterministic epubcheck-gated repair; [project.urls] added
+      (Homepage/Repository/Changelog); 7 wasted topics swapped for
+      epub3/calibre-plugin/python-cli/ebook-audit; the empty wiki is
+      disabled; the redundant per-job suite run is gone; concurrency
+      blocks added (ci cancels, publish serializes); publish.yml is
+      top-level read-only with the release action SHA-pinned;
+      checkout skew aligned on v5. DECIDED (Brandon): a v*.*.* tag
+      ruleset (delete/non-fast-forward blocked, admin bypass, ruleset
+      23501100) plus the pypi environment restricted to the v*.*.*
+      pattern; cquarry/CalibreQuarry/vir-tui should adopt the same
+      shape under decision #117. DECIDED (Brandon): releases are
+      forward-only from v0.37.0; older releases stay tag-and-notes.
+- [x] **Docs truth** (SHIPPED 2026-09-15, 1f9e262): one canonical
+      repair inventory in spec.md (15 structural + 3 lossy + 4 safe +
+      --reserialize; --fix-ids moved to the safe group;
+      --strip-bad-attrs gained its section; the gate sentence carves
+      out --fix-cover's no_worse); the audit verb's 0/1/2(/3) exit
+      contract documented in README and spec; the epubcheck install
+      paragraph written; the audit-only thresholds moved out of the
+      library flag list; the mimetype fix added to the three
+      core-inventory enumerations; validate.py's "degrades safely"
+      fiction replaced with the refuse-with-exit-1 contract; the
+      single-source version named (src/bindery/__init__.py); the
+      phase-numbers note added; the --encode-url-spaces blitz line
+      reworded to the entry-rename remainder.
+- [x] **Comment/docstring truth batch** (SHIPPED 2026-09-15, 30fb613):
+      the audit.py module docstring rewritten (six analyzers, runnable
+      invocations, no validate_metadata.py, the --tag write carved
+      out); repair_epub's three missing flags documented; the epub.py
+      header scoped to the default pass; transforms.py's stranded
+      comment re-homed and its header made truthful; pagination.py
+      re-pointed at the live sibling with the year-range drift named;
+      no_worse's users listed; __init__.py's surface described;
+      fast_sweep's in-repo assumption corrected; oceanstrip in past
+      tense; backup_path's one-level mirror stated; sys.path.insert
+      REMOVED (Brandon's go, 303aba9) instead of commented.
+- [x] **Hygiene** (2026-09-15; Brandon's rulings on the gated items):
+      REPORT-12-Sept.md retired per the BINDERY_REPORT precedent with
+      a roadmap pointer at its last tracked commit (3f2dda9); the
+      derived litter deleted (test_facility/__pycache__,
+      FastSweepExtract.class, venv/ + .venv_ci/, 55MB);
+      test_facility/ itself stays as-is (Brandon: derived litter
+      only); the phase-numbers note landed. Open (Brandon's call
+      pending): the README screenshot still shows real library rows;
+      a synthetic-library regeneration recipe is recorded in
+      project.done. NOT pursued with a reason: folding the two book
+      facilities together would move Brandon's manual dry-run books.
+- [x] **Feature candidates** (FINAL-REPORT L4): BUILT 2026-09-15
+      (Brandon's bundle ruling): `bindery doctor`;
+      `repair --json FILE`; `--strip-stub-docs` (the lossy lane's
+      live fixture; identity rule = emptytext's placeholder signals,
+      full cascade, no_worse, whole-spine refusal); plugin log
+      rotation; the fast_sweep count-scale pin; the backup-rotation
+      cap. BOXED below: the M set. DECLINED for this lane: none.
+- [x] **Em-dash sweep + the "honest" tic** (SHIPPED 2026-09-15):
+      README, spec, and CLAUDE.md are em-dash-free; the roadmap's
+      current blocks rewritten clean (historical ship notes stay as
+      written); the "honest/honestly" tic thinned to plain claims;
+      REPORT-12-Sept.md's 12 went with its retirement. The three
+      newest patchnotes entries were already clean; the next entry
+      ships clean.
+
+**CONFIRMED-prior (final-audit verification):** the analyzer trio, phase3 aggregate, GitHub batch survivors, docs-sweep open items, epubcheck-guidance gap, release-gap note: all executed above. SUPERSEDED (verified fixed in v0.40.0): the PEP 758 plugin HIGH (guard verified live, ruff py312, CI byte-compiles 3.11-3.14), minimum_calibre_version honesty, plugin documentation, FRAGMENT verdicts, container escaping, non-goals reconciliation, calibredb contradiction, codex homepage claim. RECORD CORRECTION: the docs lens' initial "zero em-dashes" claim was false (47 live at audit time); swept 2026-09-15. The sheet's line cites had drifted (atomic replace = library.py:56-83; install_format = :179); fixes used current lines.
+
+### Reopened / boxed by the final blitz (2026-09-15)
+
+- [ ] **--encode-url-spaces entry renames** (PKG-010, top-6 warning
+      class, 280 books): rename archive entries whose filenames carry
+      raw spaces, rewriting every reference; the reference half
+      shipped v0.28.0. Biggest real-prevalence repair class left; the
+      gate must re-measure the whole book.
+- [ ] **Cover advisory analyzer**: the EPUB3 `properties="cover-image"`
+      audit slice completing the ruled hybrid (21 dangling EPUB2 metas
+      and 3 absent cover files measured behind it).
+- [ ] **Audit-refresh deep-dive**: per-class deltas vs the 2026-09-12
+      baselines; sizes the two boxes above for free.
+- [ ] **NCX<->nav drift detector** (audit-only): the remaining
+      unticked Phase 16 C box; size it after the deep-dive.
+- [ ] **Internal refactors (polish, no behavior change)**: a
+      RepairFlags dataclass for the triplicated ~25-kwarg
+      process_book/repair_epub signature; shared roman/arabic number
+      helpers for pagination.py and audit.py (their year-range
+      grammars differ by design: document or unify, never a third
+      copy). Deliberately not refactored mid-blitz: pure churn risk
+      around five releases of work.
+- [ ] **MobileRead listing for the Bindery Repair plugin** (Brandon's
+      manual step): post the listing with name/identity, the
+      release-attached zip, minimum Calibre 7.0, Linux platform note.
+      Kept as a box, not executed: posting is outward-facing under
+      his name.
+- [ ] **README screenshot regeneration** (Brandon's call pending):
+      rebuild docs/screenshots/library-sweep.png against a synthetic
+      testing_facility library (invented titles, real dry-run output);
+      the current PNG shows 16 real rows. Ask asked 2026-09-15,
+      unanswered; nothing touched.
+- [ ] **Stranger-facing XML hardening** (dependency-flagged): a
+      per-entry size cap in load_book (stdlib, bounds decompression)
+      plus defusedxml-style entity-expansion gating for the untrusted
+      XML (container.xml, OPF, encryption.xml, NCX). RECORDED REOPEN
+      (Brandon's ask pending; the dependency ask would violate the
+      stdlib-only rule and adds a vendored plugin dep): trigger is a
+      real 3.12/3.13 stranger audience, not a hypothetical.
 - [x] **vir-tui floor >=2.5.0 + lock refresh** (2026-09-14, no release cut: upstream 2.4.0/2.5.0 are additive terminal-safety and session-awareness releases; only the vir-tui resolution moved in the lock, the cquarry lag rule is untouched). *(Mention the floor bump in the next release's patchnotes.)*
