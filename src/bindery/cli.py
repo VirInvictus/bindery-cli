@@ -1037,17 +1037,45 @@ def _phase3_decisions(books: list[dict]) -> list[dict]:
     return decisions
 
 
-def _pre_post_summary(books: list[dict]) -> tuple[dict, dict]:
-    """Sum epubcheck counts over the swept books, before vs after."""
+def _pre_post_summary(books: list[dict]) -> tuple[dict, dict, dict]:
+    """Sum epubcheck counts over the swept books, before vs after.
 
-    def total(key: str, field: str) -> int:
-        return sum(
-            (b[key] or {}).get(field, 0) for b in books if b.get(key) is not None
-        )
+    The after total only sums real post-run states: an applied repair
+    contributes its after measurement; an unapplied book still reads at its
+    before counts, because its file was never replaced. A refused candidate's
+    projected after-state (reject/partial) is returned separately so the
+    caller can print it as its own labeled line instead of mixing it into
+    the totals (the 2026-09-13 OMW incident: a clean run printed 0f -> 1f
+    from one REGRESSION reject's projection).
+    """
+    fields = ("fatals", "errors", "warnings")
 
-    before = {f: total("before", f) for f in ("fatals", "errors", "warnings")}
-    after = {f: total("after", f) for f in ("fatals", "errors", "warnings")}
-    return before, after
+    def measured(b: dict, key: str) -> dict | None:
+        v = b.get(key)
+        return v if isinstance(v, dict) else None
+
+    before: list[dict] = []
+    after: list[dict] = []
+    projected: list[dict] = []
+    for b in books:
+        pre = measured(b, "before")
+        if pre is not None:
+            before.append(pre)
+        if b.get("applied"):
+            post = measured(b, "after")
+            if post is not None:
+                after.append(post)
+        elif pre is not None:
+            # not applied: the file still reads at its before counts
+            after.append(pre)
+            post = measured(b, "after")
+            if post is not None and b.get("status") in ("reject", "partial"):
+                projected.append(post)
+    return (
+        {f: sum(d[f] for d in before) for f in fields},
+        {f: sum(d[f] for d in after) for f in fields},
+        {f: sum(d[f] for d in projected) for f in fields},
+    )
 
 
 def run_phase3(args) -> int:
@@ -1094,7 +1122,7 @@ def run_phase3(args) -> int:
     ]
     repair_payload, repair_rc = _repair_sweep(argv)
     books = repair_payload.get("books", [])
-    before, after = _pre_post_summary(books)
+    before, after, projected = _pre_post_summary(books)
     decisions = _phase3_decisions(books)
 
     print("\n========== PHASE 3 SUMMARY ==========")
@@ -1103,6 +1131,11 @@ def run_phase3(args) -> int:
         f"before: {before['fatals']}f/{before['errors']}e/{before['warnings']}w"
         f"  after: {after['fatals']}f/{after['errors']}e/{after['warnings']}w"
     )
+    if any(projected.values()):
+        print(
+            f"rejected projections (not applied): "
+            f"{projected['fatals']}f/{projected['errors']}e/{projected['warnings']}w"
+        )
     summary = repair_payload.get("summary", {})
     print(
         f"applied: {summary.get('applied', 0)}  nochange: "
@@ -1127,6 +1160,7 @@ def run_phase3(args) -> int:
                 "swept": len(books),
                 "before": before,
                 "after": after,
+                "rejected_projection": projected,
                 "repair": summary,
             },
             "decisions_needed": decisions,

@@ -1192,6 +1192,98 @@ class TestRunPhase3(unittest.TestCase):
         self.assertEqual(data["decisions_needed"], [])
         self.assertIn("PHASE 3 SUMMARY", out.getvalue())
 
+    def test_rejected_projection_is_not_summed_into_the_totals(self):
+        # the 2026-09-13 OMW incident (the Ghost Brigades shape): a clean
+        # applied repair plus one REGRESSION reject printed before
+        # 0f/51e -> after 1f/27e, because the rejected candidate's projected
+        # after-state was summed into the totals and a mid-run stop was spent
+        # verifying no damage. The after total must read real post-run
+        # states only; the projection belongs on its own labeled line.
+        with tempfile.TemporaryDirectory() as td:
+            root = self._library(Path(td))
+            # book 1: an unclosed <p> only --reserialize repairs (0f/4e ->
+            # 0f/3e, applied)
+            broken = root / "A" / "One (1)" / "One - Author.epub"
+            with zipfile.ZipFile(broken, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr(
+                    "META-INF/container.xml",
+                    '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>',
+                )
+                z.writestr(
+                    "content.opf",
+                    '<package xmlns="http://www.idpf.org/2007/opf">'
+                    '<manifest><item id="c1" href="t.xhtml" '
+                    'media-type="application/xhtml+xml"/></manifest>'
+                    '<spine><itemref idref="c1"/></spine></package>',
+                )
+                z.writestr(
+                    "t.xhtml",
+                    "<html><body><p>"
+                    + ("prose prose prose " * 20)
+                    + "<p>more</body></html>",
+                )
+            # book 2 (the Ghost Brigades stand-in): a headless <title> gives
+            # --fix-missing-title a fix to attempt, and the mocked candidate
+            # measurement REGRESSES (0f/47e -> 1f/24e), so the gate rejects
+            # and nothing is applied
+            titleless = root / "A" / "Two (2)" / "Two - Author.epub"
+            with zipfile.ZipFile(titleless, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr(
+                    "META-INF/container.xml",
+                    '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>',
+                )
+                z.writestr(
+                    "content.opf",
+                    '<package xmlns="http://www.idpf.org/2007/opf">'
+                    '<manifest><item id="c1" href="t.xhtml" '
+                    'media-type="application/xhtml+xml"/></manifest>'
+                    '<spine><itemref idref="c1"/></spine></package>',
+                )
+                z.writestr(
+                    "t.xhtml",
+                    "<html><head></head><body><p>prose prose prose</p></body></html>",
+                )
+            jout = root / "phase3.json"
+            results = [
+                CheckResult(0, 4, 0),  # sweep book 1 (0f/4e): candidate
+                CheckResult(0, 47, 0),  # sweep book 2 (0f/47e): candidate
+                CheckResult(0, 3, 0),  # book 1 candidate: accept, applied
+                CheckResult(1, 24, 0),  # book 2 candidate: REGRESSION, reject
+            ]
+            out, err = io.StringIO(), io.StringIO()
+            old = os.getcwd()
+            os.chdir(root)
+            try:
+                with (
+                    mock.patch("bindery.cli.epubcheck_available", return_value=True),
+                    mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                    redirect_stdout(out),
+                    redirect_stderr(err),
+                ):
+                    rc = main(["run", "phase3", "--ids", "1,2", "--json", str(jout)])
+            finally:
+                os.chdir(old)
+            data = json.loads(jout.read_text())
+        self.assertEqual(rc, 2)  # the reject is trouble
+        summary = data["summary"]
+        self.assertEqual(summary["before"], {"fatals": 0, "errors": 51, "warnings": 0})
+        # after sums real states only: applied 0f/3e + untouched 0f/47e
+        self.assertEqual(summary["after"], {"fatals": 0, "errors": 50, "warnings": 0})
+        self.assertEqual(
+            summary["rejected_projection"],
+            {"fatals": 1, "errors": 24, "warnings": 0},
+        )
+        self.assertIn("rejected projections (not applied): 1f/24e", out.getvalue())
+        statuses = {b["path"].split("/")[-1]: b["status"] for b in data["books"]}
+        self.assertEqual(statuses["One - Author.epub"], "accept")
+        self.assertEqual(statuses["Two - Author.epub"], "reject")
+
 
 class TestSweepWorkers(unittest.TestCase):
     """--workers N: concurrent epubcheck workers over the --sweep candidate
