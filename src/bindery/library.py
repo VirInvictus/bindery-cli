@@ -69,7 +69,17 @@ def make_backup(epub: Path, backup_dir: Path | None, keep: int | None = None) ->
     while final.exists():
         n += 1
         final = dst.with_name(dst.name + str(n))
-    shutil.copy2(epub, final)
+    # copy to a scratch name and os.replace into place: a disk-full or
+    # interrupt mid-copy must never leave a truncated file sitting at the
+    # final backup name (the .bak is the only copy of the author original),
+    # and a leftover .part is invisible to the rotation scan
+    tmp = final.with_name(final.name + ".part")
+    try:
+        shutil.copy2(epub, tmp)
+        os.replace(tmp, final)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return final
 
 

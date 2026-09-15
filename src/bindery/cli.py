@@ -532,7 +532,13 @@ def run_library(args) -> int:
         )
         for epub in repair_iterator:
             processed += 1
-            rel = epub.relative_to(root)
+            try:
+                rel = epub.relative_to(root)
+            except ValueError:
+                # a path-shape mismatch (symlinked root, normalized vs raw)
+                # must not abort the run with a bare traceback; the display
+                # path falls back to the full path
+                rel = epub
             try:
                 o = process_book(
                     epub,
@@ -618,7 +624,9 @@ def run_library(args) -> int:
                 unvalidated += 1
                 ba = ""
             else:
-                accepted += 1
+                # counted after the apply attempt succeeds (or in a dry run,
+                # where nothing can fail): a failed apply used to leave the
+                # book in `accepted` AND append a second record for its path
                 ba = f"{o.before} -> {o.after}  "
 
             tag = "ACCEPT"
@@ -636,8 +644,11 @@ def run_library(args) -> int:
                     # A full disk or a permission error partway through a
                     # multi-hour run must not abort it raw with no summary,
                     # no JSON, and no record of what was already applied.
-                    # Record the failure as an error Outcome and keep going.
+                    # Record the failure as an error Outcome and keep going;
+                    # the accepted outcome is popped so the JSON carries one
+                    # record per path.
                     errors += 1
+                    records.pop()
                     records.append(
                         Outcome(epub, "error", o.before, o.after, f"apply failed: {e}")
                     )
@@ -647,7 +658,11 @@ def run_library(args) -> int:
                     continue
                 applied += 1
                 applied_paths.add(epub)
+                if o.status != "unvalidated":
+                    accepted += 1
                 tag = "APPLIED"
+            elif o.status != "unvalidated":
+                accepted += 1
             tqdm.write(f"  {tag}  {rel}\n            {ba}{o.summary}")
 
     if audit is not None and not audit_hits:

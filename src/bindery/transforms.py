@@ -374,7 +374,8 @@ def unwrap_block_in_inline(s: str) -> tuple[str, int]:
         return m.group(1)
 
     s, n = re.subn(
-        r"<span[^>]*>\s*(<(div|p|blockquote)[^>]*>.*?</\2>)\s*</span>",
+        r"""<span(?:(?:"[^"]*"|'[^']*'|[^>])*)>\s*"""
+        r"""(<(div|p|blockquote)(?:(?:"[^"]*"|'[^']*'|[^>])*)>.*?</\2>)\s*</span>""",
         repl,
         s,
         flags=re.IGNORECASE | re.DOTALL,
@@ -500,7 +501,12 @@ def unwrap_illegal_tags(
     for tag in ILLEGAL_TAGS:
         if tag in protected_tags:
             continue
-        s, n1 = re.subn(rf"<{tag}\b[^>]*>", "", s, flags=re.IGNORECASE)
+        # quote-aware start-tag match (same shape as _VOID_RE): a `>` inside
+        # an attribute value would otherwise end the match early and mangle
+        # the tag into a malformed edit the gate then rejects
+        s, n1 = re.subn(
+            rf"""<{tag}\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""", "", s, flags=re.IGNORECASE
+        )
         s, n2 = re.subn(rf"</{tag}\s*>", "", s, flags=re.IGNORECASE)
         count += n1 + n2
     return s, count

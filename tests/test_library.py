@@ -83,6 +83,15 @@ class TestAtomicReplace(unittest.TestCase):
         self.assertTrue(made.exists())
         self.assertEqual(made.read_bytes(), b"OLD CONTENT")
 
+    def test_backup_leaves_no_scratch_part_file(self):
+        # the copy lands via a .part scratch name + os.replace, so an
+        # interrupted copy can never leave a truncated file at the final
+        # .bak name (the author original); a successful run leaves no .part
+        made = make_backup(self.target, None)
+        self.assertTrue(made.exists())
+        self.assertEqual(made.read_bytes(), b"OLD CONTENT")
+        self.assertEqual([p.name for p in self.d.iterdir() if ".part" in p.name], [])
+
     def test_backup_keep_bounds_the_rotation_and_keeps_the_original(self):
         # the audit's slow-burn finding: .bak/.bak2/.bak3... rotate unbounded
         # across thousands of books; --backup-keep N rings the .bak2+ slots

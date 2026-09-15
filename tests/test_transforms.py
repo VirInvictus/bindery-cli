@@ -389,6 +389,15 @@ class TestProtectedSpans(unittest.TestCase):
         out, n = unwrap_illegal_tags("<p>a<w>x</w>b<st>c</st></p>")
         self.assertEqual((out, n), ("<p>axbc</p>", 4))
 
+    def test_illegal_tag_with_gt_in_attribute_value_is_removed_whole(self):
+        # a bare [^>]* matcher ended the start tag at the `>` inside the
+        # attribute value, mangled the edit, and the gate rejected the run
+        # (a phantom fix count on a tag the fix never really removed)
+        text = '<p><w title="a>b">x</w>tail</p>'
+        out, n = unwrap_illegal_tags(text)
+        # tags deleted whole, inner text preserved (the contract)
+        self.assertEqual((out, n), ("<p>xtail</p>", 2))
+
     def test_broken_tags_strip_still_fires_outside_spans(self):
         out, n = strip_broken_tags("<p>end /p&gt; of</p>")
         self.assertEqual((out, n), ("<p>end  of</p>", 1))

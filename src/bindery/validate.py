@@ -147,6 +147,28 @@ public class FastDaemon {
 """
 
 
+def _sweep_stale_daemon_dirs(max_age_s: int = 24 * 3600) -> None:
+    """Best-effort removal of bindery-daemon-* tempdirs older than a day.
+
+    The daemon removes its workdir in stop()/atexit, but a hard kill (power
+    loss, kill -9) leaks one; the sweep on the next daemon start bounds the
+    damage. Never raises: a cleanup failure must not break a daemon start.
+    """
+    import glob
+    import time
+
+    try:
+        cutoff = time.time() - max_age_s
+        for d in glob.glob(os.path.join(tempfile.gettempdir(), "bindery-daemon-*")):
+            try:
+                if os.path.getmtime(d) < cutoff:
+                    shutil.rmtree(d, ignore_errors=True)
+            except OSError:
+                continue
+    except Exception:
+        pass
+
+
 class _EpubcheckDaemon:
     """One warm epubcheck JVM driven over a stdin/stdout pipe.
 
@@ -169,6 +191,7 @@ class _EpubcheckDaemon:
         if not epubcheck_bin:
             return False
 
+        _sweep_stale_daemon_dirs()
         try:
             with open(epubcheck_bin) as f:
                 script = f.read()

@@ -587,7 +587,14 @@ def downgrade_epub3_tags(
             count += 1
             return f"</{new}>"
 
-        text = re.sub(rf"<{tag}\b([^>]*)>", repl_open, text, flags=re.IGNORECASE)
+        # quote-aware attrs group (same shape as the manifest matchers): a
+        # `>` inside an attribute value must not end the tag early
+        text = re.sub(
+            rf"""<{tag}\b((?:"[^"]*"|'[^']*'|[^>])*)>""",
+            repl_open,
+            text,
+            flags=re.IGNORECASE,
+        )
         text = re.sub(rf"</{tag}\s*>", repl_end, text, flags=re.IGNORECASE)
     return text, count
 
@@ -1258,8 +1265,22 @@ def repair_epub(
     with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
         zout.comment = zin.comment
         opf = _locate_opf(zin)
-        opf_text = zin.read(opf).decode("utf-8", "replace") if opf else None
-        uid = opf_unique_id(opf_text) if opf_text is not None else None
+        uid = None
+        if opf:
+            opf_bytes = zin.read(opf)
+            opf_text = opf_bytes.decode("utf-8", "replace")
+            try:
+                opf_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                # a non-strict-UTF-8 OPF is skipped byte-for-byte by the copy
+                # loop (never re-encoded), but a uid read from the
+                # replacement-decoded text could drive a mojibake dtb:uid into
+                # the NCX; the sync is skipped instead (the counts stay true)
+                uid = ""
+            else:
+                uid = opf_unique_id(opf_text)
+        else:
+            opf_text = None
         # The EPUB2-targeted structural fixes are licensed by the package
         # version: on an EPUB3 book they strip legal epub:type/aria attributes
         # and downgrade legal semantic elements (under --all, every EPUB3 book
@@ -1305,11 +1326,18 @@ def repair_epub(
         # computed once: the archive's file set for existence checks, and every
         # content document's id set for fragment checks.
         present: frozenset[str] = frozenset()
+        # normalized -> raw archive name: hrefs resolve to normalized paths,
+        # but the zip stores raw (possibly percent-encoded) names, so any
+        # zin.open by a resolved path needs the map (a raw "%21" name never
+        # opens by its decoded spelling)
+        norm_to_raw: dict[str, str] = {}
         ids_by_doc: dict[str, frozenset[str]] = {}
         spine_ids: set[str] = set()
         opf_dir = posixpath.dirname(opf) if opf else ""
-        if prune_missing or strip_anchors:
-            present = frozenset(_norm_path(n) for n in zin.namelist())
+        if prune_missing or strip_anchors or fix_media_types:
+            for n in zin.namelist():
+                norm_to_raw.setdefault(_norm_path(n), n)
+            present = frozenset(norm_to_raw)
 
         # --strip-stub-docs: the whole-book stub identity decision needs the
         # spine order and every spine doc's visible text, so it runs once up
@@ -1549,8 +1577,11 @@ def repair_epub(
                 if fix_media_types:
 
                     def peek(resolved: str) -> bytes | None:
+                        # open the RAW archive name: a resolved (normalized)
+                        # path silently missed the entry on wild-style books
+                        raw = norm_to_raw.get(resolved, resolved)
                         try:
-                            with zin.open(resolved) as f:
+                            with zin.open(raw) as f:
                                 return f.read(8)
                         except (KeyError, OSError, RuntimeError):
                             return None

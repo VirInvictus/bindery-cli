@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+# A push supersedes the run for the same ref: the tree it tested is gone.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:

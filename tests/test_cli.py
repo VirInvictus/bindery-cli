@@ -704,6 +704,48 @@ class TestApplyFailureIsolation(unittest.TestCase):
         self.assertIn("apply failed", out.getvalue())
         self.assertIn("No space left on device", out.getvalue())
 
+    def test_apply_failure_is_not_counted_accepted_and_json_has_one_record_per_path(
+        self,
+    ):
+        # the audit's L2.5 finding: the accepted outcome was appended and
+        # `accepted` incremented BEFORE the apply attempt, so a failure left
+        # the book in `accepted` and TWO JSON records on one path
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _phase1_book(root / "a.epub", broken=False, real_fix=True)
+            jout = root / "lib.json"
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch(
+                    "bindery.cli.make_backup",
+                    side_effect=OSError(28, "No space left on device"),
+                ),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = cli.run_library(
+                    build_parser().parse_args(
+                        [
+                            "library",
+                            str(root),
+                            "--apply",
+                            "--no-validate",
+                            "--backup-inplace",
+                            "--json",
+                            str(jout),
+                        ]
+                    )
+                )
+            data = json.loads(jout.read_text())
+        self.assertEqual(data["summary"]["accepted"], 0)
+        self.assertEqual(data["summary"]["applied"], 0)
+        self.assertEqual(data["summary"]["errors"], 1)
+        paths = [b["path"] for b in data["books"]]
+        self.assertEqual(len(paths), len(set(paths)))  # one record per path
+        statuses = [b["status"] for b in data["books"]]
+        self.assertEqual(statuses, ["error"])
+        self.assertEqual(rc, 2)
+
     def test_backup_dir_inside_library_root_is_refused(self):
         # reported 2026-09-08: a --backup dir inside the library root gets its
         # .epub-named copies swept as candidates on the next run

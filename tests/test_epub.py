@@ -1499,6 +1499,32 @@ class TestFixMediaTypes(unittest.TestCase):
                     z.read("OEBPS/content.opf").decode("utf-8"),
                 )
 
+    def test_percent_encoded_entry_name_still_resolves(self):
+        # the audit's silent no-op: the peek opened the percent-DECODED
+        # resolved path against the zip's RAW entry names, so a wild-style
+        # book ("im%20g.jpg" stored, href="im%20g.jpg") never normalized its
+        # declaration. The normalized-to-raw map fixed the resolution.
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            opf = (
+                '<?xml version="1.0"?>'
+                '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+                '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                '<dc:identifier id="bookid">urn:uuid:X</dc:identifier>'
+                "</metadata>"
+                "<manifest>"
+                '<item id="pic" href="im%20g.jpg" media-type="image/png"/>'
+                "</manifest>"
+                '<spine><itemref idref="pic"/></spine></package>'
+            )
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/im%20g.jpg", b"\xff\xd8\xff\xe0JFIF")
+            report = repair_epub(src, dst, fix_media_types=True)
+            self.assertEqual(report.fixes.get("media_types_normalized"), 1)
+
     def test_correct_declaration_is_untouched(self):
         with tempfile.TemporaryDirectory() as td:
             src, dst = Path(td) / "in.epub", Path(td) / "out.epub"

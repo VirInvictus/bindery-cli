@@ -5,11 +5,20 @@ on:
     tags:
       - "v*.*.*"
 
+# A tag push is a release: never cancel a publish mid-run, and two tags
+# publishing concurrently would race the release page; serialize instead.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -30,7 +39,7 @@ jobs:
       id-token: write # Required for OIDC authentication with PyPI
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -51,16 +60,14 @@ jobs:
     permissions:
       contents: write # create the release and attach the plugin zip
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
-      - name: Run the suite
-        run: |
-          pip install .[reserialize]
-          PYTHONPATH=src python -m unittest discover -s tests
-
+      # The suite already ran in the `test` job for this exact commit
+      # (needs: gates this job on it); running it again per job doubled the
+      # publish wall time for no extra signal.
       - name: Build the plugin zip from the tagged tree
         run: python scripts/build_plugin.py
 
@@ -71,8 +78,10 @@ jobs:
       - name: Extract the release body from the tag message
         run: git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > release-body.md
 
+      # SHA-pinned to action-gh-release v2 (3bb1273): it carries contents:
+      # write, so the third-party action runs pinned, not floating.
       - name: Attach BinderyRepair zip to the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           body_path: release-body.md
           files: dist/BinderyRepair-*.zip

@@ -2411,7 +2411,11 @@ def run_directory(
     if not directory.is_dir():
         print(f"ERROR: {directory} is not a directory.")
         return 2
-    epubs = sorted(directory.rglob("*.epub", case_sensitive=False))
+    # the is_file filter matches iter_epubs: a directory named *.epub is a
+    # spurious scan error, not a book
+    epubs = sorted(
+        p for p in directory.rglob("*.epub", case_sensitive=False) if p.is_file()
+    )
     if not epubs:
         print(f"No .epub files found under {directory}")
         return 2
