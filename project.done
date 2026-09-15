@@ -1,0 +1,57 @@
+# bindery-cli: project.done
+
+Completed: 2026-09-15 (THE FINAL BLITZ, repo agent lane)
+Range: 2b9f24e (analyzer trio) through f47fc8f (ci tag-fetch fix), on main,
+pushed; CI green throughout; v0.41.0 tagged and published to PyPI.
+
+## What shipped
+
+- The analyzer-robustness trio: spineless-EPUB verdicts, per-book try
+  coverage, the corrupt-container CORRUPT verdict, the DRM false-EMPTY fix.
+- The phase3 aggregate-summary fix (applied/equal states only,
+  rejected_projection line, Ghost Brigades regression test).
+- Six features: `bindery doctor`, `repair --json FILE`, `--strip-stub-docs`
+  (the lossy lane's live fixture, Brandon-approved), plugin log rotation,
+  `--backup-keep N` ring, the fast_sweep count-scale pin.
+- The robustness LOW batch (quote-aware matchers, raw-name resolution,
+  atomic backups, rglob filter, mojibake-uid guard, daemon tempdir sweep,
+  apply-failure accounting, relative_to guard).
+- The privacy untrack of testing_facility/top500candidates/REPORT.md
+  (forward-only; Brandon's ruling).
+- The GitHub batch: release bodies via body_path + three backfills, the
+  description rewrite, [project.urls], topics swap, wiki off, the
+  redundant suite run removed, concurrency blocks, checkout alignment,
+  the release action SHA-pinned; plus a v*.*.* tag ruleset (admin bypass)
+  and the pypi environment restricted to tag pushes (Brandon's rulings).
+- Docs truth batches: one canonical repair inventory in spec.md, the audit
+  exit-code contract, the epubcheck install paragraph, the flag-list move,
+  the mimetype-fix counts, the degrades-safely correction, the
+  comment/docstring truth pass, the em-dash sweep and the "honest" tic.
+- Dead code removed on a recorded go: validate's `_daemon` alias, cli's
+  `done_count`, audit's `sys.path.insert`.
+- Hygiene: REPORT-12-Sept.md retired per the BINDERY_REPORT precedent; the
+  derived litter deleted (test_facility/__pycache__, FastSweepExtract.class,
+  venv/ + .venv_ci/).
+- Tests: 445 -> 474, all green; ruff 0.16.2 clean.
+
+## Reopen conditions (recorded future work)
+
+1. top500candidates/REPORT.md history strip: declined (forward-only only).
+   If ever wanted: filter-repo the file out, re-tag every affected release
+   verbatim, disable publish.yml around the push (force-push class).
+2. Stranger-facing XML hardening (dependency ask pending): a stdlib
+   per-entry size cap in load_book plus defusedxml-style entity-expansion
+   gating. Trigger: a real 3.12/3.13 stranger audience. Roadmap boxed.
+3. MobileRead listing for the Bindery Repair plugin: Brandon's manual
+   posting step; roadmap boxed with the material listed.
+4. README screenshot regeneration against a synthetic library: pending
+   Brandon's call; the current PNG still shows real library rows.
+5. Boxed M feature set: --encode-url-spaces entry renames (280-book
+   PKG-010 class), the cover advisory analyzer, the audit-refresh
+   deep-dive, the NCX<->nav drift detector.
+6. Boxed internal refactors: RepairFlags dataclass for the triplicated
+   kwarg signature; shared roman/arabic number helpers for pagination.py
+   and audit.py.
+7. Cross-repo note under decision #117: cquarry, CalibreQuarry, and
+   vir-tui should mirror the tag ruleset + pypi environment policy this
+   repo adopted.
