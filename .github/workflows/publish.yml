@@ -74,7 +74,13 @@ jobs:
       # The tag message IS the release's patchnotes entry (verbatim, per the
       # tagging procedure), so the release body is extracted from the tag
       # object rather than paraphrased here. Without it the release page
-      # renders blank beside the zip.
+      # renders blank beside the zip. The checkout is depth-1 and carries no
+      # tag objects, so the tag ref is fetched explicitly first (without
+      # this, `git tag -l` lists nothing and the release body silently falls
+      # back to the commit message).
+      - name: Fetch the tag object
+        run: git fetch --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
       - name: Extract the release body from the tag message
         run: git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > release-body.md
 
