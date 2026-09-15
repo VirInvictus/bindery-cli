@@ -136,24 +136,24 @@ part of the default pipeline:
   `<div>/<p>/<blockquote>`, keeping the block element and its text.
 - **`--strip-invalid-value`**: remove misplaced `value="..."` attributes from non-form
   elements.
-- **`--fix-page-map`**: normalize legacy page-map markup — drop the non-standard
+- **`--fix-page-map`**: normalize legacy page-map markup: drop the non-standard
   `page-map="..."` attribute from the OPF `<spine>` and add `class="pages"` to
   classless NCX `<pageList>` elements (epubcheck rejects both; older HarperCollins /
   Anna's Archive conversions carry them). A pageList that already carries a class is
   untouched.
 - **`--strip-epub3-attrs`**: scrub the EPUB3-only attributes epubcheck rejects on an
-  EPUB2 package — `page-progression-direction`, `epub:type`, `aria-label` (a fixed,
+  EPUB2 package: `page-progression-direction`, `epub:type`, `aria-label` (a fixed,
   documented set; extend only with a named epubcheck finding). Rendering is unchanged,
   and reader-legitimate lookalikes (`type`, the wider aria family) survive. The edit is
   anchored to real start tags and never touches CDATA sections or comments, so prose
   that merely mentions `epub:type="chapter"` is preserved.
 - **`--downgrade-epub3-tags`**: downgrade EPUB3/HTML5 semantic elements to their EPUB2
-  equivalents — `figure`/`section` to `div`, `figcaption` to `p` — keeping existing
+  equivalents (`figure`/`section` to `div`, `figcaption` to `p`), keeping existing
   classes and appending the semantic name (`class="figure"`) as the styling hook.
   Names a stylesheet styles as an element selector are protected book-wide
   (`css_protected_tags`/`style_block_tags` are parameterized over the tag set), so
   styled formatting can never be silently destroyed; a protected book keeps its
-  RSC-005 findings, which is the honest outcome.
+  RSC-005 findings, which is the correct outcome.
 
 Both EPUB2-targeted fixes are gated on the package version carried in the OPF: they
 fire on EPUB 2 packages (major version 2 or 1) and are inert on EPUB 3 packages and
@@ -165,7 +165,7 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   `transforms.css_protected_tags` scans every stylesheet entry in the book (nested at-rules
   included) and `style_block_tags` each document's inline `<style>` blocks for these names
   used as *element selectors* (`w { }`, `pagebreak.new:after {}`; `.st`/`#w` class/id
-  selectors do not protect), and protected names are skipped for the whole book — styled
+  selectors do not protect), and protected names are skipped for the whole book: styled
   formatting can never be silently destroyed.
 - **`--prune-missing-resources`**: remove references to files the archive does not
   contain (RSC-007/PKG-010): dead `<link>` elements, anchors' `href` to absent files
@@ -177,7 +177,7 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   the anchor text byte-for-byte. A `#fragment` the target document does not define
   (RSC-020 "fragment identifier not defined", RSC-012 "points to the wrong element") is
   removed from the anchor; NCX `<content src="doc#frag"/>` falls back to the document
-  target, keeping chapter navigation at document precision — the fragment is never
+  target, keeping chapter navigation at document precision: the fragment is never
   re-pointed at a guessed sibling document, because a drifted id (Mobipocket `filepos`
   anchors after a converter re-split) may exist nowhere. A target wholly absent from
   the archive is left for the spine-integrity report. href values carrying a scheme no
@@ -199,7 +199,7 @@ touched.
 - **`--fix-media-types`**: normalize wrong manifest `media-type` declarations (OPF-029: a
 file's bytes do not match the declared type). The expected type comes from the extension, and
 the rewrite fires only when the file's magic bytes at offset 0 confirm the extension (jpg,
-jpeg, png, gif): a PNG renamed `.jpg` keeps its wrong-but-honest declaration rather than
+jpeg, png, gif): a PNG renamed `.jpg` keeps its wrong-but-consistent declaration rather than
 gaining a worse one. Attribute-only, quote-style preserved; files absent from the archive
 belong to `--prune-missing-resources`.
 
@@ -387,7 +387,7 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
   atomic-replacement contract live there).
 
 ### Native format installation (`--install-to-calibre`)
-Optionally, bindery-cli installs the repaired EPUB as the book's format through cquarry's write module (`WritableCalibreDB`): the file is placed atomically — an in-place replace over the catalogued file when one exists (same path, same `data.name`), or a fresh placement under the repaired file's stem otherwise — and the `data` row follows through `set_format` (cquarry 1.17's sanctioned remove+add in one transaction), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. The external `calibredb` CLI is no longer used (the v0.23.1 `--replace` crash class is gone with it). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
+Optionally, bindery-cli installs the repaired EPUB as the book's format through cquarry's write module (`WritableCalibreDB`): the file is placed atomically (an in-place replace over the catalogued file when one exists, same path and `data.name`; a fresh placement under the repaired file's stem otherwise) and the `data` row follows through `set_format` (cquarry 1.17's sanctioned remove+add in one transaction), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. The external `calibredb` CLI is no longer used (the v0.23.1 `--replace` crash class is gone with it). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
 
 The no-catalog fallback guesses the id from the `(N)` directory fragment. A guessed
 id may drive a row update only when metadata.db corroborates it: the book row exists,
@@ -404,7 +404,7 @@ crashing the sweep.
 [--tag TAG] [--id IDs]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0, `--max-doc-chars N`; `--id` since v0.19.0, comma-lists in v0.23.0; `completeness` since v0.36.0) inspects
 EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in page-number
 layers (sliding-window density heuristics), empty or thin books, systemic OCR damage, and
-single oversized content documents (one spine doc at or above 300k characters — readers refuse
+single oversized content documents (one spine doc at or above 300k characters: readers refuse
 to render them even though the book totals normally), damaged archives (every archive entry
 is fully read for CRC + decompression, reporting CORRUPT rather than EMPTY), and spine integrity
 issues. Manifest/NCX references to absent files are classified as either `convention` (ToC is bloated but
@@ -413,7 +413,7 @@ present documents form a consecutive chapter span) or `fragment` (the span itsel
 The archive verdict distinguishes font obfuscation from DRM (Phase 16): entries
 `encryption.xml` declares under a font-obfuscation algorithm (the IDPF `2008/embedding`
 URI and both Adobe forms, including the `ns.adobe.com` URI real-world files carry) that
-read fine are the OBFUSCATED advisory — publisher embedding, benign, never a failure; an
+read fine are the OBFUSCATED advisory (publisher embedding, benign, never a failure); an
 unreadable obfuscation entry is CORRUPT (a broken font, not a business model), and only
 non-obfuscation algorithms give the ENCRYPTED verdict with its DRM skip advice.
 
@@ -429,7 +429,7 @@ matter, and the verdict becomes ADVISORY (as it does at an unreadable fraction o
 more). Like emptytext it is skipped wholesale when the archive verdict owns the body-text
 story.
 
-In library mode, EPUB files are resolved through `cquarry.db.CalibreDB.get_format_path()` — the
+In library mode, EPUB files are resolved through `cquarry.db.CalibreDB.get_format_path()`: the
 storage-layout logic is not duplicated here. The scan itself still writes nothing. The opt-in
 `--tag TAG` pass applies `TAG` to flagged books via `cquarry.write.WritableCalibreDB`, the
 separate trigger-safe write module (it registers Calibre's `title_sort`/`uuid4` SQL functions,

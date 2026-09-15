@@ -10,7 +10,7 @@
 
 ## What it fixes
 
-bindery-cli makes accidentally broken markup well-formed again. It does not rewrite or reflow content. The **default pass** applies only a small set of deterministic, semantics-preserving well-formedness fixes that real-world EPUBs (especially Calibre conversions) trip over — nothing else changes without an explicit flag:
+bindery-cli makes accidentally broken markup well-formed again. It does not rewrite or reflow content. The **default pass** applies only a small set of deterministic, semantics-preserving well-formedness fixes that real-world EPUBs (especially Calibre conversions) trip over; nothing else changes without an explicit flag:
 
 - **Unclosed void elements** (`<link>`, `<br>`, `<img>`, ...) get self-closed.
 - **Undeclared named entities** (`&nbsp;`, `&deg;`, `&eacute;`, ...) become numeric character references that every XML parser understands.
@@ -22,7 +22,7 @@ bindery-cli makes accidentally broken markup well-formed again. It does not rewr
 
 ### Opt-in repairs
 
-Everything below is off until its flag is passed (or all at once via `--all`). They go further than well-formedness — altering structure or adding minimal content — so they never run by default:
+Everything below is off until its flag is passed (or all at once via `--all`). They go further than well-formedness (altering structure or adding minimal content), so they never run by default:
 
 - **`--fix-ids`**: rewrite ids that are not valid XML names (start with a digit, contain a colon) in the OPF manifest, updating every reference to them (spine, fallback, media-overlay, the EPUB 2 cover meta), and in the NCX (where old conversions stamp navPoint ids from UUIDs). Touches the OPF, so it is off by default; the dc: metadata is never altered.
 - **`--add-img-alt`**: add `alt=""` to `<img>` elements missing the required attribute. Renders identically, but it adds markup the author never wrote, and an empty alt tells a screen reader the image is decorative; hence opt-in.
@@ -34,7 +34,7 @@ Everything below is off until its flag is passed (or all at once via `--all`). T
 - **`--fix-missing-title`**: injects a `<title>Unknown</title>` fallback in the `<head>` if missing, handling both empty `<title/>` self-closing tags and entirely absent tags.
 - **`--unwrap-block-in-inline`**: safely unwraps `<span>` tags that illegally contain a block-level element (e.g. `<div>` or `<p>`), leaving the block element intact.
 - **`--strip-invalid-value`**: systematically strips invalid `value="..."` attributes from elements like `<div>`, `<span>`, `<p>`, etc.
-- **`--fix-page-map`**: normalizes legacy page-map markup — drops the non-standard `page-map="..."` attribute from the OPF `<spine>` and adds `class="pages"` to classless NCX `<pageList>` elements (epubcheck rejects both on older HarperCollins / Anna's Archive conversions).
+- **`--fix-page-map`**: normalizes legacy page-map markup: drops the non-standard `page-map="..."` attribute from the OPF `<spine>` and adds `class="pages"` to classless NCX `<pageList>` elements (epubcheck rejects both on older HarperCollins / Anna's Archive conversions).
 - **`--strip-epub3-attrs`**: scrubs the EPUB3-only attributes epubcheck rejects on an EPUB2 package: `page-progression-direction`, `epub:type`, `aria-label` (a fixed, documented set; rendering is unchanged, and lookalikes like `type` or the wider aria family survive). The edit is anchored to real start tags, so prose that merely mentions `epub:type="chapter"` is preserved.
 - **`--downgrade-epub3-tags`**: downgrades EPUB3/HTML5 semantic elements to their EPUB2 equivalents (`figure`/`section` to `div`, `figcaption` to `p`), keeping existing classes and appending the semantic name (`class="figure"`) as the styling hook. Tag names a stylesheet styles as an element selector are protected book-wide, so styled formatting is never destroyed. Both EPUB2-targeted fixes are gated on the package version declared in the OPF: on an EPUB 3 book they do nothing, because their target defects only exist below EPUB 3.
 - **`--unwrap-illegal-tags`**: strips completely invalid or deprecated HTML tags that break EPUB3 validation (`<st>`, `<sentence>`, `<o>`, `<w>`, `<pagebreak>`) while retaining their inner text. Any of those names styled as an *element selector* by an EPUB stylesheet (`.css` entries and inline `<style>` blocks alike; class/id selectors like `.st`/`#w` don't count) is protected for the whole book, guaranteeing format preservation.
@@ -42,7 +42,7 @@ Everything below is off until its flag is passed (or all at once via `--all`). T
 - **`--strip-broken-anchors`**: strips href attributes that cannot resolve, keeping the anchor text byte-for-byte: a `#fragment` the target document does not define (RSC-020/RSC-012; NCX navTargets fall back to the document target, so chapter navigation survives) and unresolvable URI schemes (`kindle:`, `file:`).
 - **`--encode-url-spaces`**: percent-encodes raw spaces in `src`/`href` attribute values across the package (OPF manifest, NCX, content documents). A URL with a literal space is not a valid URL (RSC-020) and unresolvable on strict readers; the encoded form denotes the same file.
 - **`--fix-container`**: generates `META-INF/container.xml` at the located OPF when the container is missing or names a file the archive does not contain. This is the gateway defect: epubcheck stays fatal while the OPF is unfindable, so no repair can be gate-accepted on such a book until the container exists.
-- **`--fix-media-types`**: normalizes wrong manifest media-type declarations (OPF-029, e.g. a jpg stamped `image/png` by an aggregator). Attribute-only and quote-preserving; it fires only when the file's magic bytes confirm the extension, so an honestly-declared misnamed file is never made worse.
+- **`--fix-media-types`**: normalizes wrong manifest media-type declarations (OPF-029, e.g. a jpg stamped `image/png` by an aggregator). Attribute-only and quote-preserving; it fires only when the file's magic bytes confirm the extension, so a misnamed-but-consistent file (a PNG renamed .jpg) is never made worse.
 - **`--fix-cover`**: repairs dangling EPUB2 cover wiring. A `<meta name="cover">` whose content names no manifest item is re-pointed when the OPF guide's own cover reference names an existing item, and removed when nothing identifies it; EPUB3 `properties="cover-image"` is deliberately audit-only (guessing which image is the cover is not deterministic). Cover wiring is invisible to epubcheck, so cover-only repairs are accepted under the same no-worse bar the lossy strips use.
 
 
@@ -121,7 +121,7 @@ strips stay CLI-only, because their acceptance is the epubcheck gate and
 epubcheck cannot run inside Calibre; nothing runs ungated in the plugin, ever.
 
 Compatibility: the plugin declares a minimum Calibre of **7.0** and
-`supported_platforms` is Linux. Both are honest floors, not boastful ones:
+`supported_platforms` is Linux. Both floors state what is actually verified, no more:
 released Calibre embeds Python 3.11 through the whole 8.x series and 3.14 from
 9.0 on, and CI byte-compiles the shipped plugin zip under Python 3.11, 3.12,
 3.13 and 3.14, so the plugin parses on every current Calibre series; 7.x is
@@ -172,7 +172,7 @@ The sections below take each in turn.
 
 ## Auditing
 
-bindery-cli includes a comprehensive auditing tool to inspect EPUB body text for non-schema flaws that epubcheck cannot catch. It extracts and analyzes the visible text to detect content issues, producing console reports that can be used to filter your library or feed into `bindery repair`.
+bindery-cli's auditing tool inspects EPUB body text for non-schema flaws that epubcheck cannot catch. It extracts and analyzes the visible text to detect content issues, producing console reports that can be used to filter your library or feed into `bindery repair`.
 
 Scan a Calibre library for specific issues:
 
@@ -206,7 +206,7 @@ Audits can also be run on a directory of loose `.epub` files by passing the path
 bindery audit pagenumbers /path/to/loose/epubs
 ```
 
-Or on one or more library books by Calibre id (comma-separated) — fetched through cquarry's single-entity `get_book()` (no library-wide scan), with the EPUB resolved via cquarry's own path logic:
+Or on one or more library books by Calibre id (comma-separated), fetched through cquarry's single-entity `get_book()` (no library-wide scan), with the EPUB resolved via cquarry's own path logic:
 ```sh
 cd ~/docs/Calibre\ Library && bindery audit all --id 1234,1235
 ```
@@ -222,12 +222,12 @@ With `--id`, `--json` accepts exactly one book id (each single-book run writes t
 
 **Spine-integrity reporting:** Both `audit` and `library` reports now classify manifest/NCX references that point to absent files. A `convention` verdict means the ToC is bloated but the present documents form a consecutive chapter span (e.g., the Wandering Inn official-build pattern, safe). A `fragment` verdict means the span itself is broken.
 
-**Archive integrity:** every audit fully reads each archive entry (CRC + decompression), so a damaged download is reported CORRUPT — with the first broken entry named — instead of being mislabeled EMPTY by `emptytext`. `library --sweep` splits its `unreadable` bucket into `not_a_zip` / `truncated` / `encrypted` / `corrupt_entry`, so the right disease is visible without leaving the sweep.
+**Archive integrity:** every audit fully reads each archive entry (CRC + decompression), so a damaged download is reported CORRUPT, with the first broken entry named, instead of being mislabeled EMPTY by `emptytext`. `library --sweep` splits its `unreadable` bucket into `not_a_zip` / `truncated` / `encrypted` / `corrupt_entry`, so the right disease is visible without leaving the sweep.
 
 ### Tagging flagged books (opt-in)
 
 By default an audit writes nothing. With `--tag TAG` (library mode only), every book the audit
-flags is tagged in `metadata.db` through cquarry's trigger-safe write module — useful for piping
+flags is tagged in `metadata.db` through cquarry's trigger-safe write module, useful for piping
 flagged books back into Calibre views:
 
 ```sh
@@ -238,7 +238,7 @@ The audit itself stays read-only; only the final tagging pass writes, it skips b
 carry the tag, and THIN emptytext advisories are never tagged. Close Calibre first so the write
 does not fight its lock. Tagged books are recorded in Calibre's `metadata_dirtied` queue, so the
 desktop app regenerates their sidecar `.opf`s (and re-pushes metadata to wireless readers) on its
-next startup — no manual resync needed.
+next startup: no manual resync needed.
 
 
 Repair one book to a new file (gated; writes only if it is an improvement):
@@ -279,7 +279,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast. Paths are resolved on both sides, and a CSV that matches nothing triggers a loud warning instead of silently selecting zero books.
 - `--limit N` processes at most N candidates and stops opening archives after them (lazy within one worker window). A value below 1 is a usage error.
 - `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. bindery-cli may serve checks from a small persistent Java daemon (see the gate section above for how it is bounded and how it fails safe); wherever the daemon cannot serve, the run falls back to the standard per-book epubcheck subprocess at the usual seconds per book. Combine with `--only fatals` for a self-contained "find and fix the broken books" run.
-- `--workers N` runs the sweep's candidate pass through N concurrent epubcheck workers (default 1: serial, unchanged). The subprocess releases the GIL, so threads parallelize the oracle honestly; books are checked in windows of N consumed in order, so the candidate set matches the serial sweep and `--limit` stays lazy within one window of overshoot. The repair phase stays serial: that is where the shared workdir and the atomic-replacement contract live.
+- `--workers N` runs the sweep's candidate pass through N concurrent epubcheck workers (default 1: serial, unchanged). The subprocess releases the GIL, so threads parallelize the oracle truthfully; books are checked in windows of N consumed in order, so the candidate set matches the serial sweep and `--limit` stays lazy within one window of overshoot. The repair phase stays serial: that is where the shared workdir and the atomic-replacement contract live.
 - `--json FILE` writes a machine-readable report of the whole run (per-book status, before/after counts, applied flag, summary totals). `--manual-list FILE` writes the paths of every book that was not auto-repaired, one per line, ready for manual follow-up.
 - `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file. `--backup-keep N` bounds the rotation: at most N backup files per book (the author original `.epub.bak` is never deleted), so a years-long apply habit cannot grow backups without bound.
 - `--install-to-calibre` resolves the Calibre book id from `metadata.db` via cquarry (one read-only path→id map per run), so a hand-renamed `Author/Title (id)/` directory can never send the repaired file to the wrong book. The directory-name regex is only a no-catalog fallback; with neither, the file is saved atomically in place.

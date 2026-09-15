@@ -1,4 +1,127 @@
 # bindery-cli Patch Notes
+## v0.41.0 (2026-09-15)
+
+### The final-audit blitz: robust analyzers, the stub-docs strip, and a privacy untrack
+
+- **Analyzer robustness: one malformed book costs its own verdict,
+  never the run.** A spineless EPUB (empty spine) no longer dies with
+  an IndexError inside spine integrity: an unjudgeable span is the
+  honest "unknown" verdict, and every post-load analysis call now sits
+  inside the per-book try, so an unexpected crash becomes that book's
+  error record while the sweep continues. A corrupt or absent
+  container.xml is the CORRUPT archive verdict naming the entry instead
+  of a NameError from the `_read` closure (which consulted
+  `encrypted_names` before its declaration) and a TypeError that read
+  as a generic scan error. And DRM books no longer get a false EMPTY
+  verdict beside their own ENCRYPTED skip: the emptytext/completeness
+  skip gate is now the shared `_archive_owns_body` helper, extended
+  from corrupt entries to DRM-encrypted docs at all three sites.
+- **`run phase3`'s aggregate summary tells the truth.** A rejected
+  candidate's projected after-state was summed into the printed
+  before/after totals, so the 2026-09-13 OMW batch (one clean applied
+  repair, one REGRESSION reject left untouched) printed 0f/53e to
+  1f/29e and cost a mid-run stop to verify no damage. The after total
+  now sums real post-run states only: applied repairs at their after
+  measurement, unapplied books at their before counts. The refused
+  candidates' projection is its own labeled line
+  (`rejected_projection` in the JSON), and a regression test pins the
+  Ghost Brigades shape (a reject must never move the aggregate past
+  0f).
+- **`--strip-stub-docs`: the lossy lane's live fixture.** Drops spine
+  documents whose entire visible text is one identical short
+  placeholder repeated across the spine: the Bookmate/DRM-sample
+  export whose chapters are all the same "content unavailable" notice,
+  valid XHTML that passes epubcheck while the book reads as garbage.
+  The identity rule mirrors the emptytext analyzer's placeholder
+  signals and is deliberately conservative (12-600 chars, identical
+  text across at least 3 spine docs and at least 30% of the spine,
+  only the single most common class). The drop cascades: archive
+  entries, manifest items, spine itemrefs (with package edges
+  rewritten), NCX navPoints (the always-on playOrder resequencing
+  heals the sequence), and nav toc entries. It refuses to fire on a
+  book whose every spine doc is the same stub: that book is EMPTY and
+  needs a re-source, never a repair. Rides the `no_worse` bar with the
+  partial rule intact, like the other lossy strips.
+- **`bindery doctor`: the stranded stranger's first command.** An
+  environment self-check that reports the Python floor and stack tier
+  (the full vir_tui+cquarry stack on 3.14, the stack-free repair core
+  on 3.12/3.13), the epubcheck oracle and its version, Java (the
+  daemon's viability), the optional html5lib, and whether a Calibre
+  library is discoverable here. It imports none of the VirInvictus
+  stack (their absence is the finding, not a crash), never raises, and
+  always exits 0: a diagnosis is not a failure.
+- **`repair --json FILE`: the one machine-readable gap closed.** The
+  repair verb writes its record in the `library --json` per-book
+  vocabulary (status, applied, before/after counts, fix summary) on
+  every processing outcome, including nochange and reject; exit codes
+  unchanged.
+- **`--backup-keep N`: the backup rotation is boundable.** The
+  .bak/.bak2/.bak3... rotation grew unbounded across a 5,228-book
+  library. Opt-in ring: at most N backup files per book, the author
+  original .bak never deleted, the newest content at the highest name.
+  Usage error below 2 or without a backup mode. The backup write
+  itself is now atomic (a .part scratch copy then os.replace), so a
+  disk-full mid-copy can never leave a truncated file at the final .bak
+  name.
+- **The plugin's log rotates.** bindery_repair.log grew without bound
+  in Calibre's config directory; it now rotates at `max_log_mb`
+  (default 2MB, one .old generation kept, 0 disables) inside the
+  never-break-an-import contract.
+- **fast_sweep's audit CSV measures the gate's scale.** The harness's
+  audit branch read the live report getters, which count message
+  occurrences, while bindery's gate is calibrated on the aggregated
+  messages epubcheck's JSON carries (the mismatch measured 243 vs 4 on
+  one book). The CSV now reads the aggregated checker totals out of
+  the JSON document `generate()` serializes, the same shape the
+  embedded daemon uses, so candidate selection and gating always
+  agree.
+- **PRIVACY: the census report is untracked (forward-only).**
+  testing_facility/top500candidates/REPORT.md was tracked on this
+  public repo and listed real book titles at absolute library paths
+  with internal Calibre ids; it is untracked and gitignored (the file
+  stays on disk as the fast_sweep --summary target), per the same
+  ruling class as the v0.33.0 test_facility untrack. The reachable
+  history copy was weighed and kept: the strip would rewrite every
+  release tag, and the leak no longer sits on the front door.
+- **The GitHub batch.** publish.yml now extracts the tag's verbatim
+  patchnotes entry into the release body (the three newest release
+  pages rendered blank; all three are backfilled from their tag
+  objects); the repo description leads with what the tool is instead
+  of the daemon; [project.urls] gives the PyPI page its
+  Homepage/Repository/Changelog; 7 wasted topics are swapped for
+  epub3/calibre-plugin/python-cli/ebook-audit; the empty wiki is
+  disabled; the redundant per-job suite run is gone from the publish
+  workflow; concurrency blocks serialize publishes and cancel
+  superseded CI runs; the publish workflow is top-level read-only with
+  the third-party release action SHA-pinned. Two repo protections
+  landed on a recorded go: a v*.*.* tag ruleset (deletion and
+  non-fast-forward blocked, admin bypass preserved for the two
+  deliberate tag repairs) and the pypi environment restricted to tag
+  pushes. And the releases policy is recorded: forward-only from
+  v0.37.0.
+- **The docs truth batches.** spec.md's repair inventory no longer
+  self-contradicts (one canonical list: 15 structural + 3 lossy + 4
+  safe opt-ins + --reserialize; --fix-ids moved to the safe group;
+  --strip-bad-attrs gained its section; the gate sentence carves out
+  --fix-cover's no_worse acceptance); the audit verb's own exit-code
+  contract (0 clean, 1 flagged, 2 usage: the deliberate inverse of the
+  repair verbs) is documented where the tool-wide shape is stated; the
+  epubcheck install paragraph is written; the audit-only thresholds no
+  longer masquerade as library flags; the mimetype fix is counted in
+  the always-on core everywhere; validate.py's "degrades safely"
+  fiction is replaced with the real refuse-without-the-oracle
+  contract; a dozen header/docstring inaccuracies are corrected (the
+  six-vs-four analyzer split, repair_epub's three undocumented flags,
+  the blanket "OPF left untouched", the dead CalibreQuarry pointer,
+  oceanstrip's tense, and more). The em-dash layer is swept from the
+  living docs.
+- **Dead code removed** (on a recorded go): validate.py's unused
+  `_daemon` pool alias, cli.py's incremented-never-read `done_count`,
+  and audit.py's inert `sys.path.insert`.
+- **Dependencies:** floors unchanged (cquarry stays >=1.19.0: nothing
+  newer is required; vir-tui stays >=2.5.0). The lock re-resolves with
+  this release per the lag rule.
+
 ## v0.40.0 (2026-09-13)
 
 ### The plugin loads on Calibre again: the Python floor drops to 3.12
