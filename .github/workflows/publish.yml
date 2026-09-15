@@ -64,7 +64,15 @@ jobs:
       - name: Build the plugin zip from the tagged tree
         run: python scripts/build_plugin.py
 
+      # The tag message IS the release's patchnotes entry (verbatim, per the
+      # tagging procedure), so the release body is extracted from the tag
+      # object rather than paraphrased here. Without it the release page
+      # renders blank beside the zip.
+      - name: Extract the release body from the tag message
+        run: git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > release-body.md
+
       - name: Attach BinderyRepair zip to the release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release-body.md
           files: dist/BinderyRepair-*.zip

@@ -43,6 +43,11 @@ reserialize = ["html5lib>=1.1"]
 [project.scripts]
 bindery = "bindery.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/VirInvictus/bindery-cli"
+Repository = "https://github.com/VirInvictus/bindery-cli"
+Changelog = "https://github.com/VirInvictus/bindery-cli/blob/main/patchnotes.md"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/bindery"]
 
