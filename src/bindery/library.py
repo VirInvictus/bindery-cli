@@ -30,7 +30,8 @@ def backup_path(epub: Path, backup_dir: Path | None) -> Path:
     """Where the backup of `epub` should go."""
     if backup_dir is None:
         return epub.with_suffix(epub.suffix + ".bak")
-    # Mirror Author/Title (id)/file.epub under backup_dir to avoid name collisions.
+    # One level of mirroring (book directory name) under backup_dir, enough to
+    # avoid name collisions: backup_dir/<book dir (id)>/file.epub.
     return backup_dir / epub.parent.name / epub.name
 
 

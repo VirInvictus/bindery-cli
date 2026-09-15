@@ -1430,7 +1430,6 @@ class TestAnalyzerRobustness(unittest.TestCase):
         import contextlib
         import io
         import sqlite3
-        import zipfile
 
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
@@ -1462,7 +1461,9 @@ class TestAnalyzerRobustness(unittest.TestCase):
                 "INSERT INTO books (id,title,sort,path) VALUES (1,'T','T','A/T (1)')"
             )
             conn.execute("INSERT INTO authors (id,name) VALUES (1,'Author')")
-            conn.execute("INSERT INTO data (book,format,name) VALUES (1,'EPUB','T - Author')")
+            conn.execute(
+                "INSERT INTO data (book,format,name) VALUES (1,'EPUB','T - Author')"
+            )
             conn.commit()
             conn.close()
             book_dir = root / "A" / "T (1)"

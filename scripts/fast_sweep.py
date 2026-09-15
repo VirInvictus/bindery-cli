@@ -7,8 +7,9 @@ saturates every core, turning a full-library sweep into minutes. This wrapper
 is the bindery-cli side of that harness: it locates the epubcheck jar,
 compiles the harness once (--release 25, cached on mtime), feeds it a
 directory or a path list, and optionally aggregates extract-mode output into
-an error-code report (the testing_facility/top500candidates/REPORT.md
-generator).
+an error-code report (the generator behind the local
+testing_facility/top500candidates/REPORT.md, which lives on disk only: the
+facility is gitignored, not part of the repo).
 
 Stdlib only; a benchmarking tool, not part of the repair contract.
 

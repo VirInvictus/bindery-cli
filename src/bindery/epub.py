@@ -1,10 +1,14 @@
 """EPUB-level repair: apply the text transforms across an archive and rewrite it.
 
-Like oceanstrip's rewrite, this copies entries one at a time and forces the mimetype
+As the absorbed oceanstrip tool rewrote, this copies entries one at a time and forces the mimetype
 entry first and stored, so the output is never less conformant than the input. Content
 documents get the full HTML transform pipeline; the NCX sidecar gets the lighter XML
-pipeline plus a dtb:uid sync to the OPF unique identifier (the NCX-001 fix). The OPF
-itself is left untouched to keep Calibre's embedded metadata pristine.
+pipeline plus a dtb:uid sync to the OPF unique identifier (the NCX-001 fix). In the
+default pass the OPF is left untouched to keep Calibre's embedded metadata pristine;
+the opt-in repairs that must edit it (--fix-ids, --strip-epub3-attrs, --fix-page-map,
+--prune-missing-resources, --encode-url-spaces, --fix-media-types, --fix-cover) each
+rewrite exactly their own attribute or element, and the human-facing dc: metadata is
+never altered by any of them.
 """
 
 from __future__ import annotations
@@ -1033,6 +1037,14 @@ def repair_epub(
     With `url_spaces`, percent-encode raw spaces in src/href attribute values across
     the package (OPF href, NCX src, content src/href): a literal space is not a valid
     URL (RSC-020).
+    With `fix_container`, generate META-INF/container.xml at the located OPF when the
+    container is missing or names a file the archive does not contain (the gateway
+    defect: epubcheck stays fatal while the OPF is unfindable).
+    With `fix_media_types`, normalize wrong manifest media-type declarations
+    (OPF-029) when the file's magic bytes confirm the extension (jpg/png/gif only).
+    With `fix_cover`, repair dangling EPUB2 cover wiring: re-point the <meta
+    name="cover"> whose content names no manifest id when the OPF guide's cover
+    reference resolves to exactly one item, remove it otherwise.
     """
     report = RepairReport()
 

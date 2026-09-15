@@ -29,22 +29,29 @@ metadata and structural validators cannot see. Six analyzers, one tool:
                judges, it never flags the book)
   all          run all six in a SINGLE decompression pass per book
 
-This merges the former audit_epub_content.py / audit_epub_pagenumbers.py /
-audit_epub_emptytext.py: they shared the same spine resolution, library/
-directory dual-mode, read-only contract, and exit codes, and differed only in
-the per-book verdict. `all` opens each EPUB once and feeds the decoded spine to
-all four analyzers (the expensive part is decompression, so this is a real
-win at library scale).
+The first three analyzers began as standalone scripts (audit_epub_content.py /
+audit_epub_pagenumbers.py / audit_epub_emptytext.py), merged here because they
+shared the same spine resolution, library/directory dual-mode, and exit codes,
+differing only in the per-book verdict. `all` opens each EPUB once and feeds
+the decoded spine to all six analyzers (the expensive part is decompression,
+so this is a real win at library scale).
 
-Companion to validate_metadata.py (which audits the catalogue) and to Bindery
-(which repairs EPUB structure). This one reads body text and changes nothing;
-it opens metadata.db strictly mode=ro.
+Sister surface, not sibling file: the catalogue audit lives in cquarry (and
+its CalibreQuarry CLI), and bindery's own repair/library verbs repair the
+structure this tool audits. The scan reads body text and changes nothing; the
+one write path is the opt-in --tag TAG, which tags flagged books in
+metadata.db through cquarry's trigger-safe write module after the run
+(library and single-book modes). The audit's own reads open metadata.db
+strictly mode=ro.
 
-Run from the library directory:
-    python3 bindery audit all                 # all four audits, whole library
-    python3 bindery audit content             # one audit, whole library
-    python3 bindery audit all ~/Downloads     # vet loose .epub files before import
-    python3 bindery audit emptytext ~/Downloads --min-chars 1000
+Run from the library directory (or pass an explicit path):
+    bindery audit all                     # all six audits, whole library
+    bindery audit content                 # one audit, whole library
+    bindery audit all ~/Downloads         # vet loose .epub files before import
+    bindery audit emptytext ~/Downloads --min-chars 1000
+    bindery audit all --id 1234           # single-book mode via cquarry
+
+(`python3 -m bindery audit ...` is the same thing as `bindery audit ...`.)
 
 Library mode pulls the EPUB list (and tags / declared language) from
 metadata.db; directory mode scans every .epub it finds recursively, the
@@ -70,6 +77,11 @@ from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+# Inherited from the standalone audit_epub.py, where a copy dropped inside
+# the library needed its own directory importable for sibling imports. This
+# module imports nothing from its package directory, so under the shipped
+# package the insert is inert; it remains because removing it changes what a
+# bare standalone copy can import.
 sys.path.insert(0, str(Path(__file__).parent))
 
 

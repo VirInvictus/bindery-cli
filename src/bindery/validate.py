@@ -434,11 +434,13 @@ def gate(before: CheckResult, after: CheckResult) -> str:
 
 
 def no_worse(before: CheckResult, after: CheckResult) -> bool:
-    """The acceptance bar for a lossy content repair (page-number stripping), whose
-    benefit epubcheck cannot see. Unlike `gate`, it does not demand a measured
-    improvement; it only forbids a regression: no net-new fatals, and no new errors
-    unless fatals were already masking them. Mirrors oceanstrip's 'no more fatals or
-    errors than the original' bar."""
+    """The acceptance bar for a repair whose gain epubcheck cannot see: the three
+    lossy strips (page numbers, broken tags, watermarks; the dropped-marker count
+    rides them) and --fix-cover, whose cover wiring is not a schema finding. Unlike
+    `gate`, it does not demand a measured improvement; it only forbids a
+    regression: no net-new fatals, and no new errors unless fatals were already
+    masking them. The bar the absorbed oceanstrip tool used: 'no more fatals or
+    errors than the original'."""
     if after.fatals > before.fatals:
         return False
     if before.fatals == 0 and after.errors > before.errors:

@@ -8,12 +8,17 @@ running headers) and, where such a number split a sentence, rejoins the two
 paragraphs. It is therefore gated differently (epubcheck must be no worse, since
 the gain is invisible to epubcheck) and is off unless --strip-pagination is given.
 
-The detection mirrors CalibreQuarry's bindery audit_pagenumbers.py: a standalone
-<p> whose whole text is a bare number is only treated as baked when it genuinely
-interrupts prose. Merging happens only on the two confident interrupt signals (a
-lowercase continuation after the number, or a word split across it); otherwise the
-number is deleted and the paragraph break is left as-is. Running headers/footers
-are detected as short blocks repeated across the whole book.
+The detection is the same shape as this package's audit pagenumbers analyzer
+(audit.py: the two evolved from one script), but the code is deliberately
+separate: a standalone <p> whose whole text is a bare number is only treated as
+baked when it genuinely interrupts prose. Merging happens only on the two
+confident interrupt signals (a lowercase continuation after the number, or a
+word split across it); otherwise the number is deleted and the paragraph break
+is left as-is. Running headers/footers are detected as short blocks repeated
+across the whole book. (Note the two number grammars are NOT identical:
+number_value here excludes year ranges 1500-2099 outright, while the audit
+compensates for years at its call site. A third caller must copy one, not
+invent a third.)
 
 Three independent safety nets, any failure aborts the edit and returns the
 document unchanged:

@@ -1,11 +1,15 @@
-"""Deterministic, well-formedness-only repair transforms for (X)HTML/XML text.
+"""Deterministic repair transforms for (X)HTML/XML text.
 
 Every transform is a pure function `str -> (str, int)` returning the rewritten text
-and how many fixes it made. None of them change document semantics: they only make
+and how many fixes it made. The five the core pipeline runs (HTML_TRANSFORMS /
+XML_TRANSFORMS) change document semantics not at all: they only make
 already-intended markup well-formed (self-close void elements, turn undeclared named
 entities into numeric character references, escape stray ampersands, strip junk before
-the XML prolog, drop a duplicated root xmlns). Anything deeper than that is out of
-scope and is left for the epubcheck gate to reject. See spec.md.
+the XML prolog, drop a duplicated root xmlns). The same module also hosts the opt-in
+repairs: structural ones that alter markup or fabricate minimal content
+(--fix-empty-body, --unwrap-illegal-tags, ...) and the lossy strips this package
+ships (--strip-broken-tags), all fenced behind explicit CLI flags and the
+epubcheck acceptance bars. See spec.md.
 """
 
 from __future__ import annotations
@@ -319,8 +323,6 @@ def drop_duplicate_xmlns(s: str) -> tuple[str, int]:
     return s, count
 
 
-# Transforms applied to full (X)HTML content documents, in order. Prolog and root-tag
-# fixes first, then ampersand/entity normalization, then void self-closing.
 @_outside_protected
 def fix_ncx_playorder(s: str) -> tuple[str, int]:
     """Re-sequence `playOrder` integers across `<navPoint>` start tags so they
@@ -669,8 +671,10 @@ def encode_url_spaces(s: str) -> tuple[str, int]:
     return _SRC_HREF_ATTR_RE.sub(repl, s), count
 
 
-# The always-on core: exactly the five semantics-preserving well-formedness fixes
-# the spec names, nothing else. Everything that adds markup, deletes attributes, or
+# The always-on core for full (X)HTML content documents, in order: prolog and
+# root-tag fixes first, then ampersand/entity normalization, then void
+# self-closing. Exactly the five semantics-preserving well-formedness fixes the
+# spec names, nothing else. Everything that adds markup, deletes attributes, or
 # removes/restructures elements lives behind an explicit CLI flag (threaded through
 # repair_epub), so the default pass can never change more than parsing requires.
 # See spec.md "Transforms" and the per-flag sections.

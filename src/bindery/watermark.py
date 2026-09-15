@@ -1,7 +1,8 @@
 """Locate and remove producer/conversion watermarks from (X)HTML documents.
 
 A watermark is a run of markup whose visible text is a known producer stamp.
-Producers inject it two ways, and oceanstrip handles both with the same
+Producers inject it two ways, and this strip (the retired oceanstrip tool,
+absorbed at v0.12.0) handles both with the same
 balanced-element removal so a well-formed document stays well-formed:
 
 - **Anchored** (a link): an <a> whose start tag (href) carries a known signature.
