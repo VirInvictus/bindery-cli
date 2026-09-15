@@ -1449,9 +1449,11 @@ A research pass mapped the full real-world EPUB damage taxonomy against
 the shipped repair surface: bindery handles ~60-65% of damage classes
 end-to-end, and the missing slice is package-level structure — several
 classes of which are GATEWAY DEFECTS (epubcheck stays fatal, so no
-shipped repair can ever be gate-accepted on those books). Full evidence,
-producer classes, and the cross-repo routing live in
-REPORT-12-Sept.md. Lead with the prevalence study; every box below is
+shipped repair can ever be gate-accepted on those books). The source
+report, REPORT-12-Sept.md, was retired on 2026-09-15 per the
+BINDERY_REPORT.md precedent (every actionable item in it shipped; the
+verdict text predated execution) and lives in git history (last tracked
+at d6a5381). Lead with the prevalence study; every box below is
 an opt-in structural repair under the existing gate contract.
 
 ### A. Research first (boxes cannot be honestly sized without these)
