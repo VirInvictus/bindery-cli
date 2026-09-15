@@ -74,6 +74,21 @@ progress output, plus the VirInvictus libraries `vir-tui` (TUI rendering) and
 `cquarry` (read-only Calibre database access), which install on Python 3.14+
 only; `html5lib` remains an optional extra, needed only for `--reserialize`.
 
+epubcheck (W3C's conformance checker) is the gate's oracle and the one
+dependency pip cannot install for you. It needs a Java runtime. Any of these
+works:
+
+- your package manager, where it ships: `apt install epubcheck` (Debian/Ubuntu),
+  `brew install epubcheck` (macOS), `epubcheck` in the AUR (Arch); or
+- the release zip from [w3c/epubcheck](https://github.com/w3c/epubcheck/releases):
+  unzip it and put its `epubcheck` launcher script somewhere on `PATH`.
+
+Verify with `epubcheck --version`. A validated run refuses to start without it
+(exit 1: "epubcheck not found") rather than silently skipping the gate; only
+`--no-validate` bypasses it, and the Calibre plugin never needs it (its default
+pass runs ungated by design). `scripts/fast_sweep.py` also accepts
+`EPUBCHECK_JAR` pointing at the jar directly.
+
 The floor is two-tier by those markers: on Python 3.14 everything runs. On
 3.12/3.13 the install carries the repair core only, which is the tool's core
 job: `bindery repair` on a single EPUB works in full, while `bindery audit`,
@@ -94,7 +109,8 @@ Each release also ships **BinderyRepair-v<VERSION>.zip**, a Calibre plugin that
 repairs EPUBs as they are imported: it is attached to the GitHub release beside
 the PyPI wheel (install it via Calibre's Preferences, Plugins, "Load plugin
 from file"). The plugin is the CLI's always-on core pass only: the five
-well-formedness fixes plus the NCX pipeline. The structural repairs and lossy
+well-formedness fixes, the NCX pipeline, and the mimetype fix. The structural
+repairs and lossy
 strips stay CLI-only, because their acceptance is the epubcheck gate and
 epubcheck cannot run inside Calibre; nothing runs ungated in the plugin, ever.
 
@@ -192,6 +208,8 @@ bindery audit all ~/Downloads/epubs --json vetting-report.json
 ```
 With `--id`, `--json` accepts exactly one book id (each single-book run writes the file wholesale).
 
+**Thresholds:** `--min-chars N` and `--thin-chars N` are the EMPTY and THIN body-text thresholds (defaults 2000 and 20000); `--min-chars` above `--thin-chars` is a usage error. `--max-doc-chars N` is the monolithic-document flag threshold (default 300,000). All three belong to the audit parser only (`bindery library --min-chars …` is an unknown-flag error).
+
 **Spine-integrity reporting:** Both `audit` and `library` reports now classify manifest/NCX references that point to absent files. A `convention` verdict means the ToC is bloated but the present documents form a consecutive chapter span (e.g., the Wandering Inn official-build pattern, safe). A `fragment` verdict means the span itself is broken.
 
 **Archive integrity:** every audit fully reads each archive entry (CRC + decompression), so a damaged download is reported CORRUPT — with the first broken entry named — instead of being mislabeled EMPTY by `emptytext`. `library --sweep` splits its `unreadable` bucket into `not_a_zip` / `truncated` / `encrypted` / `corrupt_entry`, so the right disease is visible without leaving the sweep.
@@ -243,7 +261,6 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - `--id <ids>` limits the sweep to a comma-separated list of Calibre book IDs, skipping the full library walk.
 - `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast. Paths are resolved on both sides, and a CSV that matches nothing triggers a loud warning instead of silently selecting zero books.
 - `--limit N` processes at most N candidates and stops opening archives after them (lazy within one worker window). A value below 1 is a usage error.
-- `--min-chars N` and `--thin-chars N` are the audit's EMPTY and THIN body-text thresholds (defaults 2000 and 20000); `--min-chars` above `--thin-chars` is a usage error. `--max-doc-chars N` is the audit monolithic-document flag threshold (default 300,000).
 - `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. bindery-cli may serve checks from a small persistent Java daemon (see the gate section above for how it is bounded and how it fails safe); wherever the daemon cannot serve, the run falls back to the standard per-book epubcheck subprocess at the usual seconds per book. Combine with `--only fatals` for a self-contained "find and fix the broken books" run.
 - `--workers N` runs the sweep's candidate pass through N concurrent epubcheck workers (default 1: serial, unchanged). The subprocess releases the GIL, so threads parallelize the oracle honestly; books are checked in windows of N consumed in order, so the candidate set matches the serial sweep and `--limit` stays lazy within one window of overshoot. The repair phase stays serial: that is where the shared workdir and the atomic-replacement contract live.
 - `--json FILE` writes a machine-readable report of the whole run (per-book status, before/after counts, applied flag, summary totals). `--manual-list FILE` writes the paths of every book that was not auto-repaired, one per line, ready for manual follow-up.
@@ -253,7 +270,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - `--all` automatically turns on all opt-in non-fatal fixes and lossy strips (pagination, watermarks, bad attributes, unknown entities, image alt tags, etc.) in a single run.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
 - A per-book progress line goes to stderr (stdout stays a clean report); `--quiet` suppresses it. A corrupt or unreadable book is reported and skipped, never aborting the sweep.
-- Exit codes: 0 for a clean sweep, 1 for a usage error, 2 when any book was rejected, unreadable, or failed epubcheck (for scripts and cron). Note that argparse-level misuse (an unknown flag or a malformed argument) exits with 2 before any validation runs; the tool's own usage validations exit 1.
+- Exit codes for `repair`, `library`, and `run`: 0 for a clean sweep, 1 for a usage error, 2 when any book was rejected, unreadable, or failed epubcheck (for scripts and cron). Note that argparse-level misuse (an unknown flag or a malformed argument) exits with 2 before any validation runs; the tool's own usage validations exit 1. The `audit` verb runs its own contract, the inverse shape: 0 clean, 1 when any book was flagged (a flag is the audit's trouble), 2 for its own usage errors (a path that is not a directory, a directory with no EPUBs, an unknown book id).
 - A `partial` book (improved but still unable to open) is reported for manual follow-up and fails the run with exit 2, in `library`, `run phase1`, and `run phase3` alike: a book that still needs a human is trouble.
 - `repair` refuses to overwrite an existing output file unless `--force` is given.
 

@@ -1,9 +1,11 @@
-"""epubcheck wrapper and the acceptance gate.
+"""epubcheck wrapper and the two acceptance bars.
 
-epubcheck is the external oracle. A repair is only worth keeping if it strictly
-reduces problems and never introduces new ones. If epubcheck is not installed, the
-gate degrades safely: validation is skipped and callers must decide whether to trust
-the repair without it (the CLI requires --no-validate to do so).
+epubcheck is the external oracle. The `gate` demands measured improvement
+(fewer fatals, or fewer errors on a clean book) and `no_worse` accepts the
+lossy strips and cover repairs when nothing regressed. There is no degrade
+path: if epubcheck is not installed, callers refuse (exit 1, "epubcheck not
+found") unless the user explicitly passes --no-validate, which skips the gate
+and trusts the RepairReport alone.
 """
 
 from __future__ import annotations

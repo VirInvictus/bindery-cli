@@ -27,9 +27,11 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   subprocess was retired in v0.24.0). Before adding any further Python package, stop and ask.
 - **Semantics-preserving transforms by default, everything else fenced behind a flag.**
   The always-on core is exactly five well-formedness fixes (prolog junk, duplicate
-  `xmlns`, bare `&`, named entities, void self-closing) plus the NCX pipeline; every core
+  `xmlns`, bare `&`, named entities, void self-closing), the NCX pipeline, and the
+  mimetype fix (added/normalized/first-stored, epub.py's archive rewrite); every core
   fix must render identically to the author's intent: never add, remove, or reorder
-  visible content. Two kinds of exceptions exist, both opt-in and off unless requested:
+  visible content. The canonical opt-in inventory lives in spec.md: fifteen structural
+  repairs, three lossy strips, four safe opt-ins, plus `--reserialize`.
   * **Structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
     `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
     `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
@@ -57,13 +59,7 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
     decision by `run phase1` on both the read-only and apply paths.
   Do not let any NEW fix touch content without its own flag; if a candidate repair cannot
   be made deterministically safe, it does not belong here — report it for manual repair
-  instead. A fourth, smaller group sits beside the structural repairs and lossy strips:
-  the safe opt-ins (`--fix-ids`, `--add-img-alt`, `--strip-bad-attrs`,
-  `--escape-unknown-entities`) plus `--encode-url-spaces`, which repair without
-  altering visible markup; the "twelve structural repairs and three lossy strips"
-  phrasing elsewhere in these docs was never the complete inventory, and the
-  Phase 16 package repairs (`--fix-container`, `--fix-media-types`, `--fix-cover`)
-  took the structural count to fifteen (v0.38.0 + v0.39.0).
+  instead.
 - **The gate is the safety contract.** Never apply a repair epubcheck has not accepted.
   Respect the two-mode logic in `validate.gate` (fatal-fixing tolerates error unmasking;
   error-cleanup does not). The lossy strips (`--strip-pagination`, `--strip-broken-tags`,

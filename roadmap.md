@@ -1,5 +1,9 @@
 # bindery-cli roadmap
 
+*Phase numbers are historical identifiers, not an order: the campaign added
+phases non-monotonically and two distinct efforts both carry "Phase 4". The
+headings stay as written because cross-repo notes cite them.*
+
 ## Phase 1: deterministic repair engine (shipped, v0.1.0)
 
 - [x] Transforms: self-close void elements, named entity to numeric, escape bare `&`,
@@ -1662,8 +1666,9 @@ four interpreter families.
 - [ ] **Blitz candidates:** the audit-refresh deep-dive (per-class deltas
       vs the 09-12 baselines; first-time counts for the two C-ruled
       classes); a cover advisory analyzer completing the hybrid ruling;
-      --encode-url-spaces entry rename + reference rewrite (PKG-010, 280
-      books); plugin log rotation.
+      --encode-url-spaces entry renames (the reference-rewrite half
+      shipped v0.28.0; the remainder is renaming archive entries whose
+      filenames carry raw spaces; PKG-010, 280 books); plugin log rotation.
 - [ ] **GitHub presentation (workspace batch):** description rewrite
       (leads with deterministic epubcheck-gated repair); 7 topics swapped
       (add epub3/calibre-plugin/python-cli/ebook-audit); codex page still

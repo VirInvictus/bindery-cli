@@ -13,16 +13,20 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in two kinds, both strictly
-opt-in. The fourteen **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
-`--fix-id-colons`, `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The fifteen
+**structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
+`--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
 `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
 `--fix-container`, `--fix-media-types`, `--fix-cover`) alter
 markup structure or fabricate minimal content; the three
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
-content a converter injected rather than content the author wrote. The default pass runs
-ONLY the transforms listed above and the NCX pipeline — nothing else. (v0.14–v0.16 briefly
+content a converter injected rather than content the author wrote. A fourth group of
+**safe opt-ins** (`--fix-ids`, `--add-img-alt`, `--strip-bad-attrs`,
+`--escape-unknown-entities`) repairs without altering visible markup, and
+`--reserialize` re-parses still-malformed documents whole. The default pass runs
+ONLY the five well-formedness transforms above, the NCX pipeline, and the mimetype
+fix: nothing else. (v0.14–v0.16 briefly
 ran the structural repairs unconditionally, which broke this contract; v0.17.0 restored
 it.) The `--all` flag enables every opt-in transform (safe, structural, and lossy) for a
 comprehensive repair pass.
@@ -90,6 +94,29 @@ where a missing alt did not; hence off by default, never a core transform. Exist
 alt attributes (either quote style) are untouched and the fix is idempotent; the
 normal gate applies.
 
+### Opt-in: id rewrite (`--fix-ids`)
+
+A safe opt-in: it renames manifest `item` ids that are not valid XML names
+(digit-led, as when a converter stamps ids from UUIDs; colon-bearing) with the
+deterministic `id_` scheme, and updates every reference to them: spine `idref`
+and `toc`, item `fallback` and `media-overlay`, and the EPUB 2 cover meta, in
+both quote styles. NCX ids are renamed by the same pass (`fix_ncx_ids`);
+colon-bearing fragments follow the rename via `--fix-id-colons`' NCX half. Href
+paths and filenames are untouched, and the human-facing `dc:` metadata is never
+altered. Rendering is unchanged (ids are invisible), but the OPF is edited, so it
+is off by default; the normal gate applies.
+
+### Opt-in: strip bad attributes (`--strip-bad-attrs`)
+
+Another safe opt-in: it removes attributes that make the XML unparseable, a
+name starting with a digit (a mangled `31=""`) or a namespaced name whose
+prefix is never declared in the document (Office VML `v:shapes` with no
+`xmlns:v`). A well-formed document has no such attributes by definition, so
+this is a no-op on good files and only touches already-malformed ones. The
+edit is anchored to real start tags; CDATA sections and comments are never
+rewritten, and everything but the offending attribute is preserved
+byte-for-byte. The normal gate applies.
+
 ### Opt-in: structural repairs
 
 Fifteen repairs go past well-formedness and therefore require their own flag; none is ever
@@ -105,12 +132,6 @@ part of the default pipeline:
   external URL names a position in that other document and survives verbatim, and the
   NCX's `content src` fragments follow the rename (`fix_ncx_src_fragments`), so a ToC
   never dangles against the ids it references.
-- **`--fix-ids`**: renames manifest `item` ids that are not valid XML names
-  (digit-led, colon-bearing) with the deterministic `id_` scheme, and updates
-  every reference to them: spine `idref` and `toc`, item `fallback` and
-  `media-overlay`, and the EPUB 2 cover meta, in both quote styles. NCX ids are
-  renamed by the same pass (`fix_ncx_ids`); colon-bearing fragments follow the
-  rename via `--fix-id-colons`' NCX half. Href paths and filenames are untouched.
 - **`--unwrap-block-in-inline`**: drop a `<span>` that illegally wraps a
   `<div>/<p>/<blockquote>`, keeping the block element and its text.
 - **`--strip-invalid-value`**: remove misplaced `value="..."` attributes from non-form
@@ -192,10 +213,12 @@ The EPUB3 `properties="cover-image"` slice is audit-only by ruling. Cover wiring
 to epubcheck, so cover-only repairs are accepted under the `no_worse` bar the lossy strips
 use, with the `partial` rule intact.
 
-All fifteen are evaluated by the normal `gate`: unlike the lossy strips, their benefit is
-visible to epubcheck (they clear errors), so a run with no measurable improvement is a
-noop and nothing is applied. CDATA sections and comments are never rewritten, as
-everywhere else.
+Fourteen of the fifteen are evaluated by the normal `gate`: unlike the lossy strips,
+their benefit is visible to epubcheck (they clear errors), so a run with no measurable
+improvement is a noop and nothing is applied. The exception is `--fix-cover`, whose
+gain is invisible to epubcheck: it is accepted under the same `no_worse` bar the
+lossy strips use, with the partial rule intact. CDATA sections and comments are never
+rewritten, as everywhere else.
 
 ### Transform invariants
 
@@ -347,6 +370,11 @@ For a Calibre library (`Author/Title (id)/Title - Author.epub`):
   own validation runs; the tool's own usage validations exit 1. A `partial` book
   (improved but still fatal) is reported for manual follow-up and counts as trouble:
   `library`, `run phase1`, and `run phase3` all exit 2 on it (unified 2026-09-10).
+  The `audit` verb is the deliberate exception, its own contract in the inverse
+  shape: 0 clean, 1 when any book was flagged (a flag is the audit's trouble, so it
+  takes the trouble slot), 2 for its own usage errors (a path that is not a
+  directory, a directory with no EPUBs, an unknown book id) and for tagging-setup
+  failure.
 - With `--sweep`, `--workers N` runs the candidate-selection epubcheck pass through N
   concurrent workers (default 1: serial, unchanged). Books are checked in windows of N
   consumed in input order, so the candidate set and the before-measurements are identical
@@ -407,10 +435,18 @@ silent skip.
 `--json FILE` (v0.29.0) writes the same verdicts machine-readably, in the `library --json`
 shape: one record per file with a `status` (`clean`, `problem`, or `error`) and per-analyzer
 verdicts (`problem`, `status`, `details`); the always-on archive/spine verdicts appear OK when
-they were silent, emptytext is omitted when the archive verdict owns the book's body-text story,
+they were silent, emptytext and completeness are omitted when the archive verdict owns the
+book's body-text story (a corrupt entry decompresses to nothing and DRM-encrypted spine
+docs read as empty text, so an EMPTY verdict there would be the wrong disease),
 and a scan error becomes its own record (`status: "error"`, an `error` message, no verdicts).
 All three modes write it (directory, library, and single-book); `--json` with `--id` accepts
 exactly one book id, since each single-book run writes the file wholesale.
+
+Exit codes: the audit verb runs its own contract, the inverse of the repair verbs'
+shape (0 clean, 1 usage, 2 trouble): 0 clean, 1 when any book was flagged (a flag is
+the audit's trouble, so it takes the trouble slot), 2 for its own usage errors (a
+path that is not a directory, a directory with no EPUBs, an unknown book id) and
+for tagging-setup failure.
 
 ## Run verbs (acquisition slices)
 
@@ -445,7 +481,9 @@ Each release vendors the repair core into a Calibre plugin zip,
 `reserialize.py` byte-identical to `src/bindery/` (the zip root is a package,
 so their relative imports resolve unchanged; a suite drift test pins the
 equality) plus the plugin entry `plugin/__init__.py` with the version tuple
-substituted from the single-source `VERSION`.
+substituted from the single-source version, `VERSION` in
+`src/bindery/__init__.py` (this repo deliberately has no VERSION file;
+`pyproject.toml` mirrors it and the pin test enforces the pair).
 
 Identity and shape: the plugin is `Bindery Repair` (import name
 `bindery_repair`, via the `plugin-import-name-` marker), a
@@ -454,7 +492,8 @@ Identity and shape: the plugin is `Bindery Repair` (import name
 enforced non-goal).
 
 The active fix set is exactly the CLI's default pass: the five
-well-formedness transforms plus the NCX pipeline. All structural repairs and
+well-formedness transforms, the NCX pipeline, and the mimetype fix. All
+structural repairs and
 the three lossy strips stay CLI-only: their acceptance IS the epubcheck gate,
 which cannot run inside Calibre. Opt-in flags are never enabled by the
 plugin; nothing runs ungated.
