@@ -394,10 +394,6 @@ def set_daemon_pool_size(n: int) -> None:
     _daemon_pool.set_size(n)
 
 
-# Backwards-compatible alias for the historical single-daemon entry point.
-_daemon = _daemon_pool
-
-
 def run_epubcheck(path: Path, timeout: int = 300) -> CheckResult | None:
     """Run epubcheck and return parsed counts, or None if it could not be parsed.
 

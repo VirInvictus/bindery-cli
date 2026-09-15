@@ -77,13 +77,6 @@ from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-# Inherited from the standalone audit_epub.py, where a copy dropped inside
-# the library needed its own directory importable for sibling imports. This
-# module imports nothing from its package directory, so under the shipped
-# package the insert is inert; it remains because removing it changes what a
-# bare standalone copy can import.
-sys.path.insert(0, str(Path(__file__).parent))
-
 
 class _LazyUI:
     # vir_tui rides the Python 3.14 VirInvictus stack, marker-gated out of

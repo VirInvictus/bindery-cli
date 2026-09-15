@@ -260,7 +260,6 @@ def _sweep_select_parallel(
     if not todo:
         return
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        done_count = 0
         progress = (
             None if quiet else tqdm(total=len(todo), desc="Sweeping", unit="book")
         )
@@ -269,7 +268,6 @@ def _sweep_select_parallel(
             futures = [ex.submit(run_epubcheck, epub) for epub in window]
             for epub, fut in zip(window, futures, strict=True):
                 c = fut.result()
-                done_count += 1
                 if not quiet:
                     tqdm.write(f"[sweep] {epub.relative_to(root)}", file=sys.stderr)
                     progress.update(1)
