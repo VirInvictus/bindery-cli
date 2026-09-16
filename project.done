@@ -4,6 +4,13 @@ Completed: 2026-09-15 (THE FINAL BLITZ, repo agent lane)
 Range: 2b9f24e (analyzer trio) through f47fc8f (ci tag-fetch fix), on main,
 pushed; CI green throughout; v0.41.0 tagged and published to PyPI.
 
+POSTSCRIPT 2026-09-15 (same day, Brandon's regression report): v0.41.1
+hotfixed the one real defect the blitz shipped, the catastrophic-backtracking
+CPU spin in `repair --all`'s rewritten quote-aware span matcher (the Physics
+fixture; Brandon bisected and root-caused it). Fix: possessive quantifiers
+on all three rewritten tag-prefix patterns; verified on his fixture against
+the 0.40.0 output shape; the follow-up matcher-audit box is in the roadmap.
+
 ## What shipped
 
 - The analyzer-robustness trio: spineless-EPUB verdicts, per-book try
