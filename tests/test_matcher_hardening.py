@@ -72,7 +72,9 @@ class OpfTagMatchersSpin(unittest.TestCase):
         self.assertLess(elapsed, 5.0)
 
     def test_item_tag_spin_shape(self):
-        self._assert_fast_no_match(epub._ITEM_TAG_RE, self.SPIN_PREFIX + _apostrophe_run(500))
+        self._assert_fast_no_match(
+            epub._ITEM_TAG_RE, self.SPIN_PREFIX + _apostrophe_run(500)
+        )
 
     def test_itemref_tag_spin_shape(self):
         text = "<itemref idref='id1' extra='" + _apostrophe_run(500)
@@ -94,7 +96,10 @@ class OpfTagMatchersSpin(unittest.TestCase):
             "<reference type='text' title='t' href='a.xhtml'/></package>"
         )
         item = epub._ITEM_TAG_RE.search(opf)
-        self.assertEqual(item.group(0), '<item id="id1" href="a.xhtml" media-type="application/xhtml+xml"/>')
+        self.assertEqual(
+            item.group(0),
+            '<item id="id1" href="a.xhtml" media-type="application/xhtml+xml"/>',
+        )
         self.assertIsNotNone(epub._SPINE_ITEM_RE.search(opf))
         self.assertIsNotNone(epub._COVER_META_RE.search(opf))
         self.assertIsNotNone(epub._GUIDE_REF_RE.search(opf))
@@ -102,8 +107,8 @@ class OpfTagMatchersSpin(unittest.TestCase):
     def test_prune_dangling_edges_spin_shape(self):
         # prune_dangling_edges' inline spine|item|itemref matcher over a
         # truncated OPF: linear failure, no hang.
-        opf = (
-            '<package><spine toc="ncx"><itemref idref=\'broken ' + _apostrophe_run(500)
+        opf = '<package><spine toc="ncx"><itemref idref=\'broken ' + _apostrophe_run(
+            500
         )
         signal.alarm(20)
         try:
@@ -137,7 +142,7 @@ class LazyMatcherDisjointBranch(unittest.TestCase):
 
     def test_img_wellformed_rebuild_identical(self):
         tag = '<img src="pic.png" alt="a photo" />'
-        out, count = transforms.add_img_alt('<html><body>' + tag + '</body></html>')
+        out, count = transforms.add_img_alt("<html><body>" + tag + "</body></html>")
         self.assertEqual(count, 0)  # alt already present; tag untouched
         self.assertIn(tag, out)
 
@@ -150,7 +155,9 @@ class LazyMatcherDisjointBranch(unittest.TestCase):
         self.assertIsNone(epub._ANCHOR_TAG_RE.search("<a href='a> prose"))
 
     def test_link_and_anchor_wellformed_match(self):
-        self.assertIsNotNone(epub._LINK_TAG_RE.search('<link href="a.css" rel="stylesheet"/>'))
+        self.assertIsNotNone(
+            epub._LINK_TAG_RE.search('<link href="a.css" rel="stylesheet"/>')
+        )
         self.assertIsNotNone(epub._ANCHOR_TAG_RE.search('<a href="b.xhtml">text</a>'))
 
 
