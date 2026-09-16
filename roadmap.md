@@ -1849,3 +1849,35 @@ four interpreter families.
       stdlib-only rule and adds a vendored plugin dep): trigger is a
       real 3.12/3.13 stranger audience, not a hypothetical.
 - [x] **vir-tui floor >=2.5.0 + lock refresh** (2026-09-14, no release cut: upstream 2.4.0/2.5.0 are additive terminal-safety and session-awareness releases; only the vir-tui resolution moved in the lock, the cquarry lag rule is untouched). *(Mention the floor bump in the next release's patchnotes.)*
+
+- [x] **REGRESSION (0.41.0) FIXED in v0.41.1: the repair --all CPU
+      spin on the Physics fixture was catastrophic backtracking in the
+      rewritten `unwrap_block_in_inline` regex** (SHIPPED 2026-09-15,
+      176906f): the quote-aware alternation's branches overlap ([^>]
+      also matches quotes), so failing candidates re-partitioned the
+      prefix exponentially. All three patterns the 0.41.0 commit
+      rewrote (`unwrap_block_in_inline`, `unwrap_illegal_tags`,
+      `downgrade_epub3_tags`) are now possessive-bounded (`*+`, re
+      3.11+ = the plugin's minimum Calibre floor): the committed
+      first-alternative path is the correct tag end, failure is
+      linear, successful matches are unchanged. Verified on Brandon's
+      fixture: the transform went from still-spinning at 15s to
+      0.01s; the recorded repro (`repair --all --force`) completes in
+      7.7s with output identical to the 0.40.0 shape. Regression
+      tests: the spin shape (the old pattern provably cannot finish
+      it) and the quote-aware function. Root-cause note preserved from
+      the report: the flag-bisect looked interaction-shaped because
+      earlier transforms move where failing candidates sit; the regex
+      was input-sensitive, not the flags broken. Unpin 0.40.0 once
+      0.41.1 is installed.
+- [ ] **Audit the remaining quote-aware tag matchers for the same
+      overlap ambiguity** (follow-up from the 0.41.1 hotfix): _VOID_RE
+      and the OPF matchers (cover meta, guide reference,
+      spine/item/itemref) share the overlapping-alternation shape but
+      were tested against the spin shape and do not blow up (the lazy
+      loop and always-matching candidates behave differently;
+      _VOID_RE's failure mode on a quote-run with no reachable `>` is
+      quadratic at worst, and it can match surprisingly far across
+      quoted spans, pre-existing since 0.40.0). Decide per matcher:
+      possessive-bound for uniformity, or document why the shape is
+      safe there. Never a third grammar copy.
