@@ -374,8 +374,19 @@ def unwrap_block_in_inline(s: str) -> tuple[str, int]:
         return m.group(1)
 
     s, n = re.subn(
-        r"""<span(?:(?:"[^"]*"|'[^']*'|[^>])*)>\s*"""
-        r"""(<(div|p|blockquote)(?:(?:"[^"]*"|'[^']*'|[^>])*)>.*?</\2>)\s*</span>""",
+        # The quote-aware branches OVERLAP ([^>] also matches quote
+        # characters), so a plain `*` lets the engine re-partition the start
+        # tag exponentially across them on every failing candidate: on a
+        # 843k-char doc full of <span>s whose closer never comes, 0.41.0
+        # spun CPU indefinitely (the Physics-fixture regression,
+        # roadmap 2026-09-15). The possessive `*+` commits to the
+        # first-alternative consumption (ending at the first unquoted `>`,
+        # which is the correct tag end) and never re-partitions: linear on
+        # failure, same matches on success. `re` has had possessive
+        # quantifiers since 3.11, the same floor as the plugin's minimum
+        # Calibre.
+        r"""<span(?:(?:"[^"]*"|'[^']*'|[^>])*+)>\s*"""
+        r"""(<(div|p|blockquote)(?:(?:"[^"]*"|'[^']*'|[^>])*+)>.*?</\2>)\s*</span>""",
         repl,
         s,
         flags=re.IGNORECASE | re.DOTALL,
@@ -503,9 +514,15 @@ def unwrap_illegal_tags(
             continue
         # quote-aware start-tag match (same shape as _VOID_RE): a `>` inside
         # an attribute value would otherwise end the match early and mangle
-        # the tag into a malformed edit the gate then rejects
+        # the tag into a malformed edit the gate then rejects. The branches
+        # overlap ([^>] also matches quotes), so the possessive `*+` bounds
+        # the re-partitioning that spun CPU on failing candidates in 0.41.0
+        # (see unwrap_block_in_inline).
         s, n1 = re.subn(
-            rf"""<{tag}\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""", "", s, flags=re.IGNORECASE
+            rf"""<{tag}\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""",
+            "",
+            s,
+            flags=re.IGNORECASE,
         )
         s, n2 = re.subn(rf"</{tag}\s*>", "", s, flags=re.IGNORECASE)
         count += n1 + n2

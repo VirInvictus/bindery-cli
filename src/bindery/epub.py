@@ -588,9 +588,12 @@ def downgrade_epub3_tags(
             return f"</{new}>"
 
         # quote-aware attrs group (same shape as the manifest matchers): a
-        # `>` inside an attribute value must not end the tag early
+        # `>` inside an attribute value must not end the tag early. The
+        # branches overlap ([^>] also matches quotes), so the possessive
+        # `*+` bounds the re-partitioning that spun CPU on failing
+        # candidates in 0.41.0 (see transforms.unwrap_block_in_inline).
         text = re.sub(
-            rf"""<{tag}\b((?:"[^"]*"|'[^']*'|[^>])*)>""",
+            rf"""<{tag}\b((?:"[^"]*"|'[^']*'|[^>])*+)>""",
             repl_open,
             text,
             flags=re.IGNORECASE,

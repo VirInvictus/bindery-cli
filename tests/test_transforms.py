@@ -389,6 +389,38 @@ class TestProtectedSpans(unittest.TestCase):
         out, n = unwrap_illegal_tags("<p>a<w>x</w>b<st>c</st></p>")
         self.assertEqual((out, n), ("<p>axbc</p>", 4))
 
+    def test_span_wrapping_block_with_gt_in_attribute_unwraps(self):
+        # the reason the start-tag match is quote-aware at all: the `>` of
+        # "a>b" is attribute content, and the span still wraps a block
+        text = '<p><span title="a>b"><div class="k">x</div></span>tail</p>'
+        out, n = unwrap_block_in_inline(text)
+        self.assertEqual((out, n), ('<p><div class="k">x</div>tail</p>', 1))
+
+    def test_failing_span_candidate_cannot_backtrack_explode(self):
+        # REGRESSION (0.41.0, the Physics fixture): the quote-aware prefix
+        # branches overlap ([^>] also matches quote characters), so in a
+        # long apostrophe-rich run with no `>` after a <span, the engine
+        # re-partitioned the prefix exponentially on the failing match and
+        # spun CPU indefinitely (an 843k-char back-matter document never
+        # finished). The possessive `*+` commits to the first partition and
+        # makes failure linear. This shape is the guard: the old pattern
+        # cannot finish this function call at all.
+        import signal
+        import time
+
+        run = "don't can't won't it's a>kind of prose, isn't it " * 2000
+        doc = "<p><span class='broken " + run + "and no closer.</p>"
+        signal.alarm(20)  # belt: fail the test, never hang the suite
+        try:
+            t0 = time.perf_counter()
+            out, n = unwrap_block_in_inline(doc)
+            elapsed = time.perf_counter() - t0
+        finally:
+            signal.alarm(0)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, doc)  # nothing matched: byte-for-byte
+        self.assertLess(elapsed, 5.0)
+
     def test_illegal_tag_with_gt_in_attribute_value_is_removed_whole(self):
         # a bare [^>]* matcher ended the start tag at the `>` inside the
         # attribute value, mangled the edit, and the gate rejected the run
