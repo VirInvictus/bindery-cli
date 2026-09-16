@@ -316,14 +316,14 @@ _EDGE_ATTR_RES = (
     re.compile(r"""\s+fallback\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE),
 )
 _COVER_META_RE = re.compile(
-    r"""<meta\b(?=(?:[^>]*\bname=)["']cover["'])(?:(?:"[^"]*"|'[^']*'|[^>])*)>""",
+    r"""<meta\b(?=(?:[^>]*\bname=)["']cover["'])(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""",
     re.IGNORECASE,
 )
 _COVER_CONTENT_RE = re.compile(
     r"""\s+content\s*=\s*(["'])((?:(?!\1).)+)\1""", re.IGNORECASE
 )
 _GUIDE_REF_RE = re.compile(
-    r"""<reference\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""", re.IGNORECASE
+    r"""<reference\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""", re.IGNORECASE
 )
 
 
@@ -421,7 +421,7 @@ def prune_dangling_edges(opf_text: str, pruned_ids: set[str]) -> tuple[str, int]
         return tag
 
     out = re.sub(
-        r"""<(?:spine|item|itemref)\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""",
+        r"""<(?:spine|item|itemref)\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""",
         strip_attrs,
         opf_text,
         flags=re.IGNORECASE,
@@ -659,21 +659,21 @@ _DROP_HREF_ATTR_RE = re.compile(r"""\s+href\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGN
 # shape as transforms._VOID_RE, so a '>' inside an attribute value cannot end
 # the tag early.
 _LINK_TAG_RE = re.compile(
-    r"""<link(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
+    r"""<link(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>"'])*?)\s*(/?)>""",
     re.IGNORECASE | re.DOTALL,
 )
 _ANCHOR_TAG_RE = re.compile(
-    r"""<a(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""", re.IGNORECASE | re.DOTALL
+    r"""<a(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>"'])*?)\s*(/?)>""", re.IGNORECASE | re.DOTALL
 )
-_IMG_TAG_RE = re.compile(
-    r"""<img(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
+_PRUNE_IMG_TAG_RE = re.compile(
+    r"""<img(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>"'])*?)\s*(/?)>""",
     re.IGNORECASE | re.DOTALL,
 )
-_ITEM_TAG_RE = re.compile(r"""<item\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""", re.IGNORECASE)
+_ITEM_TAG_RE = re.compile(r"""<item\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""", re.IGNORECASE)
 # `<itemref` must not be swallowed by the `<item\b` matcher above (\b has no
 # boundary before the 'r'), and its own idref carries the spine order.
 _SPINE_ITEM_RE = re.compile(
-    r"""<itemref\b(?:(?:"[^"]*"|'[^']*'|[^>])*)>""", re.IGNORECASE
+    r"""<itemref\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""", re.IGNORECASE
 )
 # `\b` is what keeps `<item\b` from matching `<itemref`: "itemref" has a word
 # character right after "item", so there is no boundary there.
@@ -999,7 +999,7 @@ def prune_missing_images(
             counts[key] = counts.get(key, 0) + 1
             return alt if key == "missing_imgs_unwrapped" else ""
 
-        return _IMG_TAG_RE.sub(repl, part), counts
+        return _PRUNE_IMG_TAG_RE.sub(repl, part), counts
 
     total: dict[str, int] = {}
     if "<!" in text:

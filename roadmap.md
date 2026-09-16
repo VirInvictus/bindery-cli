@@ -1642,7 +1642,7 @@ four interpreter families.
       (the oldest series whose embedded interpreter CI covers; the hollow
       (2, 0, 0) is gone) and the README plugin section documents platforms
       (Linux-tested) and the verification story.
-- [ ] **Analyzer robustness on untrusted input:** spine_integrity
+- [x] **Analyzer robustness on untrusted input:** *(SHIPPED in v0.41.0 -- the analyzer-robustness trio; verified 2026-09-16 by the post-blitz audit run: per-book verdicts over truncated/renamed-zip/zero-byte fixtures with no run abort.)* ** spine_integrity
       IndexErrors on a spineless EPUB (nums[0] with an empty list) and
       the call sites sit OUTSIDE the per-book try - one malformed book
       aborts a whole run; load_book raises NameError (encrypted_names
@@ -1671,7 +1671,7 @@ four interpreter families.
       --encode-url-spaces entry renames (the reference-rewrite half
       shipped v0.28.0; the remainder is renaming archive entries whose
       filenames carry raw spaces; PKG-010, 280 books); plugin log rotation.
-- [ ] **GitHub presentation (workspace batch):** description rewrite
+- [x] **GitHub presentation (workspace batch):** *(EXECUTED and verified at the ticked box below (line ~1745) during the blitz; ticked 2026-09-16 to stop it reading as open work.)* ** description rewrite
       (leads with deterministic epubcheck-gated repair); 7 topics swapped
       (add epub3/calibre-plugin/python-cli/ebook-audit); codex page still
       says calibredb; wiki off.
@@ -1690,7 +1690,7 @@ four interpreter families.
       real 3.12/3.13 (258 tests per leg, verified locally under
       3.12.14/3.13.15). Suite 445, ruff 0.16.2 clean.
 
-- [ ] **Candidate (lossy lane): strip duplicate stub spine docs.** Opened
+- [x] **Candidate (lossy lane): strip duplicate stub spine docs.** *(SHIPPED as --strip-stub-docs (the ticked box at ~1796); verified 2026-09-16: the no_worse gate correctly refuses a fabricated regression-stub.)* ** Opened
       2026-09-13 from the phase-1 Redwall-fleet successor run: The River
       Has Roots (bookmate platform conversion) carries 14 of 37 spine
       docs that are identical stubs (the same short boilerplate body
@@ -1708,7 +1708,7 @@ four interpreter families.
       (kept in ~/Downloads pending Brandon's import-or-re-source call);
       the 2026-09-13 phase-1 JSON has the analyzer verdicts.
 
-- [ ] **`run phase3`'s aggregate before/after summary mixes a rejected
+- [x] **`run phase3`'s aggregate before/after summary mixes a rejected
       candidate's projected after-state into the totals** (observed
       2026-09-13, OMW batch): Ghost Brigades measured 0f/47e -> 1f/24e
       REGRESSION and was correctly rejected, untouched; the only applied
@@ -1870,14 +1870,30 @@ four interpreter families.
       earlier transforms move where failing candidates sit; the regex
       was input-sensitive, not the flags broken. Unpin 0.40.0 once
       0.41.1 is installed.
-- [ ] **Audit the remaining quote-aware tag matchers for the same
-      overlap ambiguity** (follow-up from the 0.41.1 hotfix): _VOID_RE
-      and the OPF matchers (cover meta, guide reference,
-      spine/item/itemref) share the overlapping-alternation shape but
-      were tested against the spin shape and do not blow up (the lazy
-      loop and always-matching candidates behave differently;
-      _VOID_RE's failure mode on a quote-run with no reachable `>` is
-      quadratic at worst, and it can match surprisingly far across
-      quoted spans, pre-existing since 0.40.0). Decide per matcher:
-      possessive-bound for uniformity, or document why the shape is
-      safe there. Never a third grammar copy.
+- [x] **Audit the remaining quote-aware tag matchers for the same
+      overlap ambiguity** *(EXECUTED 2026-09-16, v0.42.0 -- the full
+      per-matcher census, one ruling each: the audit found the box's own
+      enumeration incomplete. Six GREEDY exponential-class sites were
+      unhardened, possessive-bounded now (success is byte-identical:
+      the loop is always followed by a literal `>` that `[^>]` cannot
+      consume): transforms.py `_START_TAG_RE` -- the true gap, not even
+      named in the box, running under repair --all on every content doc;
+      `_COVER_META_RE`; `_GUIDE_REF_RE`; prune_dangling_edges'
+      spine|item|itemref matcher; `_ITEM_TAG_RE`; `_SPINE_ITEM_RE`.
+      Five LAZY quadratic-class sites took the disjoint catch-all
+      `[^>"']` instead of a blind possessive swap (a lazy `*?` ->
+      `*+` is NOT byte-identical with the trailing `\s*(/?)>`
+      continuation, which peels whitespace and the self-close slash):
+      `_VOID_RE`, the transforms `<img>` matcher, and epub's
+      link/a/img matchers -- mutually exclusive branches make any
+      quantifier linear and fix the far-match wart: an unterminated
+      quote inside a tag now fails to match instead of pairing across
+      markup. The epub `_IMG_TAG_RE` renamed `_PRUNE_IMG_TAG_RE` (name
+      collision with the transforms one). Everything else audited safe
+      by construction: tempered-quote value matchers, two-branch
+      quote alternations, `[^>]*` single-class prefixes (linear,
+      not quote-aware -- accepted), lazy paired-delimiter spans, and
+      the analyzer tokenizers. Pinned by tests/test_matcher_hardening.py:
+      15 tests (spin shapes alarm-guarded per greedy site, unterminated-
+      quote skips, well-formed byte-identity, prune spin over the
+      truncated-OPF shape). Never a third grammar copy.)*

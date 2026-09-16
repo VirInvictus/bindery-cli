@@ -32,14 +32,14 @@ XML_PREDEFINED = {"amp", "lt", "gt", "quot", "apos"}
 # quote-aware so a `>` inside an attribute value does not end the tag early. Group 3
 # captures an existing trailing slash so already-self-closed tags are left untouched.
 _VOID_RE = re.compile(
-    rf"""<({VOID})(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
+    rf"""<({VOID})(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>"'])*?)\s*(/?)>""",
     re.IGNORECASE | re.DOTALL,
 )
 _VOID_END_RE = re.compile(rf"""</(?:{VOID})\s*>""", re.IGNORECASE)
 _NAMED_ENTITY_RE = re.compile(r"&([a-zA-Z][a-zA-Z0-9]*);")
 _BARE_AMP_RE = re.compile(r"&(?![a-zA-Z][a-zA-Z0-9]*;|#[0-9]+;|#[xX][0-9a-fA-F]+;)")
 # A start tag (quote-aware) and an attribute within it, for invalid-attribute stripping.
-_START_TAG_RE = re.compile(r"""<[a-zA-Z][\w:.-]*(?:"[^"]*"|'[^']*'|[^>])*>""")
+_START_TAG_RE = re.compile(r"""<[a-zA-Z][\w:.-]*(?:"[^"]*"|'[^']*'|[^>])*+>""")
 # The unquoted-value branch stops at whitespace or the end of the tag, and the `/?>`
 # lookahead is what keeps it off the tag's own self-closing slash: a plain `[^\s>]+`
 # swallowed it, so dropping the attribute in `<img 31=x/>` left `<img>` and turned a
@@ -235,7 +235,7 @@ def escape_unknown_entities(s: str) -> tuple[str, int]:
 # An <img> start tag, quote-aware like _VOID_RE; group 1 is the attribute block and
 # group 2 an existing self-closing slash, so the tag is rebuilt without reordering.
 _IMG_TAG_RE = re.compile(
-    r"""<img(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>])*?)\s*(/?)>""",
+    r"""<img(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>"'])*?)\s*(/?)>""",
     re.IGNORECASE | re.DOTALL,
 )
 # Whitespace before `alt` keeps data-alt/xml:alt-style names from matching; a quoted

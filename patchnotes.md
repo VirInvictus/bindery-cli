@@ -1,4 +1,11 @@
 # bindery-cli Patch Notes
+## v0.42.0 (2026-09-16)
+
+### The matcher audit executed: every quote-aware tag matcher hardened
+The follow-up box the 0.41.1 hotfix opened is closed with a full per-matcher census, and the audit found the box's own enumeration incomplete. Six GREEDY patterns of the exponential overlap class were unhardened -- `_START_TAG_RE` (the quote-aware start-tag matcher anchoring `--strip-epub3-attrs` and `--strip-bad-attrs`, running under `repair --all` on every content doc; not even named in the box), `_COVER_META_RE`, `_GUIDE_REF_RE`, `prune_dangling_edges`' spine|item|itemref matcher, `_ITEM_TAG_RE`, and `_SPINE_ITEM_RE`. All six are possessive-bounded now: byte-identical on every successful match (the loop is always followed by a literal `>` that the `[^>]` branch cannot consume, so backtracking only ever happened on failure) and linear on failure. Five LAZY patterns of the quadratic class (`_VOID_RE`, the transforms `<img>` matcher, and epub's link/anchor/img matchers) took the disjoint catch-all `[^>"']` instead of a blind possessive swap: mutually exclusive branches cannot re-partition, so any quantifier is linear, and an unterminated quote inside a tag now fails to match instead of pairing with a distant quote and matching across markup. Every well-formed shape is byte-identical. The epub `_IMG_TAG_RE` is renamed `_PRUNE_IMG_TAG_RE` (it collided with the transforms matcher of the same name). Everything else in the package audited safe by construction: tempered-quote value matchers, two-branch quote alternations, `[^>]*` single-class prefixes (linear, not quote-aware -- accepted, documented), lazy paired-delimiter spans, and the analyzer tokenizers.
+
+Pinned by `tests/test_matcher_hardening.py` (15 tests): alarm-guarded spin shapes per greedy site (OPF flavor, the truncated-OPF prune shape), unterminated-quote skips, and well-formed byte-identity. `CLAUDE.md`'s hazard note now carries the census and the rule for new matchers. The full suite is 491 tests.
+
 ## v0.41.1 (2026-09-15)
 
 ### The 0.41.0 CPU-spin regression: possessive bounds on the quote-aware tag matchers
