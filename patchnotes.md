@@ -1,4 +1,42 @@
 # bindery-cli Patch Notes
+## v0.41.1 (2026-09-15)
+
+### The 0.41.0 CPU-spin regression: possessive bounds on the quote-aware tag matchers
+
+- **The regression.** `repair --all` spun CPU indefinitely on real
+  books (found on a Hackett Aristotle *Physics* whose 843k-character
+  back-matter document is full of apostrophes and span candidates
+  whose closer never comes). 0.40.0 repaired the same book in seconds.
+  Brandon bisected it to 0.41.0 and root-caused it to the wheel diff:
+  the 0.41.0 quote-aware rewrite of `unwrap_block_in_inline`'s start
+  tag replaced the linear prefix with an overlapping alternation
+  (double-quoted | single-quoted | any-non-bracket), and because the
+  non-bracket branch also matches quote characters, every failing
+  candidate let the engine re-partition the prefix across the branches
+  exponentially. The flag-bisect had looked interaction-shaped because
+  earlier transforms move where the failing candidates sit; the regex
+  was input-sensitive, not the flags broken.
+- **The fix: possessive quantifiers.** The repeated group is now
+  possessive (`*+`, Python 3.11's `re`, the same floor as the plugin's
+  minimum Calibre): the engine commits to its first-alternative
+  consumption, which is the nearest-paired-quote path ending at the
+  first unquoted `>` (the correct tag end), and never re-partitions.
+  Failure becomes linear; successful matches are unchanged. Applied to
+  all three patterns the 0.41.0 commit rewrote:
+  `unwrap_block_in_inline` (the spinner), `unwrap_illegal_tags`, and
+  `downgrade_epub3_tags`. The pre-existing quote-aware matchers
+  (`_VOID_RE`, the OPF tag matchers) were tested against the same
+  shape and do not spin; their audit is a recorded follow-up box.
+- **Verified on the fixture.** The transform went from still-spinning
+  at 15 seconds to 0.01 seconds; the recorded reproduction
+  (`repair --all --force`) completes in 7.7 seconds (epubcheck's own
+  time) with output identical to the 0.40.0 shape
+  (cover_meta_repointed:1, pagelist_class_added:1, ncx_uid_synced).
+  Two regression tests pin it: the spin shape itself (a span followed
+  by a 40k-character apostrophe run with no `>`: the old pattern
+  provably cannot finish it) and the quote-aware function the rewrite
+  was for (a `>` inside an attribute value).
+
 ## v0.41.0 (2026-09-15)
 
 ### The final-audit blitz: robust analyzers, the stub-docs strip, and a privacy untrack
