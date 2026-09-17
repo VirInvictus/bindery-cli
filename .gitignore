@@ -29,3 +29,4 @@ test_facility/*.epub
 # which is the only reason they were invisible until now)
 venv/
 .venv_ci/
+testing_facility/top500candidates/*.txt
