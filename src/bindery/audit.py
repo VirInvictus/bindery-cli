@@ -77,6 +77,8 @@ from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from bindery.pagination import ROMAN_MAX, ROMAN_RE, roman_value
+
 
 class _LazyUI:
     # vir_tui rides the Python 3.14 VirInvictus stack, marker-gated out of
@@ -156,8 +158,11 @@ class Book:
         "lang",
         "names",
         "nav",
+        "nav_html",
+        "ncx",
         "obfuscated",
         "obfuscated_declared",
+        "opf",
         "spine",
         "spine_missing",
         "toc_refs",
@@ -179,6 +184,9 @@ class Book:
         dup_entries=0,
         obfuscated=None,
         obfuscated_declared=None,
+        opf=None,
+        ncx=None,
+        nav_html="",
     ):
         self.spine = spine  # resolved, in-order, in-archive spine doc paths
         self.nav = nav  # the nav document path, or None
@@ -212,6 +220,12 @@ class Book:
         # content docs) — reported as `convention`, not flagged.
         self.toc_refs = toc_refs
         self.toc_absent = toc_absent
+        # The parsed package and the decoded NCX text: the cover and
+        # NCX<->nav drift analyzers read the package's own wiring (v0.44.0).
+        # Both are None on a shell book.
+        self.opf = opf
+        self.ncx = ncx
+        self.nav_html = nav_html
         self._visible: list[str] | None = None
 
     def visible_texts(self) -> list[str]:
@@ -358,6 +372,9 @@ def load_book(path: Path) -> Book:
                 dup_entries=dup_entries,
                 obfuscated=obfuscated,
                 obfuscated_declared=obfuscated_declared,
+                opf=None,
+                ncx=None,
+                nav_html="",
             )
         container = _safe_xml_parse(container_blob)
         if container is None:
@@ -383,6 +400,9 @@ def load_book(path: Path) -> Book:
                 dup_entries=dup_entries,
                 obfuscated=obfuscated,
                 obfuscated_declared=obfuscated_declared,
+                opf=None,
+                ncx=None,
+                nav_html="",
             )
         rootfile = container.find(".//c:rootfile", CONTAINER_NS)
         opf_path = rootfile.get("full-path") if rootfile is not None else None
@@ -409,6 +429,9 @@ def load_book(path: Path) -> Book:
                 dup_entries=dup_entries,
                 obfuscated=obfuscated,
                 obfuscated_declared=obfuscated_declared,
+                opf=None,
+                ncx=None,
+                nav_html="",
             )
         base = os.path.dirname(opf_path)
 
@@ -521,12 +544,14 @@ def load_book(path: Path) -> Book:
             if (it.get("media-type") or "").lower() == "application/x-dtbncx+xml":
                 ncx_path = full(it.get("href") or "")
                 break
+        ncx_text = ""
         if ncx_path and ncx_path in nameset:
             blob = _read(ncx_path)
             if blob is not None:
+                ncx_text = blob.decode("utf-8", "replace")
                 for m in re.finditer(
                     r'<content[^>]+src\s*=\s*["\']([^"\']+)',
-                    blob.decode("utf-8", "replace"),
+                    ncx_text,
                 ):
                     _account(m.group(1), os.path.dirname(ncx_path))
 
@@ -544,6 +569,9 @@ def load_book(path: Path) -> Book:
         dup_entries=dup_entries,
         obfuscated=obfuscated,
         obfuscated_declared=obfuscated_declared,
+        opf=opf,
+        ncx=ncx_text,
+        nav_html=nav_html or "",
     )
 
 
@@ -918,16 +946,15 @@ def scan_content(path: Path) -> dict:
 # ----------------------------------------------------------------------------
 
 INT_RE = re.compile(r"\d{1,4}$")
-# A strict roman-numeral grammar, matching pagination.py: a character-set match
+# The strict roman-numeral grammar lives in pagination.py (the canonical
+# home; audit imports it so there is never a second copy to drift -- the
+# unification side of the 2026-09-15 "document or unify" box, the copies
+# having been byte-identical). History: a character-set match
 # ([ivxlcdm]{2,7}) read ordinary words (mid, dim, mix, lid, civil) as page
-# numbers, inflating baked-hit counts (reported 2026-09-08). Two gates replace
-# it: the numeral must be well-formed (subtractive pairs explicit), and its
-# value must stay under 100, because page numbers in roman form do not run that
-# high while words do (mix = 1009, civ = 104).
-ROMAN_RE = re.compile(
-    r"m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})", re.IGNORECASE
-)
-ROMAN_MAX = 100
+# numbers, inflating baked-hit counts (reported 2026-09-08). Two gates
+# replace it: the numeral must be well-formed (subtractive pairs explicit),
+# and its value must stay under 100, because page numbers in roman form do
+# not run that high while words do (mix = 1009, civ = 104).
 # Block-level elements we track to reconstruct reading order.
 BLOCK_TAGS = {
     "p",
@@ -961,18 +988,6 @@ MIN_SPAN = 0.10  # flagged numbers must cover this fraction of the book (drops
 # localized clusters: footnote-poems, scraped comment sections)
 MIN_RUN = 1  # ascending run is informative but not gated; the baked test already
 # requires genuine sentence interruption, so a short run is not disqualifying
-
-
-def roman_value(s: str) -> int | None:
-    vals = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100, "d": 500, "m": 1000}
-    total = 0
-    s = s.lower()
-    for i, c in enumerate(s):
-        if c not in vals:
-            return None
-        v = vals[c]
-        total += -v if (i + 1 < len(s) and vals[s[i + 1]] > v) else v
-    return total or None
 
 
 def number_value(text: str) -> int | None:
@@ -1439,6 +1454,247 @@ def _completeness_dir(r: dict) -> tuple[bool, str, list[str]]:
         lines.append(f"{r['blank_docs']} spine doc(s) present but blank")
     lines += [f"{s['doc']}: [{s['opens']}] ... [{s['ends']}]" for s in r["spots"]]
     return (False, status, lines)
+
+
+# ----------------------------------------------------------------------------
+# Analyzer: cover wiring (advisory; the EPUB3 slice of the ruled hybrid)
+# ----------------------------------------------------------------------------
+
+
+def analyze_cover(book: Book) -> dict:
+    """The cover-wiring audit slice (v0.44.0, the EPUB3 half of the ruled
+    hybrid). Reads the package's own cover wiring, never the images:
+    EPUB2's <meta name="cover" content=...> (dangling when the content
+    names no manifest id -- fix_cover_meta's repair class), EPUB3's
+    properties~="cover-image" manifest item (absent on books that never
+    got one), and whether the named cover file actually exists in the
+    archive. Advisory by contract: every class here is wiring opinion,
+    not schema damage; the exit code never moves."""
+    out = {
+        "epub2_meta": None,
+        "epub2_dangling": False,
+        "epub3_item": None,
+        "epub3_declared": False,
+        "cover_file": None,
+        "cover_file_absent": False,
+    }
+    if book.opf is None:
+        return out
+    manifest: dict[str, tuple[str, bool]] = {}
+    cover_prop_id = None
+    for it in book.opf.iter(OPF_NS + "item"):
+        item_id, href = it.get("id"), it.get("href")
+        if not item_id or not href:
+            continue
+        props = (it.get("properties") or "").split()
+        manifest[item_id] = (href, "cover-image" in props)
+        if "cover-image" in props:
+            cover_prop_id = item_id
+    # EPUB2: the legacy <meta name="cover" content="ID"/>.
+    for meta in book.opf.iter():
+        if meta.tag.split("}")[-1] != "meta":
+            continue
+        if (meta.get("name") or "").lower() == "cover":
+            content_id = meta.get("content") or ""
+            out["epub2_meta"] = content_id
+            out["epub2_dangling"] = bool(content_id) and content_id not in manifest
+            break
+    # EPUB3: the properties declaration.
+    if cover_prop_id is not None:
+        href, _ = manifest[cover_prop_id]
+        out["epub3_declared"] = True
+        out["epub3_item"] = cover_prop_id
+        out["cover_file"] = href
+    elif out["epub2_meta"] and not out["epub2_dangling"]:
+        out["cover_file"] = manifest[out["epub2_meta"]][0]
+    if out["cover_file"]:
+        # resolve against the OPF's directory, percent-decoded, fragment-
+        # less -- the same shape the loader resolves spine hrefs with
+        base = os.path.dirname(
+            next(
+                (
+                    it.get("href")
+                    for it in book.opf.iter(OPF_NS + "item")
+                    if it.get("id") == cover_prop_id or out["epub2_meta"]
+                ),
+                "",
+            )
+            or ""
+        )
+        target = _pct_decode(out["cover_file"].split("#", 1)[0])
+        resolved = os.path.normpath(f"{base}/{target}" if base else target).replace(
+            "\\", "/"
+        )
+        out["cover_file_absent"] = resolved not in set(book.names)
+    return out
+
+
+def _cover_dir(r: dict) -> tuple[bool, str, list[str]]:
+    lines: list[str] = []
+    if r["epub2_dangling"]:
+        lines.append(f"EPUB2 cover meta names no manifest id ({r['epub2_meta']!r})")
+    if r["epub3_declared"]:
+        lines.append(f"EPUB3 cover-image property on item {r['epub3_item']!r}")
+    elif r["epub2_meta"] is None and not r["epub3_declared"]:
+        lines.append("no cover wiring (neither EPUB2 meta nor EPUB3 property)")
+    if r["cover_file_absent"]:
+        lines.append(f"cover file absent from the archive ({r['cover_file']!r})")
+    wired = bool(r["epub2_meta"]) or r["epub3_declared"]
+    status = (
+        "OK"
+        if (wired and not r["epub2_dangling"] and not r["cover_file_absent"])
+        else "ADVISORY"
+    )
+    return (False, status, lines)
+
+
+def _cover_sections(advisory) -> int:
+    """Print the cover-wiring advisories; the analyzer never fails a run."""
+    if advisory:
+        print(
+            f"{YELLOW}{BOLD}COVER WIRING ({len(advisory)} to eyeball;"
+            f" reported, not flagged){RESET}"
+        )
+        for book_id, title, tag, r in sorted(advisory):
+            print(f"  {YELLOW}#{book_id}{RESET} [{tag}] {title}")
+            _p, _s, lines = _cover_dir(r)
+            for ln in lines:
+                print(f"    {ln}")
+        print()
+        print(
+            f"{YELLOW}{BOLD}cover DONE{RESET}: wiring opinions, never a failure;"
+            f" --fix-cover repairs the EPUB2 half."
+        )
+        return 0
+    print(f"{GREEN}{BOLD}cover CLEAN{RESET}: every book's cover wiring resolves.")
+    return 0
+
+
+# ----------------------------------------------------------------------------
+# Analyzer: NCX<->nav drift (advisory; structural diff only, never synthesis)
+# ----------------------------------------------------------------------------
+
+
+def _toc_labels_from_nav(nav_html: str) -> list[tuple[str, str]]:
+    """(label, target) pairs from an EPUB3 nav toc document, in order."""
+    pairs: list[tuple[str, str]] = []
+    for m in re.finditer(
+        r"<a\s[^>]*href\s*=\s*[\"']([^\"']+)[\"'][^>]*>(.*?)</a>",
+        nav_html,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        label = _visible_text(m.group(2))
+        pairs.append((label, m.group(1).strip()))
+    return pairs
+
+
+def _toc_points_from_ncx(ncx: str) -> list[tuple[str, str]]:
+    """(label, target) pairs from an NCX navMap, in document order."""
+    pairs: list[tuple[str, str]] = []
+    for np in re.finditer(r"<navPoint\b.*?</navPoint>", ncx, re.IGNORECASE | re.DOTALL):
+        body = np.group(0)
+        lm = re.search(r"<text[^>]*>(.*?)</text>", body, re.IGNORECASE | re.DOTALL)
+        cm = re.search(
+            r"<content[^>]+src\s*=\s*[\"']([^\"']+)[\"']",
+            body,
+            re.IGNORECASE,
+        )
+        label = _visible_text(lm.group(1)) if lm else ""
+        pairs.append((label, cm.group(1).strip() if cm else ""))
+    return pairs
+
+
+def analyze_tocdrift(book: Book) -> dict:
+    """The NCX<->nav drift detector (v0.44.0): a structural diff of the
+    two tables of contents an EPUB 3 book may carry -- the EPUB2 NCX
+    navMap and the EPUB3 nav document -- reported as which entries each
+    side is missing and which labels disagree. Advisory by contract and
+    audit-only: ToC synthesis is out of the repair charter permanently,
+    so the detector's product is a decision for a human (or the
+    acquisition manifest's decisions_needed), never a rewrite. Books
+    without both sides report 'no comparison possible' (clean)."""
+    out = {
+        "ncx_points": 0,
+        "nav_entries": 0,
+        "missing_in_nav": [],
+        "missing_in_ncx": [],
+        "label_mismatches": [],
+    }
+    if book.opf is None:
+        return out
+    # the nav document may sit outside the spine; the loader read it for
+    # the ToC accounting either way
+    nav_html = book.nav_html or (book.docs.get(book.nav, "") if book.nav else "")
+    if not (book.ncx and nav_html):
+        return out
+    ncx_pairs = _toc_points_from_ncx(book.ncx)
+    nav_pairs = _toc_labels_from_nav(nav_html)
+    out["ncx_points"] = len(ncx_pairs)
+    out["nav_entries"] = len(nav_pairs)
+    # keyed on the full link target, fragment included: the two formats
+    # agree chapter by chapter, and a navPoint whose NCX target carries
+    # #two while the nav link points at the bare file IS drift. (A
+    # same-target different-label pair is drift in wording only, and is
+    # reported as a label mismatch.)
+    ncx_by_target: dict[str, str] = {}
+    for label, target in ncx_pairs:
+        ncx_by_target.setdefault(target, label)
+    nav_by_target: dict[str, str] = {}
+    for label, target in nav_pairs:
+        nav_by_target.setdefault(target, label)
+    for target, label in ncx_by_target.items():
+        if target not in nav_by_target:
+            out["missing_in_nav"].append((label, target))
+        elif nav_by_target[target] != label:
+            out["label_mismatches"].append((target, label, nav_by_target[target]))
+    for target, label in nav_by_target.items():
+        if target not in ncx_by_target:
+            out["missing_in_ncx"].append((label, target))
+    return out
+
+
+def _tocdrift_dir(r: dict) -> tuple[bool, str, list[str]]:
+    if not r["ncx_points"] or not r["nav_entries"]:
+        return (False, "OK", ["no NCX<->nav comparison possible (one side absent)"])
+    lines = []
+    if r["missing_in_nav"]:
+        lines.append(
+            f"{len(r['missing_in_nav'])} NCX point(s) absent from the nav toc"
+            f" (e.g. {r['missing_in_nav'][0][1]!r})"
+        )
+    if r["missing_in_ncx"]:
+        lines.append(
+            f"{len(r['missing_in_ncx'])} nav entr(ies) absent from the NCX"
+            f" (e.g. {r['missing_in_ncx'][0][1]!r})"
+        )
+    if r["label_mismatches"]:
+        lines.append(
+            f"{len(r['label_mismatches'])} label mismatch(es)"
+            f" (e.g. {r['label_mismatches'][0][1]!r} vs {r['label_mismatches'][0][2]!r})"
+        )
+    return (False, "ADVISORY" if lines else "OK", lines)
+
+
+def _tocdrift_sections(advisory) -> int:
+    """Print the drift advisories; the analyzer never fails a run."""
+    if advisory:
+        print(
+            f"{YELLOW}{BOLD}NCX<->NAV DRIFT ({len(advisory)} to eyeball;"
+            f" reported, not flagged){RESET}"
+        )
+        for book_id, title, tag, r in sorted(advisory):
+            print(f"  {YELLOW}#{book_id}{RESET} [{tag}] {title}")
+            _p, _s, lines = _tocdrift_dir(r)
+            for ln in lines:
+                print(f"    {ln}")
+        print()
+        print(
+            f"{YELLOW}{BOLD}tocdrift DONE{RESET}: the diff is a human decision;"
+            f" ToC synthesis is out of charter permanently."
+        )
+        return 0
+    print(f"{GREEN}{BOLD}tocdrift CLEAN{RESET}: no dual-ToC drift found.")
+    return 0
 
 
 # ----------------------------------------------------------------------------
@@ -2081,6 +2337,8 @@ ALL: tuple[str, ...] = (
     "ocr",
     "monolithic",
     "completeness",
+    "cover",
+    "tocdrift",
 )
 
 
@@ -2209,6 +2467,8 @@ def run_library(
     ocr_found: list[tuple] = []
     mono_hits: list[tuple] = []
     completeness_advisory: list[tuple] = []
+    cover_advisory: list[tuple] = []
+    tocdrift_advisory: list[tuple] = []
     corrupt_hits: list[tuple] = []
     obfuscated_hits: list[tuple] = []
     spine_hits: list[tuple] = []
@@ -2316,6 +2576,21 @@ def run_library(
             # status and the exit code are never moved by this analyzer
             _record_verdict(record, "completeness", (False, status, lines))
 
+        if "cover" in selected:
+            r = analyze_cover(book)
+            _p, status, lines = _cover_dir(r)
+            if status != "OK":
+                cover_advisory.append((book_id, title, tag, r))
+            # advisory by contract, like completeness
+            _record_verdict(record, "cover", (False, status, lines))
+
+        if "tocdrift" in selected:
+            r = analyze_tocdrift(book)
+            _p, status, lines = _tocdrift_dir(r)
+            if status != "OK":
+                tocdrift_advisory.append((book_id, title, tag, r))
+            _record_verdict(record, "tocdrift", (False, status, lines))
+
     print(f"Scanned {scanned} EPUBs in {library_root}\n")
     rc = 0
     multi = len(selected) > 1
@@ -2334,6 +2609,10 @@ def run_library(
             rc |= _monolithic_sections(mono_hits)
         elif key == "completeness":
             rc |= _completeness_sections(completeness_advisory)
+        elif key == "cover":
+            rc |= _cover_sections(cover_advisory)
+        elif key == "tocdrift":
+            rc |= _tocdrift_sections(tocdrift_advisory)
         else:
             rc |= _ocr_sections(ocr_found)
         if multi:

@@ -53,10 +53,14 @@ _INT_RE = re.compile(r"\d{1,4}\Z")
 # (reported 2026-09-08). Two gates replace it: the numeral must be well-formed
 # (subtractive pairs explicit), and its value must stay under 100, because page
 # numbers in roman form do not run that high while words do (mix = 1009, civ = 104).
-_ROMAN_RE = re.compile(
+# Public since v0.44.0: this is the CANONICAL page-number grammar. audit.py
+# imports it rather than carrying a second copy; if a future grammar ever
+# needs to differ between the two callers, that is a decision to make here,
+# not a third copy to fork.
+ROMAN_RE = re.compile(
     r"m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})", re.IGNORECASE
 )
-_ROMAN_MAX = 100
+ROMAN_MAX = 100
 # An element carrying an id is a navigation target (page-list, internal link); it must
 # survive even when its visible number is removed, or the nav breaks. That covers both
 # <a id=...> anchors inside a removed block and an id on the removed <p> itself.
@@ -89,9 +93,9 @@ def number_value(text: str) -> int | None:
     if _INT_RE.fullmatch(text):
         v = int(text)
         return None if 1500 <= v <= 2099 else v
-    if 2 <= len(text) <= 7 and _ROMAN_RE.fullmatch(text):
+    if 2 <= len(text) <= 7 and ROMAN_RE.fullmatch(text):
         v = roman_value(text)
-        return v if v is not None and v < _ROMAN_MAX else None
+        return v if v is not None and v < ROMAN_MAX else None
     return None
 
 

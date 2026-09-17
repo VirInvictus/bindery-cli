@@ -184,11 +184,20 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   reader resolves (`kindle:embed:`, `file:`, ...) are stripped under the same flag; the
   resolvable set is fixed (`http`, `https`, `mailto`) and extends only with a named
   finding.
-- **`--encode-url-spaces`**: percent-encode raw spaces in `src`/`href` attribute values
-  across the package (OPF manifest, NCX `content src`, content documents). A URL with a
-  literal space is not a valid URL (RSC-020 "not a valid URL") and unresolvable on
-  strict readers; the encoded form denotes the same file and renders identically. Scope
-  is fixed to the space character: extend only with a named epubcheck finding.
+- **`--encode-url-spaces`**: repairs raw-space URLs two ways. The reference half
+  percent-encodes raw spaces in `src`/`href` attribute values across the package
+  (OPF manifest, NCX `content src`, content documents): a URL with a literal space is
+  not a valid URL (RSC-020 "not a valid URL") and unresolvable on strict readers; the
+  encoded form denotes the same file and renders identically. The rename half (v0.44.0)
+  renames archive entries whose names carry raw spaces to their underscore spellings
+  and rewrites every reference to them (OPF, NCX, content `src`/`href`, stylesheet
+  `url()`), clearing PKG-010: underscore, never percent-encoding, because epubcheck
+  decodes references before entry lookup (both-sides-%20 breaks lookups; verified
+  against epubcheck 5.3). Ambiguous renames (a target that already exists, two names
+  converging, a duplicated entry name) are refused per entry, and a book with any
+  non-UTF-8 document refuses all of its renames (those entries pass through
+  byte-for-byte with no chance to rewrite their references). Scope stays fixed to the
+  space character: extend only with a named epubcheck finding.
 
 - **`--fix-container`**: generate `META-INF/container.xml` at the located OPF when the
 container is missing, unparseable, or names a file the archive does not contain. This is the
@@ -400,8 +409,8 @@ crashing the sweep.
 
 ## Audit subcommand (read-only)
 
-`bindery audit {content,pagenumbers,emptytext,ocr,monolithic,completeness,all} [PATH] [--max-doc-chars N]
-[--tag TAG] [--id IDs]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0, `--max-doc-chars N`; `--id` since v0.19.0, comma-lists in v0.23.0; `completeness` since v0.36.0) inspects
+`bindery audit {content,pagenumbers,emptytext,ocr,monolithic,completeness,cover,tocdrift,all} [PATH] [--max-doc-chars N]
+[--tag TAG] [--id IDs]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0, `--max-doc-chars N`; `--id` since v0.19.0, comma-lists in v0.23.0; `completeness` since v0.36.0; `cover` and `tocdrift` since v0.44.0) inspects
 EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in page-number
 layers (sliding-window density heuristics), empty or thin books, systemic OCR damage, and
 single oversized content documents (one spine doc at or above 300k characters: readers refuse
@@ -416,6 +425,15 @@ URI and both Adobe forms, including the `ns.adobe.com` URI real-world files carr
 read fine are the OBFUSCATED advisory (publisher embedding, benign, never a failure); an
 unreadable obfuscation entry is CORRUPT (a broken font, not a business model), and only
 non-obfuscation algorithms give the ENCRYPTED verdict with its DRM skip advice.
+
+Two more advisory analyzers ship in v0.44.0. `cover` reads the package's own cover
+wiring (the EPUB3 half of the ruled hybrid): a dangling EPUB2 `<meta name="cover">`
+(the `--fix-cover` repair class), an EPUB3 `properties~="cover-image"` declaration,
+and whether the named cover file exists. `tocdrift` diffs the two tables of contents
+an EPUB 3 book may carry -- the NCX navMap against the nav document -- reporting
+entries each side is missing and labels that disagree; it feeds decisions, never a
+rewrite (ToC synthesis is out of the repair charter permanently). Both never flag a
+book and never move the exit code.
 
 The completeness analyzer is the phase-1 spot-check and is advisory by contract: it never
 flags a book and never moves the exit code. Per book it reports the spine doc count, the

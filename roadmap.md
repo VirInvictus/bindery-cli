@@ -1812,25 +1812,72 @@ four interpreter families.
 
 ### Reopened / boxed by the final blitz (2026-09-15)
 
-- [ ] **--encode-url-spaces entry renames** (PKG-010, top-6 warning
+- [x] **--encode-url-spaces entry renames** (PKG-010, top-6 warning
       class, 280 books): rename archive entries whose filenames carry
       raw spaces, rewriting every reference; the reference half
       shipped v0.28.0. Biggest real-prevalence repair class left; the
-      gate must re-measure the whole book.
-- [ ] **Cover advisory analyzer**: the EPUB3 `properties="cover-image"`
+      gate must re-measure the whole book. *(SHIPPED 2026-09-17,
+      v0.44.0 -- with the plan CHANGED by experiment. epubcheck 5.3
+      DECODES references before entry lookup, so percent-encoded entry
+      names are unfindable by the encoded refs pointing at them
+      (variants built and checked: raw/raw = PKG-010 only,
+      pct/pct = broken lookups, pct-raw = broken, underscore/underscore
+      = clean); renames therefore use the underscore spelling, and
+      references are rewritten to the identical form. Ambiguous renames
+      are refused per entry (target exists, two names converging, a
+      duplicated archive name); a book with any non-UTF-8 document
+      refuses all renames. The rename rides the existing
+      --encode-url-spaces flag and is accepted under no_worse (its gain
+      sits on the warning axis the gate does not measure; same bar as
+      fix-cover). The refresh also found the real reason Theaetetus's
+      OPF fatal survived the 0.28 reference half: the value class
+      [^"'] stopped at apostrophes inside double-quoted hrefs; the
+      matcher now takes the tempered-quote idiom. Refresh counts:
+      PKG-010 at 8,237 occurrences in 284 books (was 4,112 in ~280;
+      the class persisted). Pinned by tests/test_space_renames.py
+      plus the updated test_epub pins.)*
+- [x] **Cover advisory analyzer**: the EPUB3 `properties="cover-image"`
       audit slice completing the ruled hybrid (21 dangling EPUB2 metas
-      and 3 absent cover files measured behind it).
-- [ ] **Audit-refresh deep-dive**: per-class deltas vs the 2026-09-12
-      baselines; sizes the two boxes above for free.
-- [ ] **NCX<->nav drift detector** (audit-only): the remaining
-      unticked Phase 16 C box; size it after the deep-dive.
+      and 3 absent cover files measured behind it). *(SHIPPED 2026-09-17,
+      v0.44.0: `bindery audit cover` reads the package's own wiring --
+      dangling EPUB2 meta, EPUB3 property declaration, cover-file
+      presence -- advisory by contract like completeness; the loader
+      now exposes the parsed OPF.)*
+- [x] **Audit-refresh deep-dive**: per-class deltas vs the 2026-09-12
+      baselines; sizes the two boxes above for free. *(DONE 2026-09-17:
+      read-only FastSweep extract over the full 5,228-book library;
+      raw report at testing_facility/top500candidates/
+      extract-2026-09-17.txt. RSC-005 164,302 -> 13,782 occurrences
+      (the repair waves did land); RSC-007 3,219 -> 14,162 in 604
+      books (up: the classics-wave imports); RSC-020 8,431 -> 9,953
+      in 337 books; PKG-010 4,112 -> 8,237 in 284 books (population
+      flat -- the rename class stayed live, hence the ship). 2,910
+      books carry findings.)*
+- [x] **NCX<->nav drift detector** (audit-only): the remaining
+      unticked Phase 16 C box; size it after the deep-dive. *(SHIPPED
+      2026-09-17, v0.44.0: `bindery audit tocdrift` diffs the NCX
+      navMap against the EPUB3 nav toc -- entries each side is missing
+      plus label mismatches, keyed on the full target including the
+      fragment. Advisory by contract; the loader exposes the NCX text
+      and the nav document's HTML. ToC synthesis stays out of charter
+      permanently.)*
 - [ ] **Internal refactors (polish, no behavior change)**: a
       RepairFlags dataclass for the triplicated ~25-kwarg
       process_book/repair_epub signature; shared roman/arabic number
       helpers for pagination.py and audit.py (their year-range
       grammars differ by design: document or unify, never a third
       copy). Deliberately not refactored mid-blitz: pure churn risk
-      around five releases of work.
+      around five releases of work. *(Roman/arabic half DONE
+      2026-09-17, v0.44.0: the two copies were byte-identical, so the
+      box resolves to UNIFY -- pagination.py is the canonical home
+      (it vendors into the plugin; audit does not), audit.py imports
+      ROMAN_RE/ROMAN_MAX/roman_value from it, and the comment records
+      that any future divergence is a decision at pagination, not a
+      fork. RepairFlags dataclass DEFERRED with reason: pure churn on
+      a ~25-kwarg surface immediately after the v0.44 batch touched
+      exactly those signatures; do it as a standalone lane with the
+      full suite and the plugin byte-compat job green at every step,
+      not as a rider.)*
 - [ ] **MobileRead listing for the Bindery Repair plugin** (Brandon's
       manual step): post the listing with name/identity, the
       release-attached zip, minimum Calibre 7.0, Linux platform note.
@@ -1919,6 +1966,12 @@ four interpreter families.
       them back decoded. Fixture: the imported book (id 9135, the file was
       hand-fixed in place) — the defects and the fix script's operations
       are documented in the library's phase-1 record for 2026-09-16.
+      *(RESOLVED 2026-09-17, v0.44.0: neither suspicion was right. The
+      real cause was the value class [^"'] in the encode matcher, which
+      stopped at the apostrophes in the OPF's filenames -- the OPF
+      branch DID run but matched nothing. The tempered-quote idiom
+      fixes the matcher, and the entry-rename half clears the class
+      outright.)*
 
 - [ ] **Candidate transform: `--` inside XML comments (RSC-016 fatal)**.
       Same book: `OEBPS/...split_269.html` carried a `--` inside an XML

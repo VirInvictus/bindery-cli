@@ -636,6 +636,122 @@ def _resolve_href(base_dir: str, href: str) -> str | None:
     return _norm_path(posixpath.join(base_dir, target))
 
 
+def space_rename_map(names) -> dict[str, str]:
+    """The --encode-url-spaces rename half: raw entry name -> underscore
+    spelling for every entry whose name carries raw spaces (PKG-010).
+
+    Underscore, never percent-encoding: epubcheck DECODES references
+    before entry lookup, so encoded entries are unfindable by the encoded
+    references pointing at them (both-sides-%20 breaks lookups, verified
+    against epubcheck 5.3 on 2026-09-17); the underscore spelling resolves
+    under either reading model and contains no space, which is the point.
+    Ambiguities are refused per entry: two names mapping to one target,
+    or a target that already exists as an entry, leave that entry (and
+    its references) untouched.
+    """
+    existing = set(names)
+    renames: dict[str, str] = {}
+    taken: set[str] = set()
+    seen: set[str] = set()
+    for n in names:
+        if " " not in n:
+            continue
+        # A duplicated name (broken archives carry them) refuses: renaming
+        # would fold two entries into one.
+        if n in seen:
+            renames.pop(n, None)
+            continue
+        seen.add(n)
+        target = n.replace(" ", "_")
+        if target in existing or target in taken:
+            continue
+        renames[n] = target
+        taken.add(target)
+    return renames
+
+
+# src/href with a quoted, tempered value (apostrophes inside double quotes
+# are ordinary filenames; see transforms._SRC_HREF_ATTR_RE), and CSS url()
+# in its quoted and bare forms. The bare form can never carry a raw space,
+# so only its percent-encoded spelling can resolve.
+_RENAME_REF_ATTR_RE = re.compile(
+    r"""((?:^|\s)(?:[\w.-]+:)?(?:src|href)\s*=\s*)(["'])((?:(?!\2)[\s\S])*+)(\2)""",
+    re.IGNORECASE,
+)
+_RENAME_CSS_URL_QUOTED_RE = re.compile(
+    r"""(url\(\s*)(["'])((?:(?!\2)[\s\S])*+)(\2)(\s*\))""", re.IGNORECASE
+)
+_RENAME_CSS_URL_BARE_RE = re.compile(r"""(url\(\s*)([^()'"]*?)(\s*\))""", re.IGNORECASE)
+
+
+def _rewrite_rename_ref(
+    m: re.Match, lookup_dir: str, out_dir: str, resolved_map: dict[str, str]
+) -> str:
+    value = m.group(3)
+    resolved = _resolve_href(lookup_dir, value)
+    if resolved is None or resolved not in resolved_map:
+        return m.group(0)
+    target = resolved_map[resolved]
+    fragment = value.partition("#")[2]
+    new_value = posixpath.relpath(target, out_dir or ".") + (
+        f"#{fragment}" if fragment else ""
+    )
+    return m.group(1) + m.group(2) + new_value + m.group(4)
+
+
+def rewrite_space_renames(
+    text: str, lookup_dir: str, out_dir: str, resolved_map: dict[str, str]
+) -> tuple[str, int]:
+    """Rewrite src/href values that resolve to a renamed entry, to the
+    entry's new spelling relative to the document. `lookup_dir` is the
+    document's directory in the layout the references were written in;
+    `out_dir` the same document's directory in the (identically renamed)
+    output layout, which the replacement is spelled against. The two
+    differ only when a parent directory of the document itself renames."""
+    count = 0
+
+    def sub(m: re.Match) -> str:
+        nonlocal count
+        out = _rewrite_rename_ref(m, lookup_dir, out_dir, resolved_map)
+        if out != m.group(0):
+            count += 1
+        return out
+
+    return _RENAME_REF_ATTR_RE.sub(sub, text), count
+
+
+def rewrite_space_renames_css(
+    text: str, lookup_dir: str, out_dir: str, resolved_map: dict[str, str]
+) -> tuple[str, int]:
+    """The same rewrite for stylesheet url() tokens (quoted and bare)."""
+    count = 0
+
+    def sub_quoted(m: re.Match) -> str:
+        nonlocal count
+        resolved = _resolve_href(lookup_dir, m.group(3))
+        if resolved is None or resolved not in resolved_map:
+            return m.group(0)
+        fragment = m.group(3).partition("#")[2]
+        new_value = posixpath.relpath(resolved_map[resolved], out_dir or ".") + (
+            f"#{fragment}" if fragment else ""
+        )
+        count += 1
+        return m.group(1) + m.group(2) + new_value + m.group(4) + m.group(5)
+
+    def sub_bare(m: re.Match) -> str:
+        nonlocal count
+        resolved = _resolve_href(lookup_dir, m.group(2))
+        if resolved is None or resolved not in resolved_map:
+            return m.group(0)
+        new_value = posixpath.relpath(resolved_map[resolved], out_dir or ".")
+        count += 1
+        return m.group(1) + new_value + m.group(3)
+
+    text = _RENAME_CSS_URL_QUOTED_RE.sub(sub_quoted, text)
+    text = _RENAME_CSS_URL_BARE_RE.sub(sub_bare, text)
+    return text, count
+
+
 # Attribute accessors for the reference repairs. Whitespace-anchored (not \b)
 # so `data-href`-style names stay out; the optional namespaced prefix must end
 # in a colon, so `xlink:href` is covered and `data-src` is not. Group 2 is the
@@ -1242,9 +1358,16 @@ def repair_epub(
     target document does not define (RSC-020/RSC-012; NCX navTargets keep the document
     target) and non-resolvable URI schemes (kindle:, file:). Anchor text is always
     preserved byte-for-byte.
-    With `url_spaces`, percent-encode raw spaces in src/href attribute values across
-    the package (OPF href, NCX src, content src/href): a literal space is not a valid
-    URL (RSC-020).
+    With `url_spaces`, repair raw-space URLs two ways: percent-encode raw spaces
+    in src/href attribute values across the package (OPF href, NCX src, content
+    src/href; a literal space is not a valid URL, RSC-020), and RENAME the
+    archive entries whose names carry raw spaces to their underscore spellings,
+    rewriting every reference to them (OPF href, NCX src, content src/href,
+    stylesheet url()) so PKG-010's space-in-filename advisories clear. Underscore,
+    never percent-encoding: epubcheck decodes references before entry lookup, so
+    encoded entries are unfindable (verified against epubcheck 5.3); ambiguous
+    renames (a target that exists, two names converging) are refused per entry,
+    and a book with any non-UTF-8 document refuses all of its renames.
     With `fix_container`, generate META-INF/container.xml at the located OPF when the
     container is missing or names a file the archive does not contain (the gateway
     defect: epubcheck stays fatal while the OPF is unfindable).
@@ -1337,10 +1460,44 @@ def repair_epub(
         ids_by_doc: dict[str, frozenset[str]] = {}
         spine_ids: set[str] = set()
         opf_dir = posixpath.dirname(opf) if opf else ""
+
+        # --encode-url-spaces's rename half, decided up front: every
+        # existence check and fragment snapshot below must describe the
+        # archive as the OUTPUT carries it (renamed spellings), while the
+        # zin.open sites keep needing the raw source names (norm_to_raw's
+        # values). A book with any non-UTF-8 document refuses its renames
+        # entirely: those entries pass through byte-for-byte with no
+        # chance to rewrite the references pointing at renamed targets.
+        space_renames: dict[str, str] = {}
+        if url_spaces:
+            space_renames = space_rename_map(zin.namelist())
+            if space_renames:
+                for i in zin.infolist():
+                    low_i = i.filename.lower()
+                    if low_i.endswith(
+                        (".ncx", ".opf", ".css", ".xpgt")
+                    ) or low_i.endswith(CONTENT_SUFFIXES):
+                        try:
+                            zin.read(i).decode("utf-8")
+                        except UnicodeDecodeError:
+                            space_renames = {}
+                            break
+        # resolved spelling -> new spelling, the lookup shape the rewrite
+        # helpers take
+        space_resolved = (
+            {_norm_path(k): v for k, v in space_renames.items()}
+            if space_renames
+            else {}
+        )
+        # the one pre-pass that still reads the ORIGINAL references (the
+        # id snapshot's prune runs against the pre-rename layout)
+        present_src: frozenset[str] = frozenset()
         if prune_missing or strip_anchors or fix_media_types:
             for n in zin.namelist():
-                norm_to_raw.setdefault(_norm_path(n), n)
+                norm_to_raw.setdefault(_norm_path(space_renames.get(n, n)), n)
             present = frozenset(norm_to_raw)
+            if space_renames:
+                present_src = frozenset(_norm_path(n) for n in zin.namelist())
 
         # --strip-stub-docs: the whole-book stub identity decision needs the
         # spine order and every spine doc's visible text, so it runs once up
@@ -1374,11 +1531,13 @@ def repair_epub(
                         )
                     if prune_missing:
                         t, _ = prune_missing_resources_doc(
-                            t, posixpath.dirname(i.filename), present
+                            t,
+                            posixpath.dirname(i.filename),
+                            present_src if space_renames else present,
                         )
-                    ids_by_doc[_norm_path(i.filename)] = frozenset(
-                        m.group(3) for m in _XML_ID_RE.finditer(t)
-                    )
+                    ids_by_doc[
+                        _norm_path(space_renames.get(i.filename, i.filename))
+                    ] = frozenset(m.group(3) for m in _XML_ID_RE.finditer(t))
         if prune_missing and opf_text is not None:
             spine_ids = {m.group(3) for m in _IDREF_ATTR_RE.finditer(opf_text)}
 
@@ -1421,8 +1580,19 @@ def repair_epub(
                     zin.read("META-INF/container.xml").decode("utf-8", "replace")
                 )
             rootfile = _xml_unescape(cm.group(2), _XML_ATTR_ENTITIES) if cm else None
-            if not (rootfile and rootfile in zin.namelist()):
-                container_bytes = generate_container(opf).encode("utf-8")
+            # A container whose rootfile survives the renames unchanged is
+            # valid; one naming a renamed entry (typically the OPF itself)
+            # is stale in the OUTPUT archive and is regenerated against
+            # the renamed spelling.
+            rootfile_stable = (
+                bool(rootfile)
+                and rootfile in zin.namelist()
+                and (rootfile not in space_renames)
+            )
+            if not rootfile_stable:
+                container_bytes = generate_container(
+                    space_renames.get(opf, opf)
+                ).encode("utf-8")
         if container_bytes is not None and "META-INF/container.xml" not in (
             zin.namelist()
         ):
@@ -1457,6 +1627,19 @@ def repair_epub(
                 report.add({"container_generated": 1})
                 report.files_changed += 1
                 continue
+            # The rename half: a space-bearing entry is written under its
+            # underscore spelling. A fresh ZipInfo, not a bare-string
+            # arcname (that would stamp the current clock into the output;
+            # see the mimetype note above).
+            out_item = item
+            if name in space_renames:
+                out_item = zipfile.ZipInfo(
+                    space_renames[name], date_time=item.date_time
+                )
+                out_item.external_attr = item.external_attr
+                out_item.compress_type = item.compress_type
+                report.add({"entries_renamed": 1})
+                report.files_changed += 1
             # read(item), not read(name): with duplicate entry names (seen in broken
             # EPUBs), read(name) returns the first entry's bytes for every duplicate.
             data = zin.read(item)
@@ -1478,7 +1661,7 @@ def repair_epub(
                     text = data.decode("utf-8")
                 except UnicodeDecodeError:
                     report.add({"non_utf8_docs_skipped": 1})
-                    zout.writestr(item, data, compress_type=item.compress_type)
+                    zout.writestr(out_item, data, compress_type=item.compress_type)
                     continue
 
             if low.endswith(".ncx"):
@@ -1505,13 +1688,22 @@ def repair_epub(
                     text, n = fix_pagelist_class(text)
                     if n:
                         counts["pagelist_class_added"] = n
+                if space_renames:
+                    text, n = rewrite_space_renames(
+                        text,
+                        posixpath.dirname(name),
+                        posixpath.dirname(out_item.filename),
+                        space_resolved,
+                    )
+                    if n:
+                        counts["renamed_refs_rewritten"] = n
                 if url_spaces:
                     text, n = encode_url_spaces(text)
                     if n:
                         counts["url_spaces_encoded"] = n
                 if strip_anchors:
                     text, n = strip_ncx_broken_fragments(
-                        text, posixpath.dirname(name), ids_by_doc
+                        text, posixpath.dirname(out_item.filename), ids_by_doc
                     )
                     if n:
                         counts["ncx_fragments_stripped"] = n
@@ -1598,6 +1790,16 @@ def repair_epub(
                     if ccounts:
                         report.add(ccounts)
                         opf_changed = True
+                if space_renames:
+                    text, n = rewrite_space_renames(
+                        text,
+                        posixpath.dirname(name),
+                        posixpath.dirname(out_item.filename),
+                        space_resolved,
+                    )
+                    if n:
+                        report.add({"renamed_refs_rewritten": n})
+                        opf_changed = True
                 if url_spaces:
                     text, n = encode_url_spaces(text)
                     if n:
@@ -1681,9 +1883,18 @@ def repair_epub(
                     text, n = strip_pagination_doc(text, runheads, delete_layer)
                     if n:
                         counts["stripped_pagination"] = n
+                if space_renames:
+                    text, n = rewrite_space_renames(
+                        text,
+                        posixpath.dirname(name),
+                        posixpath.dirname(out_item.filename),
+                        space_resolved,
+                    )
+                    if n:
+                        counts["renamed_refs_rewritten"] = n
                 if prune_missing:
                     text, pcounts = prune_missing_resources_doc(
-                        text, posixpath.dirname(name), present
+                        text, posixpath.dirname(out_item.filename), present
                     )
                     if pcounts:
                         counts.update(pcounts)
@@ -1698,8 +1909,8 @@ def repair_epub(
                 if strip_anchors:
                     text, acounts = strip_broken_anchors_doc(
                         text,
-                        posixpath.dirname(name),
-                        ids_by_doc.get(_norm_path(name), frozenset()),
+                        posixpath.dirname(out_item.filename),
+                        ids_by_doc.get(_norm_path(out_item.filename), frozenset()),
                         ids_by_doc,
                     )
                     if acounts:
@@ -1708,7 +1919,24 @@ def repair_epub(
                     report.add(counts)
                     report.files_changed += 1
                     data = text.encode("utf-8")
+            elif low.endswith((".css", ".xpgt")) and space_renames:
+                # Stylesheets pass through the rewrite too: a url() that
+                # resolved against a raw-space entry would dangle the
+                # moment that entry is written under its new spelling.
+                # UTF-8 was verified for every document when the renames
+                # were licensed.
+                text = data.decode("utf-8")
+                text, n = rewrite_space_renames_css(
+                    text,
+                    posixpath.dirname(name),
+                    posixpath.dirname(out_item.filename),
+                    space_resolved,
+                )
+                if n:
+                    report.add({"renamed_refs_rewritten": n})
+                    report.files_changed += 1
+                    data = text.encode("utf-8")
 
-            zout.writestr(item, data, compress_type=item.compress_type)
+            zout.writestr(out_item, data, compress_type=item.compress_type)
 
     return report

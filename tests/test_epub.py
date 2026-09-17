@@ -1129,7 +1129,11 @@ class TestStripBrokenAnchors(unittest.TestCase):
 
 class TestEncodeUrlSpacesEpub(unittest.TestCase):
     """--encode-url-spaces: raw spaces in src/href attribute values are
-    percent-encoded across the package; archive entry names are untouched."""
+    percent-encoded across the package, and entries whose names carry raw
+    spaces are renamed to their underscore spellings with every reference
+    rewritten (v0.44.0; refs to entries that refused the rename still take
+    the percent-encode, and refs to absent files have nothing to rename
+    so they encode as before)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1176,15 +1180,21 @@ class TestEncodeUrlSpacesEpub(unittest.TestCase):
     def test_spaces_encoded_everywhere(self):
         self._build()
         report = repair_epub(self.src, self.dst, url_spaces=True)
-        self.assertEqual(report.fixes.get("url_spaces_encoded"), 4)
+        # The existing entry renames and its three references rewrite;
+        # the absent "i 1.jpg" has no entry to rename, so its reference
+        # takes the percent-encode as always.
+        self.assertEqual(report.fixes.get("entries_renamed"), 1)
+        self.assertEqual(report.fixes.get("renamed_refs_rewritten"), 3)
+        self.assertEqual(report.fixes.get("url_spaces_encoded"), 1)
         with zipfile.ZipFile(self.dst) as z:
-            self.assertIn("OEBPS/a b.xhtml", z.namelist())  # entry names untouched
+            self.assertIn("OEBPS/a_b.xhtml", z.namelist())
+            self.assertNotIn("OEBPS/a b.xhtml", z.namelist())
             opf = z.read("OEBPS/content.opf").decode()
             ncx = z.read("OEBPS/toc.ncx").decode()
-            c = z.read("OEBPS/a b.xhtml").decode()
-        self.assertIn('href="a%20b.xhtml"', opf)
-        self.assertIn('src="a%20b.xhtml"', ncx)
-        self.assertIn('href="a%20b.xhtml"', c)
+            c = z.read("OEBPS/a_b.xhtml").decode()
+        self.assertIn('href="a_b.xhtml"', opf)
+        self.assertIn('src="a_b.xhtml"', ncx)
+        self.assertIn('href="a_b.xhtml"', c)
         self.assertIn('src="i%201.jpg"', c)
 
     def test_idempotent(self):

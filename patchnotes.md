@@ -1,4 +1,15 @@
 # bindery-cli Patch Notes
+## v0.44.0 (2026-09-17)
+
+### The wave-2 batch: PKG-010 entry renames, the cover and ToC-drift audit slices, and the roman grammar unified
+
+* **`--encode-url-spaces` gained its rename half**, the biggest real-prevalence repair class left (PKG-010: 8,237 occurrences in 284 books at the 2026-09-17 refresh). Archive entries whose names carry raw spaces are renamed to their underscore spellings and every reference is rewritten (OPF, NCX, content `src`/`href`, stylesheet `url()`). The design was decided by experiment, not by the roadmap box's plan: epubcheck 5.3 DECODES references before entry lookup, so percent-encoded entries are unfindable by the encoded references pointing at them (all four raw/percent/underscore combinations built and checked); underscore on both sides resolves and clears PKG-010. Ambiguous renames are refused per entry (a target that already exists, two names converging, a duplicated archive name), a book with any non-UTF-8 document refuses all of its renames, a renamed OPF regenerates a stale container, and the acceptance rides `no_worse` because the gain sits on the warning axis the improvement gate does not measure (same bar as `--fix-cover`).
+* **The matcher fix that explains Theaetetus** (the 2026-09-16 hand-rescue): the encode pass's value class `[^"']` stopped at apostrophes inside double-quoted hrefs, so the 270 raw-space OPF hrefs never matched and the fatal survived. The matcher now takes the tempered-quote idiom (possessive, house style), and an apostrophe in a double-quoted filename is ordinary.
+* **`bindery audit cover`** (advisory, the EPUB3 half of the ruled hybrid): dangling EPUB2 `<meta name="cover">` (the `--fix-cover` class), the EPUB3 `properties~="cover-image"` declaration, and whether the named cover file exists. **`bindery audit tocdrift`**: the structural diff between the NCX navMap and the EPUB3 nav toc, keyed on the full target including fragments -- entries each side is missing plus label mismatches. Both never flag a book and never move the exit code; ToC synthesis stays out of the repair charter permanently. The loader exposes the parsed OPF, the NCX text, and the nav HTML on `Book`.
+* **The audit-refresh deep-dive ran** (read-only FastSweep extract over the full 5,228-book library; raw report in the facility): RSC-005 164,302 -> 13,782 occurrences, RSC-007 3,219 -> 14,162 in 604 books (the classics-wave imports), RSC-020 9,953 in 337 books, PKG-010 8,237 in 284 books (population flat: the rename class was still live, hence this ship).
+* **The roman grammar is one copy again**: pagination.py is the canonical home (it vendors into the plugin; audit does not), audit.py imports `ROMAN_RE`/`ROMAN_MAX`/`roman_value`, and the two byte-identical copies cannot drift. The RepairFlags dataclass refactor stays boxed with its reason (pure churn on the signatures this release touched).
+* Suite: 497 -> 521 tests (tests/test_space_renames.py, tests/test_cover_tocdrift.py, and the updated `--encode-url-spaces` end-to-end pins).
+
 ## v0.43.0 (2026-09-16)
 
 ### The stdlib XML hardening: untrusted metadata is bounded and entity-refused, no dependency

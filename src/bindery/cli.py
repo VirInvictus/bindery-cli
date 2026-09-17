@@ -175,6 +175,19 @@ def process_book(
             verdict = "partial"
         else:
             verdict = "accept"
+    if report.fixes.get("entries_renamed"):
+        # The rename half's gain sits on epubcheck's WARNING axis
+        # (PKG-010 space-in-filename advisories), which the improvement
+        # gate does not measure: a rename-only repair answers 'noop'
+        # from the gate. Same bar as the cover wiring: no_worse, with
+        # the partial rule intact (a book that still has fatals is
+        # never auto-applied).
+        if not no_worse(before, after):
+            verdict = "reject"
+        elif after.fatals > 0:
+            verdict = "partial"
+        else:
+            verdict = "accept"
     if verdict == "reject":
         summary += " (REGRESSION)"
     elif verdict == "noop":
@@ -1647,6 +1660,8 @@ def build_parser() -> argparse.ArgumentParser:
             "ocr",
             "monolithic",
             "completeness",
+            "cover",
+            "tocdrift",
             "all",
         ),
         help="which audit to run",

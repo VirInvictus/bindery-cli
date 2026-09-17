@@ -663,9 +663,14 @@ def fix_ncx_src_fragments(ncx: str) -> tuple[str, int]:
 # A src/href attribute with a quoted value. A raw space can only survive inside
 # quotes (an unquoted value ends at the first space). The optional namespaced
 # prefix must end in a colon, so `xlink:href` is covered while `data-href` and
-# friends are not.
+# friends are not. The value is the tempered-quote idiom (possessive, so a
+# failing candidate cannot re-partition) rather than a [^"'] class: a
+# double-quoted value may legitimately carry an apostrophe, and the class
+# shape silently skipped every href that had one (the Theaetetus OPF,
+# 2026-09-16: 270 raw-space hrefs survived the encode pass because their
+# filenames carried apostrophes).
 _SRC_HREF_ATTR_RE = re.compile(
-    r"""((?:^|\s)(?:[\w.-]+:)?(?:src|href)\s*=\s*)(["'])([^"']*)(\2)""",
+    r"""((?:^|\s)(?:[\w.-]+:)?(?:src|href)\s*=\s*)(["'])((?:(?!\2)[\s\S])*+)(\2)""",
     re.IGNORECASE,
 )
 
