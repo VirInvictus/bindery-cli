@@ -1950,7 +1950,7 @@ four interpreter families.
       quote skips, well-formed byte-identity, prune spin over the
       truncated-OPF shape). Never a third grammar copy.)*
 
-- [ ] **`--encode-url-spaces` left an OPF-manifest RSC-020 FATAL standing
+- [x] **`--encode-url-spaces` left an OPF-manifest RSC-020 FATAL standing
       on the Theaetetus fixture** (observed 2026-09-16, classics wave
       phase 1): the Hackett Aristotle *Theaetetus* EPUB (McDowell) arrived
       with 270 raw-space zip entry names AND 270 raw-space hrefs in
