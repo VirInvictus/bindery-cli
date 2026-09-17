@@ -1902,3 +1902,31 @@ four interpreter families.
       15 tests (spin shapes alarm-guarded per greedy site, unterminated-
       quote skips, well-formed byte-identity, prune spin over the
       truncated-OPF shape). Never a third grammar copy.)*
+
+- [ ] **`--encode-url-spaces` left an OPF-manifest RSC-020 FATAL standing
+      on the Theaetetus fixture** (observed 2026-09-16, classics wave
+      phase 1): the Hackett Aristotle *Theaetetus* EPUB (McDowell) arrived
+      with 270 raw-space zip entry names AND 270 raw-space hrefs in
+      content.opf — epubcheck fatal RSC-020 at content.opf(33,110). The
+      `--all` sweep's encode pass recorded `url_spaces_encoded:351` and
+      dropped errors 356→6, but the fatal survived it (1f before → 1f
+      after). A hand rebuild (percent-encode every reference in
+      .opf/.ncx/.xhtml while KEEPING the raw-space entry names — epubcheck
+      decodes hrefs to find entries, so renaming entries to encoded form
+      breaks lookups the other way) cleared the fatal entirely: 0f.
+      Suspect the encode pass covers content docs and NCX but not the OPF
+      manifest's own href attributes, or a reserialize round-trip writes
+      them back decoded. Fixture: the imported book (id 9135, the file was
+      hand-fixed in place) — the defects and the fix script's operations
+      are documented in the library's phase-1 record for 2026-09-16.
+
+- [ ] **Candidate transform: `--` inside XML comments (RSC-016 fatal)**.
+      Same book: `OEBPS/...split_269.html` carried a `--` inside an XML
+      comment (illegal XML, fatal RSC-016), costing the file its only
+      fatal after the OPF fix. Hand fix applied: replace `--` with an
+      en-dash inside comment nodes (2 sites, prose preserved). A small
+      `fix_comment_double_hyphen` transform (comment nodes only, `--` ->
+      en-dash, byte-counted) would make the always-on core able to parse
+      such books at all — until then the book parses in lenient readers
+      but never passes epubcheck. Low frequency (one book in the wave),
+      noted with the fixture reference above.
