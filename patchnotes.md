@@ -1,4 +1,11 @@
 # bindery-cli Patch Notes
+## v0.43.0 (2026-09-16)
+
+### The stdlib XML hardening: untrusted metadata is bounded and entity-refused, no dependency
+
+* **`--audit` and every `load_book` caller no longer decompress blind.** Two protections, both stdlib-only (the defusedxml dependency stays declined): single entries whose declared size exceeds `_MAX_ENTRY_BYTES` (32 MB) are refused before decompression -- a bomb entry in a tiny zip cannot be downloaded into memory -- and the untrusted metadata files (container.xml, OPF, encryption.xml) parse through `_safe_xml_parse`, which refuses DOCTYPE/ENTITY declarations before xml.etree sees them. A refused or unparseable metadata file returns the shell book (the archive verdict is the book's whole story), never a hang or a traceback.
+* Pinned by `tests/test_xml_hardening.py` (entity-bomb container returns the shell book; clean XML parses; the entry cap is sane). The defusedxml dependency ask is closed as declined with the stdlib shape delivered.
+
 ## v0.42.0 (2026-09-16)
 
 ### The matcher audit executed: every quote-aware tag matcher hardened

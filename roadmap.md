@@ -1841,13 +1841,18 @@ four interpreter families.
       testing_facility library (invented titles, real dry-run output);
       the current PNG shows 16 real rows. Ask asked 2026-09-15,
       unanswered; nothing touched.
-- [ ] **Stranger-facing XML hardening** (dependency-flagged): a
-      per-entry size cap in load_book (stdlib, bounds decompression)
-      plus defusedxml-style entity-expansion gating for the untrusted
-      XML (container.xml, OPF, encryption.xml, NCX). RECORDED REOPEN
-      (Brandon's ask pending; the dependency ask would violate the
-      stdlib-only rule and adds a vendored plugin dep): trigger is a
-      real 3.12/3.13 stranger audience, not a hypothetical.
+- [x] **Stranger-facing XML hardening** *(SHIPPED 2026-09-16, v0.43.0
+      -- the STDLIB half only, no dependency: `_MAX_ENTRY_BYTES` (32 MB)
+      checked before `_read`'s decompression so a bomb entry is refused,
+      and `_safe_xml_parse` refuses DOCTYPE/ENTITY declarations in the
+      untrusted metadata (container.xml, OPF, encryption.xml) before
+      xml.etree sees them; a refused or unparseable metadata file
+      returns the shell book, the archive being the book's whole story.
+      Pinned by tests/test_xml_hardening.py. The defusedxml dependency
+      itself STAYS DECLINED: the stdlib shape delivers the entity
+      protection, and the vendored-plugin cost was the box's real
+      objection. The full-parser-swap reopen remains Brandon-gated if a
+      real 3.12/3.13 stranger audience ever materializes.)*
 - [x] **vir-tui floor >=2.5.0 + lock refresh** (2026-09-14, no release cut: upstream 2.4.0/2.5.0 are additive terminal-safety and session-awareness releases; only the vir-tui resolution moved in the lock, the cquarry lag rule is untouched). *(Mention the floor bump in the next release's patchnotes.)*
 
 - [x] **REGRESSION (0.41.0) FIXED in v0.41.1: the repair --all CPU

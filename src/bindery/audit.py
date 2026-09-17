@@ -226,6 +226,34 @@ class Book:
         return self._visible
 
 
+# v0.43.0 XML hardening (stdlib-only): a single EPUB component above this
+# size is refused before decompression (a real book's largest component --
+# one content doc, the OPF, the NCX -- is nowhere near it), and the
+# metadata XML parser refuses DOCTYPE/ENTITY declarations, which is
+# defusedxml's entity protection without the dependency.
+_MAX_ENTRY_BYTES = 32 * 1024 * 1024
+
+# a stand-in root for a refused metadata parse: iter() over it is empty
+_ET_EMPTY = ET.Element("empty")
+
+
+def _safe_xml_parse(blob: bytes | None):
+    """xml.etree parse for UNTRUSTED metadata files, stdlib-hardened: a
+    DOCTYPE or ENTITY declaration anywhere in the blob is refused before
+    parsing, which is defusedxml's entity protection without the
+    dependency. Returns None for a refused or unparseable blob; callers
+    treat that exactly like a missing file."""
+    if blob is None:
+        return None
+    head = blob[:4096].upper()
+    if b"<!DOCTYPE" in head or b"<!ENTITY" in head:
+        return None
+    try:
+        return ET.fromstring(blob)
+    except Exception:
+        return None
+
+
 def load_book(path: Path) -> Book:
     """Open an EPUB once: fully read EVERY archive entry (the CRC sweep the
     phase-1 skill used to do by hand), resolve spine + nav + declared
@@ -238,6 +266,7 @@ def load_book(path: Path) -> Book:
         nameset = set(names)
         corrupt: list[str] = []
         encrypted: list[str] = []
+        oversized: list[str] = []
         spine_missing = 0
         dup_entries = len(names) - len(nameset)  # zip resolves last-wins
         raw: dict[str, bytes] = {}
@@ -260,6 +289,12 @@ def load_book(path: Path) -> Book:
             if name in corrupt or name in encrypted:
                 return None
             try:
+                # v0.43.0 hardening: the declared size is checked BEFORE the
+                # read, so a bomb entry (a tiny zip that decompresses to
+                # gigabytes) is refused instead of downloaded into memory.
+                if z.getinfo(name).file_size > _MAX_ENTRY_BYTES:
+                    oversized.append(name)
+                    return None
                 blob = z.read(name)
             except Exception:
                 if name in encrypted_names:
@@ -279,7 +314,7 @@ def load_book(path: Path) -> Book:
         )
         if enc_blob:
             try:
-                for ed in ET.fromstring(enc_blob).iter():
+                for ed in (_safe_xml_parse(enc_blob) or _ET_EMPTY).iter():
                     if ed.tag.split("}")[-1] != "EncryptedData":
                         continue
                     algo = ""
@@ -324,12 +359,57 @@ def load_book(path: Path) -> Book:
                 obfuscated=obfuscated,
                 obfuscated_declared=obfuscated_declared,
             )
-        container = ET.fromstring(container_blob)
+        container = _safe_xml_parse(container_blob)
+        if container is None:
+            # A container that PARSES but was refused (DOCTYPE/ENTITY
+            # declarations: untrusted-XML policy, v0.43.0) or is otherwise
+            # unparseable gets the same shell-book outcome as an absent
+            # one -- the archive is the book's whole story.
+            obfuscated = [
+                n
+                for n in sorted(encrypted_names & obfuscated_declared)
+                if n not in corrupt and n not in encrypted
+            ]
+            return Book(
+                [],
+                None,
+                "",
+                {},
+                names,
+                corrupt,
+                0,
+                0,
+                encrypted=encrypted,
+                dup_entries=dup_entries,
+                obfuscated=obfuscated,
+                obfuscated_declared=obfuscated_declared,
+            )
         rootfile = container.find(".//c:rootfile", CONTAINER_NS)
         opf_path = rootfile.get("full-path") if rootfile is not None else None
         if not opf_path:
             raise ValueError("container.xml has no rootfile")
-        opf = ET.fromstring(_read(opf_path))
+        opf = _safe_xml_parse(_read(opf_path))
+        if opf is None:
+            # same shell-book outcome for a refused/unparseable OPF
+            obfuscated = [
+                n
+                for n in sorted(encrypted_names & obfuscated_declared)
+                if n not in corrupt and n not in encrypted
+            ]
+            return Book(
+                [],
+                None,
+                "",
+                {},
+                names,
+                corrupt,
+                0,
+                0,
+                encrypted=encrypted,
+                dup_entries=dup_entries,
+                obfuscated=obfuscated,
+                obfuscated_declared=obfuscated_declared,
+            )
         base = os.path.dirname(opf_path)
 
         manifest: dict[str, str] = {}
