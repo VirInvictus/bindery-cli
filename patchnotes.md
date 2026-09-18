@@ -1,4 +1,10 @@
 # bindery-cli Patch Notes
+## v0.44.1 (2026-09-18)
+
+### Doctor names its interpreter
+
+* **`bindery doctor` prints `sys.executable` on its python line**, in the epubcheck line's `version  [path]` shape. The version-only line hid which environment was probed, so an html5lib "not installed" read as wrong when the module sat in the system interpreter: a uv tool venv (`include-system-site-packages = false`) genuinely cannot see system site-packages, and `find_spec` only ever consults the running interpreter. The path makes the install shape self-diagnosing.
+* Repo housekeeping with no runtime effect: `FUNDING.yml` (GitHub Sponsors + Liberapay).
 ## v0.44.0 (2026-09-17)
 
 ### The wave-2 batch: PKG-010 entry renames, the cover and ToC-drift audit slices, and the roman grammar unified

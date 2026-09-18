@@ -11,7 +11,7 @@ Calibre plugin built from this core.
 Single source of truth for the version. pyproject.toml must match VERSION below.
 """
 
-VERSION = "0.44.0"
+VERSION = "0.44.1"
 __version__ = VERSION
 
 from .epub import RepairReport, repair_epub  # noqa: E402
