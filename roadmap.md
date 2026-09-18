@@ -1983,3 +1983,16 @@ four interpreter families.
       such books at all — until then the book parses in lenient readers
       but never passes epubcheck. Low frequency (one book in the wave),
       noted with the fixture reference above.
+
+- [ ] **The `run phase1` report's repair records carry no structured fix
+      breakdown** (observed 2026-09-18 from the CalibreQuarry side, after
+      its lossy_consent box): the phase-1 JSON exposes only the rendered
+      `summary` string (fix keys flattened to "k:v, k:v"), so the CQ
+      mirror has to substring-match the gate's lossy keys
+      (`stripped_pagination`, `stripped_broken_tags`,
+      `stripped_watermarks`, `dropped_marker`, `stub_docs_dropped`) to
+      narrow consent to real strips. Exposing the RepairReport's `fixes`
+      dict per book (the `ncx_uid_synced`/`watermark_refusals` fields
+      already exist as data) would turn the lossy/structural split into
+      data instead of string matching, and CalibreQuarry would adopt it
+      with a deliberate floor bump.
