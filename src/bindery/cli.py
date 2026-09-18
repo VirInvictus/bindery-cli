@@ -1024,7 +1024,7 @@ def run_doctor(args) -> int:
     print()
 
     py = sys.version.split()[0]
-    print(f"python:      {py} (floor 3.12)")
+    print(f"python:      {py} (floor 3.12)  [{sys.executable}]")
 
     stack = []
     for mod in ("vir_tui", "cquarry"):
