@@ -14,7 +14,7 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
 
 - **Minimal Dependencies.** Runtime deps are exactly: `tqdm` (progress/output),
   `vir-tui` (shared TUI rendering) and `cquarry` (read-only Calibre `metadata.db` access,
-  adopted in v0.16.0), pinned as PyPI ranges in pyproject.toml (`vir-tui>=2.2.0`,
+  adopted in v0.16.0), pinned as PyPI ranges in pyproject.toml (`vir-tui>=2.5.0`,
   `cquarry>=1.19.0`); `uv.lock` records the resolved versions. Since v0.40.0 both
   VirInvictus pins carry `; python_version >= '3.14'` markers (every release they
   ship declares requires-python >=3.14) and the package floor is 3.12: a 3.12/3.13
