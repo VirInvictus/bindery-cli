@@ -30,3 +30,4 @@ test_facility/*.epub
 venv/
 .venv_ci/
 testing_facility/top500candidates/*.txt
+testing_facility/
