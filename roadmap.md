@@ -1984,7 +1984,7 @@ four interpreter families.
       but never passes epubcheck. Low frequency (one book in the wave),
       noted with the fixture reference above.
 
-- [ ] **The `run phase1` report's repair records carry no structured fix
+- [x] **The `run phase1` report's repair records carry no structured fix
       breakdown** (observed 2026-09-18 from the CalibreQuarry side, after
       its lossy_consent box): the phase-1 JSON exposes only the rendered
       `summary` string (fix keys flattened to "k:v, k:v"), so the CQ
@@ -1995,4 +1995,10 @@ four interpreter families.
       dict per book (the `ncx_uid_synced`/`watermark_refusals` fields
       already exist as data) would turn the lossy/structural split into
       data instead of string matching, and CalibreQuarry would adopt it
-      with a deliberate floor bump.
+      with a deliberate floor bump. DONE in v0.45.0: every per-book
+      record (library --json, repair --json, and the phase1 payload built
+      on it) carries `fixes` plus `ncx_uid_synced` and
+      `watermark_refusals` as data; `_phase1_decisions` reads those
+      fields and no longer substring-matches the summary (which stays
+      rendered for human eyes). CalibreQuarry can floor-bump to
+      `bindery>=0.45.0` and drop its substring matching.

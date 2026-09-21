@@ -8,7 +8,7 @@ resolution-markers = [
 
 [[package]]
 name = "bindery-cli"
-version = "0.44.1"
+version = "0.45.0"
 source = { editable = "." }
 dependencies = [
     { name = "cquarry", marker = "python_full_version >= '3.14'" },
@@ -41,11 +41,11 @@ wheels = [
 
 [[package]]
 name = "cquarry"
-version = "1.23.0"
+version = "1.23.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/94/bb/b124fc1988935b5e3420394841b3d8c89c3bbf331f4c8335c643b2f6136c/cquarry-1.23.0.tar.gz", hash = "sha256:ecc86a0144e1fe03620e236b588927bf52ca24979550c0e043f972b310911aa6", size = 279290, upload-time = "2026-09-15T20:00:01.202Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/f3/68d8dea76897d2efb9db7c6ce5e3592b1b6e410656e6e6a727c3ddae0353/cquarry-1.23.2.tar.gz", hash = "sha256:cb7467b02dea4013189964528f389d825b23416d6c493912947e7bbf10238a84", size = 284386, upload-time = "2026-09-16T21:18:59.258Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/05/cb087280bec3de9bb63f04e67183c127a33a4153110145ee30930d8f7c60/cquarry-1.23.0-py3-none-any.whl", hash = "sha256:1f39ecd144a586e17d81513beca954364c90e086f4bb44505fa428aa0f9b0ff4", size = 96522, upload-time = "2026-09-15T19:59:59.472Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/4b/40e5f2a45ccbcb228f4a4c6dfe4a3e0b191004249bd7de1dec1c5a68541f/cquarry-1.23.2-py3-none-any.whl", hash = "sha256:708884c454ef344202351e9633cfba856b83b3961a742eac18d4815e3f8b38ec", size = 96618, upload-time = "2026-09-16T21:18:57.906Z" },
 ]
 
 [[package]]

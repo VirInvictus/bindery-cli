@@ -509,8 +509,13 @@ crash), never raises, and always exits 0: a diagnosis is not a failure.
 
 `bindery repair SRC [DST] [--json FILE]` writes its record in the
 `library --json` per-book vocabulary (`status`, `applied`, `before`/`after`,
-the fix `summary`) on every processing outcome, including nochange and
-reject; usage refusals (missing input, existing output) precede any record.
+the fix `summary`, and the structured fix breakdown: the `fixes` dict plus
+`ncx_uid_synced` and `watermark_refusals`) on every processing outcome,
+including nochange and reject; usage refusals (missing input, existing
+output) precede any record. The structured fields are the machine-readable
+half of the same information: consumers narrow lossy consent by fix class
+as data, never by substring-matching the rendered summary (v0.45.0; the
+phase1 payload inherits them through its per-book repair records).
 
 ## The Calibre plugin (Bindery Repair)
 

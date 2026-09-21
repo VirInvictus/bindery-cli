@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
 
@@ -56,6 +56,13 @@ class Outcome:
     before: CheckResult | None
     after: CheckResult | None
     summary: str
+    # The structured half of `summary`: the RepairReport's own data, so
+    # consumers (run phase1's decisions, CalibreQuarry's lossy-consent
+    # mirror) read fix classes as data instead of substring-matching the
+    # rendered string.
+    fixes: dict[str, int] = field(default_factory=dict)
+    ncx_uid_synced: bool = False
+    watermark_refusals: int = 0
 
 
 def process_book(
@@ -133,7 +140,16 @@ def process_book(
         )
 
     if not validate:
-        return Outcome(epub, "unvalidated", None, None, summary)
+        return Outcome(
+            epub,
+            "unvalidated",
+            None,
+            None,
+            summary,
+            fixes=report.fixes,
+            ncx_uid_synced=report.ncx_uid_synced,
+            watermark_refusals=report.watermark_refusals,
+        )
 
     if before is None:
         before = run_epubcheck(epub)
@@ -142,7 +158,16 @@ def process_book(
         # Validation was requested but the oracle failed (crash, timeout, unparsable
         # output). This is "error", not "unvalidated": the gate did not accept the
         # repair, so it must never be applied. Only --no-validate skips the gate.
-        return Outcome(epub, "error", before, after, summary + " (epubcheck failed)")
+        return Outcome(
+            epub,
+            "error",
+            before,
+            after,
+            summary + " (epubcheck failed)",
+            fixes=report.fixes,
+            ncx_uid_synced=report.ncx_uid_synced,
+            watermark_refusals=report.watermark_refusals,
+        )
     verdict = gate(before, after)
     if (
         report.fixes.get("stripped_pagination")
@@ -193,7 +218,16 @@ def process_book(
     elif verdict == "noop":
         summary += " (no measurable gain)"
     status = "equal" if verdict == "noop" else verdict
-    return Outcome(epub, status, before, after, summary)
+    return Outcome(
+        epub,
+        status,
+        before,
+        after,
+        summary,
+        fixes=report.fixes,
+        ncx_uid_synced=report.ncx_uid_synced,
+        watermark_refusals=report.watermark_refusals,
+    )
 
 
 def _load_audit(path: Path) -> dict[str, tuple[int, int, int]]:
@@ -660,8 +694,21 @@ def run_library(args) -> int:
                     # record per path.
                     errors += 1
                     records.pop()
+                    # Forward o's structured fields: the repair itself
+                    # happened (its fixes are facts about the candidate),
+                    # and the record contract promises them on every
+                    # outcome, apply-failed included.
                     records.append(
-                        Outcome(epub, "error", o.before, o.after, f"apply failed: {e}")
+                        Outcome(
+                            epub,
+                            "error",
+                            o.before,
+                            o.after,
+                            f"apply failed: {e}",
+                            fixes=o.fixes,
+                            ncx_uid_synced=o.ncx_uid_synced,
+                            watermark_refusals=o.watermark_refusals,
+                        )
                     )
                     tqdm.write(
                         f"  ERROR   {rel}\n            apply failed: {e}; not applied"
@@ -742,6 +789,9 @@ def run_library(args) -> int:
                     "before": _counts_dict(o.before),
                     "after": _counts_dict(o.after),
                     "summary": o.summary,
+                    "fixes": o.fixes,
+                    "ncx_uid_synced": o.ncx_uid_synced,
+                    "watermark_refusals": o.watermark_refusals,
                     "applied": o.epub in applied_paths,
                 }
                 for o in records
@@ -833,6 +883,9 @@ def run_repair(args) -> int:
                     "before": None,
                     "after": None,
                     "summary": "",
+                    "fixes": {},
+                    "ncx_uid_synced": False,
+                    "watermark_refusals": 0,
                     "error": f"{type(e).__name__}: {e}",
                 }
             )
@@ -846,6 +899,9 @@ def run_repair(args) -> int:
             "before": _counts_dict(o.before),
             "after": _counts_dict(o.after),
             "summary": o.summary,
+            "fixes": o.fixes,
+            "ncx_uid_synced": o.ncx_uid_synced,
+            "watermark_refusals": o.watermark_refusals,
         }
         if o.status == "nochange":
             print("no applicable fixes; nothing written.")
@@ -951,10 +1007,10 @@ def _phase1_decisions(books: list[dict], apply: bool) -> list[dict]:
             r = b["repair"]
             if r is None:
                 continue
-            summary = r.get("summary") or ""
-            if "stripped_watermarks" in summary or "dropped_marker" in summary:
+            fixes = r.get("fixes") or {}
+            if fixes.get("stripped_watermarks") or fixes.get("dropped_marker"):
                 watermarked.append(b["path"])
-            if "watermark_refusals" in summary:
+            if r.get("watermark_refusals"):
                 manual_wm.append(b["path"])
             if r["status"] in ("accept", "partial"):
                 pending.append(b["path"])
@@ -974,7 +1030,7 @@ def _phase1_decisions(books: list[dict], apply: bool) -> list[dict]:
     else:
         for b in books:
             r = b["repair"]
-            if r is not None and "watermark_refusals" in (r.get("summary") or ""):
+            if r is not None and r.get("watermark_refusals"):
                 manual_wm.append(b["path"])
     if manual_wm:
         decisions.append(

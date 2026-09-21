@@ -196,8 +196,9 @@ class TestRepairWritesGatedBytes(unittest.TestCase):
 class TestRepairJson(unittest.TestCase):
     """repair --json: the one machine-readable gap in the four-verb CLI. The
     record speaks the library --json per-book vocabulary (status, applied,
-    before/after, summary) and lands on every processing outcome, including
-    the refusals."""
+    before/after, summary, the structured fixes/ncx_uid_synced/
+    watermark_refusals fields) and lands on every processing outcome,
+    including the refusals."""
 
     def test_accepted_repair_writes_a_record(self):
         with tempfile.TemporaryDirectory() as td:
@@ -272,6 +273,68 @@ class TestRepairJson(unittest.TestCase):
         self.assertEqual(rc2, 1)
         self.assertEqual(d2["status"], "reject")
         self.assertFalse(d2["applied"])
+
+
+class TestStructuredFixRecord(unittest.TestCase):
+    """The per-book records carry the fix breakdown as data, not only the
+    rendered summary string: the structured-fixes roadmap box (2026-09-18),
+    so consumers like CalibreQuarry's lossy-consent mirror and run phase1's
+    own decisions read fix classes instead of substring-matching prose."""
+
+    def test_library_record_carries_fix_breakdown(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _phase1_book(root / "a.epub", broken=False, real_fix=True)
+            jout = root / "lib.json"
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                rc = cli.run_library(
+                    build_parser().parse_args(
+                        ["library", str(root), "--no-validate", "--json", str(jout)]
+                    )
+                )
+            data = json.loads(jout.read_text())
+        self.assertEqual(rc, 0)
+        (rec,) = data["books"]
+        self.assertEqual(rec["status"], "unvalidated")
+        self.assertEqual(rec["fixes"], {"fix_ncx_playorder": 1})
+        self.assertFalse(rec["ncx_uid_synced"])
+        self.assertEqual(rec["watermark_refusals"], 0)
+        # the rendered summary stays for human eyes
+        self.assertIn("fix_ncx_playorder:1", rec["summary"])
+
+    def test_repair_json_record_carries_fix_breakdown(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            dst = Path(td) / "out.epub"
+            _phase1_book(src, broken=False, real_fix=True)
+            jout = Path(td) / "repair.json"
+            with redirect_stdout(io.StringIO()):
+                rc = main(
+                    ["repair", str(src), str(dst), "--no-validate", "--json", str(jout)]
+                )
+            data = json.loads(jout.read_text())
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["status"], "unvalidated")
+        self.assertEqual(data["fixes"], {"fix_ncx_playorder": 1})
+        self.assertFalse(data["ncx_uid_synced"])
+        self.assertEqual(data["watermark_refusals"], 0)
+
+    def test_nochange_record_carries_empty_fixes(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            dst = Path(td) / "out.epub"
+            _phase1_book(src, broken=False)
+            jout = Path(td) / "repair.json"
+            with redirect_stdout(io.StringIO()):
+                rc = main(
+                    ["repair", str(src), str(dst), "--no-validate", "--json", str(jout)]
+                )
+            data = json.loads(jout.read_text())
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["status"], "nochange")
+        self.assertEqual(data["fixes"], {})
+        self.assertFalse(data["ncx_uid_synced"])
+        self.assertEqual(data["watermark_refusals"], 0)
 
 
 class TestDoctor(unittest.TestCase):
@@ -744,6 +807,11 @@ class TestApplyFailureIsolation(unittest.TestCase):
         self.assertEqual(len(paths), len(set(paths)))  # one record per path
         statuses = [b["status"] for b in data["books"]]
         self.assertEqual(statuses, ["error"])
+        # the repair itself happened; its fixes are facts about the candidate
+        # and must survive the apply failure (the record contract promises
+        # the structured fields on every outcome)
+        (rec,) = data["books"]
+        self.assertEqual(rec["fixes"], {"fix_ncx_playorder": 1})
         self.assertEqual(rc, 2)
 
     def test_backup_dir_inside_library_root_is_refused(self):
@@ -1264,6 +1332,9 @@ class TestWatermarkRefusalDecision(unittest.TestCase):
             "repair": {
                 "status": "equal",
                 "summary": "watermark_refusals:1 (no measurable gain)",
+                "fixes": {},
+                "ncx_uid_synced": False,
+                "watermark_refusals": 1,
             },
         }
 
@@ -1278,6 +1349,9 @@ class TestWatermarkRefusalDecision(unittest.TestCase):
         book["repair"] = {
             "status": "accept",
             "summary": "stripped_watermarks:1, watermark_refusals:1",
+            "fixes": {"stripped_watermarks": 1},
+            "ncx_uid_synced": False,
+            "watermark_refusals": 1,
         }
         decisions = _phase1_decisions([book], apply=True)
         (d,) = decisions  # apply recorded: only the manual-repair question remains

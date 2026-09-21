@@ -1,4 +1,12 @@
 # bindery-cli Patch Notes
+## v0.45.0 (2026-09-21)
+
+### The structured fix breakdown in the JSON records
+
+* **Every per-book record now carries the fix breakdown as data, not only the rendered `summary` string** (the roadmap box recorded 2026-09-18 from the CalibreQuarry side): `library --json` and `repair --json` records, and the `run phase1`/`phase3` payloads built on them, expose the RepairReport's `fixes` dict plus `ncx_uid_synced` and `watermark_refusals`. Consumers that need to know whether a repair was lossy (CalibreQuarry's lossy-consent mirror) can read fix classes as data instead of substring-matching the flattened `"k:v, k:v"` summary; the summary itself stays rendered for human eyes, byte-identical to before. Purely additive: no existing key changed meaning.
+* **`run phase1`'s own decisions read the data now**: `_phase1_decisions` narrows the `apply_lossy` and `manual_watermark_repair` questions through the structured fields instead of matching summary substrings, and a book whose apply failed mid-run (the ENOSPC-class path) still reports the candidate's real fixes instead of an empty breakdown.
+* CalibreQuarry adoption is a deliberate floor bump: `bindery>=0.45.0`.
+* Suite: 521 -> 524 tests (`TestStructuredFixRecord`, plus the apply-failure and watermark-refusal records updated to the structured shape).
 ## v0.44.1 (2026-09-18)
 
 ### Doctor names its interpreter
