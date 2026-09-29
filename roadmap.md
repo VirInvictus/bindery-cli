@@ -1577,9 +1577,12 @@ an opt-in structural repair under the existing gate contract.
   51 OPF-085 invalid-UUID warnings plus the thin date/language tail)
   is a main-thread task for the next CQ lane. bindery's side is closed:
   dc: metadata stays a non-goal.) *
-- [ ] **NCX<->nav drift DETECTOR** (audit-only; structural diff feeding
+- [x] **NCX<->nav drift DETECTOR** (audit-only; structural diff feeding
   `decisions_needed`; ToC synthesis stays out of charter
   permanently). L if repair is ever attempted.
+  *(SHIPPED v0.44.0 as `bindery audit tocdrift`, recorded at the
+  wave-2 batch entry; ticked 2026-09-29 during the parity scoping
+  because the box kept reading as open work.)*
 - [ ] **CSS url() pruning** as `--prune-missing-resources` scope
   extension: only after the prevalence study says it matters.
   *(Prevalence read, 2026-09-12: CSS-007/CSS-008 appear at 56/30 books
@@ -1665,12 +1668,15 @@ four interpreter families.
       README's audit CSV claim, the repair_epub docstring's three missing
       flags, the audit.py module-docstring contradictions, the
       roman-numeral duplication, the sys.path.insert pollution.
-- [ ] **Blitz candidates:** the audit-refresh deep-dive (per-class deltas
+- [x] **Blitz candidates:** the audit-refresh deep-dive (per-class deltas
       vs the 09-12 baselines; first-time counts for the two C-ruled
       classes); a cover advisory analyzer completing the hybrid ruling;
       --encode-url-spaces entry renames (the reference-rewrite half
       shipped v0.28.0; the remainder is renaming archive entries whose
       filenames carry raw spaces; PKG-010, 280 books); plugin log rotation.
+      *(All four executed: log rotation BUILT 2026-09-15; the deep-dive
+      DONE 2026-09-17; the cover analyzer and the PKG-010 entry renames
+      SHIPPED v0.44.0. Ticked 2026-09-29 during the parity scoping.)*
 - [x] **GitHub presentation (workspace batch):** *(EXECUTED and verified at the ticked box below (line ~1745) during the blitz; ticked 2026-09-16 to stop it reading as open work.)* ** description rewrite
       (leads with deterministic epubcheck-gated repair); 7 topics swapped
       (add epub3/calibre-plugin/python-cli/ebook-audit); codex page still
@@ -2002,3 +2008,34 @@ four interpreter families.
       fields and no longer substring-matches the summary (which stays
       rendered for human eyes). CalibreQuarry can floor-bump to
       `bindery>=0.45.0` and drop its substring matching.
+
+## The repair domain in the ecosystem parity program (recorded 2026-09-29)
+
+Brandon opened the ecosystem Calibre-parity program on 2026-09-29 (cquarry roadmap.md,
+"The parity program"; parity counts native coverage plus orchestration of Calibre's own
+headless tools, and excludes process-bound and declined surface with recorded reasons).
+bindery-cli's lane is the repair/acceptance domain, where this repo is already past
+parity with Calibre's own tooling: ebook-polish has no acceptance oracle, no determinism
+contract, and no atomic library replacement; bindery has all three, plus native
+metadata.db registration and the Calibre plugin. Dispositions recorded under the program:
+
+- **Conversion stays out, permanently** (spec.md:10-14): Calibre's conversion engine
+  (~45 input / ~20 output formats) is orchestration-lane territory (CalibreQuarry
+  `run convert`); bindery never grows one, and no parity claim depends on it.
+- **The ebook-polish content-improving actions bindery lacks stay declined**:
+  embed/subset fonts, jacket, smarten punctuation, remove-unused-css, compress-images,
+  upgrade-book, download-external-resources, the --opf rewrite, --cover. They are
+  content-improving rather than repair, and dc: metadata editing is out of charter
+  (spec.md:583). Recorded here so the parity ledger's bindery row names them declined,
+  not missing.
+- **The `data`-row waiver note**: bindery has updated `data` rows through
+  `WritableCalibreDB.set_format` since v0.24.0 (the sanctioned install path);
+  cquarry's conditional write-back waiver was reworded 2026-09-29 to name what it
+  actually guards: a bindery-side book-metadata write-back convenience, still declined.
+- **Parity-relevant accepted gaps**: RSC-016 (`--` inside XML comments, the candidate
+  box above) remains the one open repair class that blocks epubcheck acceptance on
+  affected books; the prevalence-gated classes (encryption.xml, href case/backslash,
+  zip dedupe, CSS url()) reopen only on acquisition mix. The RepairFlags refactor stays
+  deferred with its recorded reason.
+- **Brandon-parked items are unchanged**: the MobileRead plugin listing and the README
+  screenshot regeneration stay his; the program does not schedule them.
