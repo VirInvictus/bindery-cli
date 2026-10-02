@@ -67,7 +67,7 @@ Introducing a net-new fatal is always rejected. If epubcheck itself fails to run
 
 Under the hood, the oracle can run two ways: the usual `epubcheck --json -` subprocess, or a persistent daemon that writes `FastDaemon.java` into a temp directory at runtime, compiles it in memory with the running JVM's own compiler (Java's single-file source launcher: no javac, no javac/java version skew), and drives the warm JVM over a pipe. The daemon reports the counts it reads from the JSON document that epubcheck's own `CheckingReport` serializes, so it measures exactly what the subprocess measures, just ~15x faster. It is a pool bounded by `--workers` (serial runs use one), every roundtrip is bounded by the caller's timeout, and any failure tears it down and falls back to the subprocess for good.
 
-The lossy modes (`--strip-pagination`, `--strip-broken-tags`, and `--strip-watermarks`) are the exception to the "must improve" rule. Since they remove visible markup rather than correcting XML schema violations, epubcheck counts often remain unchanged. They are accepted when the result is **no worse** (no net-new fatals or errors), relying on strict programmatic safety nets instead.
+The lossy modes (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`, and `--strip-stub-docs`) are the exception to the "must improve" rule. Since they remove converter-injected content rather than correcting XML schema violations, epubcheck counts often remain unchanged. They are accepted when the result is **no worse** (no net-new fatals or errors), relying on strict programmatic safety nets instead.
 
 ## Install
 
