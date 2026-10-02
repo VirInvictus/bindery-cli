@@ -598,6 +598,7 @@ class TestOptInFlagWiring(unittest.TestCase):
         "prune_missing_resources",
         "strip_broken_anchors",
         "encode_url_spaces",
+        "fix_comment_double_hyphen",
     )
 
     def test_flags_default_off_on_both_subcommands(self):
@@ -621,6 +622,7 @@ class TestOptInFlagWiring(unittest.TestCase):
             "prune_missing",
             "strip_anchors",
             "url_spaces",
+            "comment_double_hyphens",
         )
         with tempfile.TemporaryDirectory() as td:
             src = Path(td) / "in.epub"

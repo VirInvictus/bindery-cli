@@ -93,6 +93,7 @@ def process_book(
     fix_container: bool = False,
     fix_media_types: bool = False,
     fix_cover: bool = False,
+    comment_double_hyphens: bool = False,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -127,6 +128,7 @@ def process_book(
         fix_container=fix_container,
         fix_media_types=fix_media_types,
         fix_cover=fix_cover,
+        comment_double_hyphens=comment_double_hyphens,
     )
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
@@ -624,6 +626,8 @@ def run_library(args) -> int:
                     fix_container=args.fix_container or getattr(args, "all", False),
                     fix_media_types=args.fix_media_types or getattr(args, "all", False),
                     fix_cover=args.fix_cover or getattr(args, "all", False),
+                    comment_double_hyphens=args.fix_comment_double_hyphen
+                    or getattr(args, "all", False),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -870,6 +874,8 @@ def run_repair(args) -> int:
                 fix_container=args.fix_container or getattr(args, "all", False),
                 fix_media_types=args.fix_media_types or getattr(args, "all", False),
                 fix_cover=args.fix_cover or getattr(args, "all", False),
+                comment_double_hyphens=args.fix_comment_double_hyphen
+                or getattr(args, "all", False),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)
@@ -1558,6 +1564,14 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         "from the guide's cover reference when that names an existing manifest "
         "item, remove the dead meta when nothing does; EPUB3 "
         'properties="cover-image" is audit-only by ruling',
+    )
+    p.add_argument(
+        "--fix-comment-double-hyphen",
+        dest="fix_comment_double_hyphen",
+        action="store_true",
+        help="replace `--` inside XML comments with an en-dash (RSC-016: "
+        "`--` is not permitted within comments); comment bodies only, "
+        "text and CDATA never touched",
     )
     p.add_argument(
         "--strip-pagination",

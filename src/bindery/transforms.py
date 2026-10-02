@@ -699,6 +699,49 @@ def encode_url_spaces(s: str) -> tuple[str, int]:
     return _SRC_HREF_ATTR_RE.sub(repl, s), count
 
 
+# XML comments end at the first `-->`; CDATA sections do not contain comments
+# (a `<!--` inside one is literal text). The double-hyphen fix splits on CDATA
+# only, so the comment spans it edits are the ones a parser would see.
+_CDATA_ONLY_RE = re.compile(r"(<!\[CDATA\[.*?\]\]>)", re.DOTALL)
+_COMMENT_SPAN_RE = re.compile(r"(<!--)(.*?)(-->)", re.DOTALL)
+
+# The comment-body replacement for the RSC-016 fix: a `--` sequence is illegal
+# inside an XML comment, and the en-dash is what a typographically-minded hand
+# fix writes in its place (the 2026-09-16 Theaetetus hand-repair).
+EN_DASH = "–"
+
+
+def fix_comment_double_hyphen(s: str) -> tuple[str, int]:
+    """Replace `--` inside XML comments with an en-dash (the RSC-016 fatal:
+    "-- is not permitted within comments").
+
+    Opt-in (--fix-comment-double-hyphen): it edits comment content, which
+    every other transform protects, so it never runs in the core pass. The
+    edit is confined to comment bodies: text nodes are never touched (a `--`
+    in character data is legal XML), CDATA sections are never touched, and
+    each comment's `-->` terminator is left intact (the span ends there, so
+    the body replacement cannot reach it). Every replaced sequence is
+    counted. An unclosed comment matches no span and is left for whatever
+    reports it; the fix claims only the double-hyphen class.
+    """
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        body = m.group(2)
+        if "--" not in body:
+            return m.group(0)
+        count += body.count("--")
+        return m.group(1) + body.replace("--", EN_DASH) + m.group(3)
+
+    if "<!" not in s:  # fast path: no comments, no CDATA
+        return s, 0
+    parts = _CDATA_ONLY_RE.split(s)
+    for i in range(0, len(parts), 2):  # even indices are outside CDATA
+        parts[i] = _COMMENT_SPAN_RE.sub(repl, parts[i])
+    return "".join(parts), count
+
+
 # The always-on core for full (X)HTML content documents, in order: prolog and
 # root-tag fixes first, then ampersand/entity normalization, then void
 # self-closing. Exactly the five semantics-preserving well-formedness fixes the

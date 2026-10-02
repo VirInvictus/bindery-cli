@@ -35,6 +35,7 @@ from .transforms import (
     css_protected_tags,
     encode_url_spaces,
     escape_unknown_entities,
+    fix_comment_double_hyphen,
     fix_empty_body,
     fix_id_colons,
     fix_missing_title,
@@ -1315,6 +1316,7 @@ def repair_epub(
     fix_container: bool = False,
     fix_media_types: bool = False,
     fix_cover: bool = False,
+    comment_double_hyphens: bool = False,
     strip_stub_docs: bool = False,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
@@ -1376,6 +1378,10 @@ def repair_epub(
     With `fix_cover`, repair dangling EPUB2 cover wiring: re-point the <meta
     name="cover"> whose content names no manifest id when the OPF guide's cover
     reference resolves to exactly one item, remove it otherwise.
+    With `comment_double_hyphens`, replace `--` inside XML comments with an
+    en-dash (RSC-016: `--` is not permitted within comments); comment bodies
+    only, text nodes and CDATA sections never touched, in content documents,
+    the NCX, and the OPF alike.
     With `strip_stub_docs` (lossy, the no_worse bar), drop spine documents whose
     entire visible text is one identical short placeholder repeated across the
     spine (the Bookmate/DRM-sample export whose chapters are all the same
@@ -1676,6 +1682,10 @@ def repair_epub(
                         # a navPoint-only edit must still be written
                         ncx_changed = True
                 text, counts = apply_transforms(text, XML_TRANSFORMS)
+                if comment_double_hyphens:
+                    text, n = fix_comment_double_hyphen(text)
+                    if n:
+                        counts["fix_comment_double_hyphen"] = n
                 if fix_ids:
                     text, n = fix_ncx_ids(text)
                     if n:
@@ -1724,6 +1734,7 @@ def repair_epub(
                 or url_spaces
                 or fix_media_types
                 or fix_cover
+                or comment_double_hyphens
                 or strip_stub_docs
             ):
                 opf_changed = False
@@ -1790,6 +1801,11 @@ def repair_epub(
                     if ccounts:
                         report.add(ccounts)
                         opf_changed = True
+                if comment_double_hyphens:
+                    text, n = fix_comment_double_hyphen(text)
+                    if n:
+                        report.add({"fix_comment_double_hyphen": n})
+                        opf_changed = True
                 if space_renames:
                     text, n = rewrite_space_renames(
                         text,
@@ -1810,6 +1826,10 @@ def repair_epub(
                     data = text.encode("utf-8")
             elif low.endswith(CONTENT_SUFFIXES):
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
+                if comment_double_hyphens:
+                    text, n = fix_comment_double_hyphen(text)
+                    if n:
+                        counts["fix_comment_double_hyphen"] = n
                 if strip_stub_docs and stub_hrefs:
                     # the EPUB3 nav toc: drop li entries linking a stub doc
                     text, n = strip_nav_stub_items(

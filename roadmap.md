@@ -61,12 +61,15 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
 - [ ] **CSS url() pruning** as a `--prune-missing-resources` scope extension:
       stays closed until a named epubcheck finding demands it (the 2026-09-12
       prevalence read found selector damage, not url() candidates).
-- [ ] **Candidate transform: `--` inside XML comments (RSC-016 fatal)**. A
+- [x] **Candidate transform: `--` inside XML comments (RSC-016 fatal)**. A
       `fix_comment_double_hyphen` transform (comment nodes only, `--` -> en-dash,
       byte-counted) would make the always-on core able to parse such books at all;
       until then the book parses in lenient readers but never passes epubcheck.
       Low frequency (one book in the classics wave); the fixture reference is in
-      git history.
+      git history. *(SHIPPED v0.46.0 as the opt-in `--fix-comment-double-hyphen`
+      structural repair: comment bodies only in content documents, the NCX, and
+      the OPF; the `-->` terminators stay intact; normal `gate`. Not a core
+      transform: it edits comment content, which everything else protects.)*
 - [ ] **RepairFlags dataclass** for the triplicated ~25-kwarg
       process_book/repair_epub signature. Deferred with reason: pure churn on that
       surface immediately after the v0.44 batch touched exactly those signatures;
@@ -105,9 +108,10 @@ metadata.db registration and the Calibre plugin. Dispositions recorded under the
   `WritableCalibreDB.set_format` since v0.24.0 (the sanctioned install path);
   cquarry's conditional write-back waiver was reworded 2026-09-29 to name what it
   actually guards: a bindery-side book-metadata write-back convenience, still declined.
-- **Parity-relevant accepted gaps**: RSC-016 (`--` inside XML comments, the candidate
-  box above) remains the one open repair class that blocks epubcheck acceptance on
-  affected books; the prevalence-gated classes (encryption.xml, href case/backslash,
+- **Parity-relevant accepted gaps**: RSC-016 (`--` inside XML comments) SHIPPED
+  v0.46.0 as `--fix-comment-double-hyphen` (the candidate box above), so no open
+  repair class blocks epubcheck acceptance on prevalence anymore; the
+  prevalence-gated classes (encryption.xml, href case/backslash,
   zip dedupe, CSS url()) reopen only on acquisition mix. The RepairFlags refactor stays
   deferred with its recorded reason.
 - **Brandon-parked items are unchanged**: the MobileRead plugin listing and the README
@@ -125,7 +129,7 @@ metadata.db registration and the Calibre plugin. Dispositions recorded under the
   also fires on `add_format`, so the plugin is byte-idempotent. The vendor slice
   (transforms/epub/pagination/watermark/reserialize + a plugin `__init__`) is
   generated at release from the tagged tree with a byte-equality drift test. Active
-  set = the gate-safe default pass only: all twelve structural repairs and the three
+  set = the gate-safe default pass only: every structural repair and the three
   lossy strips stay CLI-only, because epubcheck cannot gate inside Calibre (no jar/JVM
   and seconds-per-book latency). Config via `site_customization` JSON (`log`,
   `log_path`, `max_size_mb`, recorded default 150MB); `publish.yml` attaches

@@ -13,12 +13,13 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The fifteen
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The sixteen
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
 `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
-`--fix-container`, `--fix-media-types`, `--fix-cover`) alter
+`--fix-container`, `--fix-media-types`, `--fix-cover`,
+`--fix-comment-double-hyphen`) alter
 markup structure or fabricate minimal content; the three
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
 content a converter injected rather than content the author wrote. A fourth group of
@@ -119,7 +120,7 @@ byte-for-byte. The normal gate applies.
 
 ### Opt-in: structural repairs
 
-Fifteen repairs go past well-formedness and therefore require their own flag; none is ever
+Sixteen repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
@@ -221,8 +222,15 @@ file is absent: that class belongs to `--prune-missing-resources` and its edge c
 The EPUB3 `properties="cover-image"` slice is audit-only by ruling. Cover wiring is invisible
 to epubcheck, so cover-only repairs are accepted under the `no_worse` bar the lossy strips
 use, with the `partial` rule intact.
+- **`--fix-comment-double-hyphen`**: replace `--` inside XML comments with an en-dash
+  (RSC-016: "The string `--` is not permitted within comments", a fatal: the book parses in
+  lenient readers and never passes epubcheck). The edit is confined to comment bodies:
+  text nodes are never touched (a `--` in character data is legal XML), CDATA sections are
+  never touched, and each comment's `-->` terminator stays intact. An unclosed comment is a
+  different fatal class and is left alone. It applies to content documents, the NCX, and
+  the OPF alike, and every replaced sequence is counted.
 
-Fourteen of the fifteen are evaluated by the normal `gate`: unlike the lossy strips,
+Fifteen of the sixteen are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. The exception is `--fix-cover`, whose
 gain is invisible to epubcheck: it is accepted under the same `no_worse` bar the
@@ -236,7 +244,10 @@ rewritten, as everywhere else.
   attribute, or element is added or removed beyond making the markup parseable.
 - **CDATA sections and comments are never rewritten.** Their content is literal and
   already legal XML; escaping a `&` or self-closing a `<br>` inside them would change
-  the content (e.g. corrupt CDATA-wrapped CSS/JS).
+  the content (e.g. corrupt CDATA-wrapped CSS/JS). The one deliberate exception is
+  `--fix-comment-double-hyphen` (above): a `--` inside a comment is precisely the case
+  where comment content is NOT already legal XML, and the fix is opt-in like every
+  other content edit.
 - **Idempotent.** Re-running changes nothing once a document is well-formed.
 - **Already-correct markup is untouched.** Self-closed void elements, predefined and
   numeric entities, and single `xmlns` declarations are left exactly as they are.

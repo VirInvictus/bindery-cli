@@ -30,14 +30,19 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   `xmlns`, bare `&`, named entities, void self-closing), the NCX pipeline, and the
   mimetype fix (added/normalized/first-stored, epub.py's archive rewrite); every core
   fix must render identically to the author's intent: never add, remove, or reorder
-  visible content. The canonical opt-in inventory lives in spec.md: fifteen structural
+  visible content. The canonical opt-in inventory lives in spec.md: sixteen structural
   repairs, three lossy strips, four safe opt-ins, plus `--reserialize`.
   * **Structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
     `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
     `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
     `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
-    `--fix-container`, `--fix-media-types`, `--fix-cover`; transforms.py, threaded
-    through epub.py). Since v0.44.0 `--encode-url-spaces` also RENAMES the
+    `--fix-container`, `--fix-media-types`, `--fix-cover`,
+    `--fix-comment-double-hyphen`; transforms.py, threaded
+    through epub.py). `--fix-comment-double-hyphen` (v0.46.0, the RSC-016 fatal)
+    replaces `--` inside XML comments with an en-dash: comment bodies only (text
+    nodes and CDATA never touched, the one deliberate exception to the
+    never-rewrite-comments invariant), in content documents, the NCX, and the OPF
+    alike; normal `gate` (clearing the fatal IS the measurable gain). Since v0.44.0 `--encode-url-spaces` also RENAMES the
     archive entries whose names carry raw spaces to their underscore spellings
     and rewrites every reference (OPF, NCX, content, CSS `url()`); underscore,
     never percent-encoding (epubcheck decodes references before entry lookup,
