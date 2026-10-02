@@ -413,6 +413,63 @@ class TestPackageVersion(unittest.TestCase):
                 self.assertNotIn("epub3_attrs_stripped", report.fixes)
 
 
+class TestVersionGateKeepsFlagsIntact(unittest.TestCase):
+    """The package-version gate copies the flags (dataclasses.replace)
+    instead of mutating them: one EPUB3 book in a sweep must not switch
+    the EPUB2-targeted fixes off for every later book. The in-place
+    mutation regression class of 2026-09-08, pinned on the caller's
+    object because no report key can see it. Also pins both gated fields
+    decoupling: a regression that neutralizes only one of the pair must
+    still fail here (the downgrade half on an EPUB3 package)."""
+
+    EPUB3_OPF = (
+        '<?xml version="1.0"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" '
+        'version="3.0" unique-identifier="bookid">'
+        "<metadata/><spine/></package>"
+    )
+    EPUB3_CONTENT = (
+        '<?xml version="1.0"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml">'
+        '<body epub:type="chapter" aria-label="c">'
+        "<figure><figcaption>cap</figcaption></figure><p>x</p></body></html>"
+    )
+
+    def _repair(self, dst):
+        src = dst.with_name("in.epub")
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/content.opf", self.EPUB3_OPF)
+            z.writestr("OEBPS/c1.xhtml", self.EPUB3_CONTENT)
+        return src
+
+    def test_gate_does_not_mutate_the_callers_flags(self):
+        with tempfile.TemporaryDirectory() as td:
+            dst = Path(td) / "out.epub"
+            src = self._repair(dst)
+            flags = RepairFlags(strip_epub3_attrs=True, downgrade_epub3=True)
+            repair_epub(src, dst, flags)
+        self.assertTrue(flags.strip_epub3_attrs, "gate mutated the caller's flags")
+        self.assertTrue(flags.downgrade_epub3, "gate mutated the caller's flags")
+
+    def test_both_epub2_fixes_stay_inert_on_an_epub3_package(self):
+        # the replace() line neutralizes the pair together; a regression
+        # that decouples them (one field replaced, one mutated to respect
+        # the caller's True) re-enables the mutated half on EPUB3 books
+        with tempfile.TemporaryDirectory() as td:
+            dst = Path(td) / "out.epub"
+            src = self._repair(dst)
+            report = repair_epub(
+                src, dst, RepairFlags(strip_epub3_attrs=True, downgrade_epub3=True)
+            )
+            self.assertNotIn("epub3_attrs_stripped", report.fixes)
+            self.assertNotIn("epub3_tags_downgraded", report.fixes)
+            with zipfile.ZipFile(dst) as z:
+                c_out = z.read("OEBPS/c1.xhtml").decode()
+        self.assertIn('epub:type="chapter"', c_out)
+        self.assertIn("<figure>", c_out)
+
+
 class TestDowngradeEpub3Tags(unittest.TestCase):
     """The element half of the RSC-005 verdict: EPUB3 semantic elements
     downgrade to their EPUB2 equivalents, classes kept, CSS-protected names
