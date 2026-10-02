@@ -70,12 +70,16 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
       structural repair: comment bodies only in content documents, the NCX, and
       the OPF; the `-->` terminators stay intact; normal `gate`. Not a core
       transform: it edits comment content, which everything else protects.)*
-- [ ] **RepairFlags dataclass** for the triplicated ~25-kwarg
+- [x] **RepairFlags dataclass** for the triplicated ~25-kwarg
       process_book/repair_epub signature. Deferred with reason: pure churn on that
       surface immediately after the v0.44 batch touched exactly those signatures;
       do it as a standalone lane with the full suite and the plugin byte-compat
       job green at every step, not as a rider. (The roman/arabic half of its parent
-      box resolved to UNIFY at pagination.py, v0.44.0.)
+      box resolved to UNIFY at pagination.py, v0.44.0.) *(SHIPPED v0.46.0 as its
+      own commit, exactly by that method: dataclass in epub.py, repair_epub, then
+      process_book, then `cli._flags_from_args` collapsing the per-verb kwarg
+      blocks, suite green at every step; the plugin's bare repair_epub call and
+      byte-compat unchanged.)*
 - [ ] **MobileRead listing for the Bindery Repair plugin** (Brandon's manual
       step): post the listing with name/identity, the release-attached zip,
       minimum Calibre 7.0, Linux platform note. Posting is outward-facing under

@@ -30,7 +30,10 @@ ONLY the five well-formedness transforms above, the NCX pipeline, and the mimety
 fix: nothing else. (v0.14–v0.16 briefly
 ran the structural repairs unconditionally, which broke this contract; v0.17.0 restored
 it.) The `--all` flag enables every opt-in transform (safe, structural, and lossy) for a
-comprehensive repair pass.
+comprehensive repair pass. Internally the selection travels as one `RepairFlags`
+object (`epub.RepairFlags`, v0.46.0) built once per verb from the parsed flags; that
+is structure, not surface: the CLI flags above and the JSON records below are the
+contract, and both are unchanged.
 
 ## Transforms
 

@@ -8,7 +8,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from bindery.epub import repair_epub
+from bindery.epub import RepairFlags, repair_epub
 from bindery.pagination import (
     collect_runheads,
     detect_page_layer,
@@ -217,7 +217,7 @@ class TestEndToEnd(unittest.TestCase):
                 z.writestr("mimetype", "application/epub+zip")
                 z.writestr("content.opf", self.OPF)
                 z.writestr("c1.xhtml", _doc(body))
-            report = repair_epub(src, dst, strip_pagination=True)
+            report = repair_epub(src, dst, RepairFlags(strip_pagination=True))
             self.assertGreaterEqual(report.fixes.get("stripped_pagination", 0), 20)
             with zipfile.ZipFile(dst) as z:
                 out = z.read("c1.xhtml").decode("utf-8")

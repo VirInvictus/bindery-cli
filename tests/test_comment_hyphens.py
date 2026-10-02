@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from bindery.cli import CheckResult, process_book
-from bindery.epub import RepairReport, repair_epub
+from bindery.epub import RepairFlags, RepairReport, repair_epub
 from bindery.transforms import EN_DASH, fix_comment_double_hyphen
 
 
@@ -140,7 +140,7 @@ class EndToEndTests(_TempEpub):
     def test_flag_fixes_comment_and_counts(self):
         src = self._comment_book()
         dst = self._path("out.epub")
-        report = repair_epub(src, dst, comment_double_hyphens=True)
+        report = repair_epub(src, dst, RepairFlags(comment_double_hyphens=True))
         self.assertEqual(report.fixes.get("fix_comment_double_hyphen"), 2)
         with zipfile.ZipFile(dst) as z:
             doc = z.read("OEBPS/text/split_269.xhtml").decode()
@@ -196,7 +196,7 @@ class EndToEndTests(_TempEpub):
             },
         )
         dst = self._path("out.epub")
-        report = repair_epub(src, dst, comment_double_hyphens=True)
+        report = repair_epub(src, dst, RepairFlags(comment_double_hyphens=True))
         self.assertEqual(report.fixes.get("fix_comment_double_hyphen"), 1)
         with zipfile.ZipFile(dst) as z:
             ncx = z.read("toc.ncx").decode()
@@ -233,7 +233,7 @@ class EndToEndTests(_TempEpub):
             },
         )
         dst = self._path("out.epub")
-        report = repair_epub(src, dst, comment_double_hyphens=True)
+        report = repair_epub(src, dst, RepairFlags(comment_double_hyphens=True))
         self.assertEqual(report.fixes.get("fix_comment_double_hyphen"), 2)
         with zipfile.ZipFile(dst) as z:
             opf = z.read("content.opf").decode()
@@ -255,7 +255,7 @@ class GateTests(unittest.TestCase):
                 Path("x.epub"),
                 Path("."),
                 validate=True,
-                comment_double_hyphens=True,
+                flags=RepairFlags(comment_double_hyphens=True),
             )
 
     def test_fatal_cleared_accepts(self):

@@ -17,7 +17,7 @@ import posixpath
 import re
 import zipfile
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html import unescape as _html_unescape
 from pathlib import Path
 from urllib.parse import unquote
@@ -214,6 +214,46 @@ _DTB_UID_RE_REV = re.compile(
     r"(\2[^>]*\bname=[\"']dtb:uid[\"'][^>]*>)",
     re.IGNORECASE,
 )
+
+
+@dataclass
+class RepairFlags:
+    """The opt-in repair selection, one object instead of a ~25-kwarg
+    signature (the roadmap's RepairFlags box, shipped v0.46.0).
+
+    `repair_epub` and `process_book` both take one of these; the CLI builds
+    it once per verb from parsed args (`cli._flags_from_args`), so the flag
+    inventory is spelled out exactly twice: here (the fields) and in the
+    argparse definitions. Every field is an off-by-default opt-in; the
+    all-off instance IS the default pass. The plugin's bare
+    `repair_epub(src, dst)` call constructs exactly that.
+    """
+
+    fix_ids: bool = False
+    reserialize: bool = False
+    strip_attrs: bool = False
+    strip_pagination: bool = False
+    strip_brokentags: bool = False
+    strip_watermarks: bool = False
+    strip_stub_docs: bool = False
+    escape_entities: bool = False
+    img_alt: bool = False
+    empty_body: bool = False
+    missing_title: bool = False
+    id_colons: bool = False
+    block_in_inline: bool = False
+    invalid_value: bool = False
+    illegal_tags: bool = False
+    page_map: bool = False
+    strip_epub3_attrs: bool = False
+    downgrade_epub3: bool = False
+    prune_missing: bool = False
+    strip_anchors: bool = False
+    url_spaces: bool = False
+    fix_container: bool = False
+    fix_media_types: bool = False
+    fix_cover: bool = False
+    comment_double_hyphens: bool = False
 
 
 @dataclass
@@ -1292,32 +1332,7 @@ def ncx_uid_mismatch(src: Path) -> bool:
 def repair_epub(
     src: Path,
     dst: Path,
-    *,
-    fix_ids: bool = False,
-    reserialize: bool = False,
-    strip_attrs: bool = False,
-    strip_pagination: bool = False,
-    strip_brokentags: bool = False,
-    strip_watermarks: bool = False,
-    escape_entities: bool = False,
-    img_alt: bool = False,
-    empty_body: bool = False,
-    missing_title: bool = False,
-    id_colons: bool = False,
-    block_in_inline: bool = False,
-    invalid_value: bool = False,
-    illegal_tags: bool = False,
-    page_map: bool = False,
-    strip_epub3_attrs: bool = False,
-    downgrade_epub3: bool = False,
-    prune_missing: bool = False,
-    strip_anchors: bool = False,
-    url_spaces: bool = False,
-    fix_container: bool = False,
-    fix_media_types: bool = False,
-    fix_cover: bool = False,
-    comment_double_hyphens: bool = False,
-    strip_stub_docs: bool = False,
+    flags: RepairFlags | None = None,
 ) -> RepairReport:
     """Write a repaired copy of `src` to `dst`. Returns a RepairReport.
 
@@ -1391,6 +1406,7 @@ def repair_epub(
     EMPTY book needs a re-source, never a repair).
     """
     report = RepairReport()
+    flags = flags or RepairFlags()
 
     # `src` is opened before `dst`, so an unreadable archive still raises before the
     # output file is created.
@@ -1420,13 +1436,12 @@ def repair_epub(
         # version licenses nothing.
         pkg_major = package_version(opf_text)
         if pkg_major is None or pkg_major >= 3:
-            strip_epub3_attrs = False
-            downgrade_epub3 = False
+            flags = replace(flags, strip_epub3_attrs=False, downgrade_epub3=False)
         # Running-header detection and the page-layer decision need the whole book, so
         # collect content text once up front. Only when the lossy strip is requested.
         runheads: set[str] = set()
         delete_layer = False
-        if strip_pagination:
+        if flags.strip_pagination:
             htmls = [
                 zin.read(i).decode("utf-8", "replace")
                 for i in zin.infolist()
@@ -1441,15 +1456,15 @@ def repair_epub(
         # are added per document below).
         book_css_tags: frozenset[str] = frozenset()
         downgrade_css_tags: frozenset[str] = frozenset()
-        if illegal_tags or downgrade_epub3:
+        if flags.illegal_tags or flags.downgrade_epub3:
             css_texts = [
                 zin.read(i).decode("utf-8", "replace")
                 for i in zin.infolist()
                 if i.filename.lower().endswith((".css", ".xpgt"))
             ]
-            if illegal_tags:
+            if flags.illegal_tags:
                 book_css_tags = css_protected_tags(*css_texts)
-            if downgrade_epub3:
+            if flags.downgrade_epub3:
                 downgrade_css_tags = css_protected_tags(
                     *css_texts, tags=tuple(EPUB3_DOWNGRADE_TAGS)
                 )
@@ -1475,7 +1490,7 @@ def repair_epub(
         # entirely: those entries pass through byte-for-byte with no
         # chance to rewrite the references pointing at renamed targets.
         space_renames: dict[str, str] = {}
-        if url_spaces:
+        if flags.url_spaces:
             space_renames = space_rename_map(zin.namelist())
             if space_renames:
                 for i in zin.infolist():
@@ -1498,7 +1513,7 @@ def repair_epub(
         # the one pre-pass that still reads the ORIGINAL references (the
         # id snapshot's prune runs against the pre-rename layout)
         present_src: frozenset[str] = frozenset()
-        if prune_missing or strip_anchors or fix_media_types:
+        if flags.prune_missing or flags.strip_anchors or flags.fix_media_types:
             for n in zin.namelist():
                 norm_to_raw.setdefault(_norm_path(space_renames.get(n, n)), n)
             present = frozenset(norm_to_raw)
@@ -1510,9 +1525,9 @@ def repair_epub(
         # front (like the runhead detection) and every rewrite below targets
         # the resolved paths it returns.
         stub_hrefs: frozenset[str] = frozenset()
-        if strip_stub_docs and opf_text is not None:
+        if flags.strip_stub_docs and opf_text is not None:
             stub_hrefs = detect_stub_docs(zin, opf_text, opf_dir)
-        if strip_anchors:
+        if flags.strip_anchors:
             for i in zin.infolist():
                 if i.filename.lower().endswith(CONTENT_SUFFIXES):
                     # The id sets must describe the documents as they will look when
@@ -1525,17 +1540,17 @@ def repair_epub(
                     t, _ = apply_transforms(
                         zin.read(i).decode("utf-8", "replace"), HTML_TRANSFORMS
                     )
-                    if reserialize:
+                    if flags.reserialize:
                         t, _ = reserialize_if_broken(t)
-                    if id_colons:
+                    if flags.id_colons:
                         t, _ = fix_id_colons(t)
-                    if block_in_inline:
+                    if flags.block_in_inline:
                         t, _ = unwrap_block_in_inline(t)
-                    if illegal_tags:
+                    if flags.illegal_tags:
                         t, _ = unwrap_illegal_tags(
                             t, protected_tags=book_css_tags | style_block_tags(t)
                         )
-                    if prune_missing:
+                    if flags.prune_missing:
                         t, _ = prune_missing_resources_doc(
                             t,
                             posixpath.dirname(i.filename),
@@ -1544,7 +1559,7 @@ def repair_epub(
                     ids_by_doc[
                         _norm_path(space_renames.get(i.filename, i.filename))
                     ] = frozenset(m.group(3) for m in _XML_ID_RE.finditer(t))
-        if prune_missing and opf_text is not None:
+        if flags.prune_missing and opf_text is not None:
             spine_ids = {m.group(3) for m in _IDREF_ATTR_RE.finditer(opf_text)}
 
         # The mimetype content is an OCF constant, so adding a missing entry and
@@ -1579,7 +1594,7 @@ def repair_epub(
         # gateway repair: epubcheck stays fatal while the OPF is unfindable,
         # so no other shipped repair can ever be gate-accepted on the book.
         container_bytes: bytes | None = None
-        if fix_container and opf:
+        if flags.fix_container and opf:
             cm = None
             if "META-INF/container.xml" in zin.namelist():
                 cm = _ROOTFILE_RE.search(
@@ -1615,13 +1630,16 @@ def repair_epub(
             name = item.filename
             if name == "mimetype":
                 continue
-            if strip_watermarks and name.rsplit("/", 1)[-1].lower() in MARKER_NAMES:
+            if (
+                flags.strip_watermarks
+                and name.rsplit("/", 1)[-1].lower() in MARKER_NAMES
+            ):
                 report.files_changed += 1
                 report.add({"dropped_marker": 1})
                 continue
             # A dropped stub doc stays in the archive only as an unreferenced
             # file: the copy skips it, so the reading order no longer opens it.
-            if strip_stub_docs and _norm_path(name) in stub_hrefs:
+            if flags.strip_stub_docs and _norm_path(name) in stub_hrefs:
                 report.files_changed += 1
                 report.add({"stub_docs_dropped": 1})
                 continue
@@ -1672,7 +1690,7 @@ def repair_epub(
 
             if low.endswith(".ncx"):
                 ncx_changed = False
-                if strip_stub_docs and stub_hrefs:
+                if flags.strip_stub_docs and stub_hrefs:
                     text, n = strip_ncx_stub_navpoints(
                         text, posixpath.dirname(name), stub_hrefs
                     )
@@ -1682,19 +1700,19 @@ def repair_epub(
                         # a navPoint-only edit must still be written
                         ncx_changed = True
                 text, counts = apply_transforms(text, XML_TRANSFORMS)
-                if comment_double_hyphens:
+                if flags.comment_double_hyphens:
                     text, n = fix_comment_double_hyphen(text)
                     if n:
                         counts["fix_comment_double_hyphen"] = n
-                if fix_ids:
+                if flags.fix_ids:
                     text, n = fix_ncx_ids(text)
                     if n:
                         counts["fix_ncx_ids"] = n
-                if id_colons:
+                if flags.id_colons:
                     text, n = fix_ncx_src_fragments(text)
                     if n:
                         counts["fix_ncx_src_fragments"] = n
-                if page_map:
+                if flags.page_map:
                     text, n = fix_pagelist_class(text)
                     if n:
                         counts["pagelist_class_added"] = n
@@ -1707,11 +1725,11 @@ def repair_epub(
                     )
                     if n:
                         counts["renamed_refs_rewritten"] = n
-                if url_spaces:
+                if flags.url_spaces:
                     text, n = encode_url_spaces(text)
                     if n:
                         counts["url_spaces_encoded"] = n
-                if strip_anchors:
+                if flags.strip_anchors:
                     text, n = strip_ncx_broken_fragments(
                         text, posixpath.dirname(out_item.filename), ids_by_doc
                     )
@@ -1727,33 +1745,33 @@ def repair_epub(
                     report.files_changed += 1
                     data = text.encode("utf-8")
             elif low.endswith(".opf") and (
-                fix_ids
-                or page_map
-                or strip_epub3_attrs
-                or prune_missing
-                or url_spaces
-                or fix_media_types
-                or fix_cover
-                or comment_double_hyphens
-                or strip_stub_docs
+                flags.fix_ids
+                or flags.page_map
+                or flags.strip_epub3_attrs
+                or flags.prune_missing
+                or flags.url_spaces
+                or flags.fix_media_types
+                or flags.fix_cover
+                or flags.comment_double_hyphens
+                or flags.strip_stub_docs
             ):
                 opf_changed = False
-                if fix_ids:
+                if flags.fix_ids:
                     text, n = fix_manifest_ids(text)
                     if n:
                         report.add({"fix_manifest_ids": n})
                         opf_changed = True
-                if page_map:
+                if flags.page_map:
                     text, n = strip_page_map(text)
                     if n:
                         report.add({"page_map_stripped": n})
                         opf_changed = True
-                if strip_epub3_attrs:
+                if flags.strip_epub3_attrs:
                     text, n = strip_epub3_attributes(text)
                     if n:
                         report.add({"epub3_attrs_stripped": n})
                         opf_changed = True
-                if prune_missing:
+                if flags.prune_missing:
                     text, n, pruned_ids = prune_missing_manifest_items(
                         text, opf_dir, present, spine_ids
                     )
@@ -1764,7 +1782,7 @@ def repair_epub(
                     if n:
                         report.add({"prune_edges_rewritten": n})
                         opf_changed = True
-                if strip_stub_docs and stub_hrefs:
+                if flags.strip_stub_docs and stub_hrefs:
                     text, n_items, n_refs, stub_ids = strip_stub_manifest(
                         text, opf_dir, stub_hrefs
                     )
@@ -1780,7 +1798,7 @@ def repair_epub(
                     if n:
                         report.add({"stub_edges_rewritten": n})
                         opf_changed = True
-                if fix_media_types:
+                if flags.fix_media_types:
 
                     def peek(resolved: str) -> bytes | None:
                         # open the RAW archive name: a resolved (normalized)
@@ -1796,12 +1814,12 @@ def repair_epub(
                     if n:
                         report.add({"media_types_normalized": n})
                         opf_changed = True
-                if fix_cover:
+                if flags.fix_cover:
                     text, ccounts = fix_cover_meta(text, opf_dir)
                     if ccounts:
                         report.add(ccounts)
                         opf_changed = True
-                if comment_double_hyphens:
+                if flags.comment_double_hyphens:
                     text, n = fix_comment_double_hyphen(text)
                     if n:
                         report.add({"fix_comment_double_hyphen": n})
@@ -1816,7 +1834,7 @@ def repair_epub(
                     if n:
                         report.add({"renamed_refs_rewritten": n})
                         opf_changed = True
-                if url_spaces:
+                if flags.url_spaces:
                     text, n = encode_url_spaces(text)
                     if n:
                         report.add({"url_spaces_encoded": n})
@@ -1826,80 +1844,80 @@ def repair_epub(
                     data = text.encode("utf-8")
             elif low.endswith(CONTENT_SUFFIXES):
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
-                if comment_double_hyphens:
+                if flags.comment_double_hyphens:
                     text, n = fix_comment_double_hyphen(text)
                     if n:
                         counts["fix_comment_double_hyphen"] = n
-                if strip_stub_docs and stub_hrefs:
+                if flags.strip_stub_docs and stub_hrefs:
                     # the EPUB3 nav toc: drop li entries linking a stub doc
                     text, n = strip_nav_stub_items(
                         text, posixpath.dirname(name), stub_hrefs
                     )
                     if n:
                         counts["stub_nav_items_dropped"] = n
-                if escape_entities:
+                if flags.escape_entities:
                     text, n = escape_unknown_entities(text)
                     if n:
                         counts["escape_unknown_entities"] = n
-                if strip_attrs:
+                if flags.strip_attrs:
                     text, n = strip_invalid_attributes(text)
                     if n:
                         counts["stripped_invalid_attrs"] = n
-                if img_alt:
+                if flags.img_alt:
                     text, n = add_img_alt(text)
                     if n:
                         counts["img_alt_added"] = n
-                if reserialize:
+                if flags.reserialize:
                     text, n = reserialize_if_broken(text)
                     if n:
                         counts["reserialized"] = n
-                if strip_epub3_attrs:
+                if flags.strip_epub3_attrs:
                     text, n = strip_epub3_attributes(text)
                     if n:
                         counts["epub3_attrs_stripped"] = n
-                if downgrade_epub3:
+                if flags.downgrade_epub3:
                     protected = downgrade_css_tags | style_block_tags(
                         text, tags=tuple(EPUB3_DOWNGRADE_TAGS)
                     )
                     text, n = downgrade_epub3_tags(text, protected_tags=protected)
                     if n:
                         counts["epub3_tags_downgraded"] = n
-                if empty_body:
+                if flags.empty_body:
                     text, n = fix_empty_body(text)
                     if n:
                         counts["fix_empty_body"] = n
-                if missing_title:
+                if flags.missing_title:
                     text, n = fix_missing_title(text)
                     if n:
                         counts["fix_missing_title"] = n
-                if id_colons:
+                if flags.id_colons:
                     text, n = fix_id_colons(text)
                     if n:
                         counts["fix_id_colons"] = n
-                if block_in_inline:
+                if flags.block_in_inline:
                     text, n = unwrap_block_in_inline(text)
                     if n:
                         counts["unwrap_block_in_inline"] = n
-                if invalid_value:
+                if flags.invalid_value:
                     text, n = strip_invalid_value(text)
                     if n:
                         counts["strip_invalid_value"] = n
-                if illegal_tags:
+                if flags.illegal_tags:
                     protected = book_css_tags | style_block_tags(text)
                     text, n = unwrap_illegal_tags(text, protected_tags=protected)
                     if n:
                         counts["unwrap_illegal_tags"] = n
-                if strip_watermarks:
+                if flags.strip_watermarks:
                     text, n, refused = strip_watermark_html(text)
                     if n:
                         counts["stripped_watermarks"] = n
                     if refused:
                         report.watermark_refusals += refused
-                if strip_brokentags:
+                if flags.strip_brokentags:
                     text, n = strip_broken_tags(text)
                     if n:
                         counts["stripped_broken_tags"] = n
-                if strip_pagination:
+                if flags.strip_pagination:
                     text, n = strip_pagination_doc(text, runheads, delete_layer)
                     if n:
                         counts["stripped_pagination"] = n
@@ -1912,13 +1930,13 @@ def repair_epub(
                     )
                     if n:
                         counts["renamed_refs_rewritten"] = n
-                if prune_missing:
+                if flags.prune_missing:
                     text, pcounts = prune_missing_resources_doc(
                         text, posixpath.dirname(out_item.filename), present
                     )
                     if pcounts:
                         counts.update(pcounts)
-                if url_spaces:
+                if flags.url_spaces:
                     text, n = encode_url_spaces(text)
                     if n:
                         counts["url_spaces_encoded"] = n
@@ -1926,7 +1944,7 @@ def repair_epub(
                 # document as every earlier fix leaves it, so a fix that
                 # deletes an id (the unwraps, the resource prunes) can no
                 # longer strand a fragment the snapshot still believed in.
-                if strip_anchors:
+                if flags.strip_anchors:
                     text, acounts = strip_broken_anchors_doc(
                         text,
                         posixpath.dirname(out_item.filename),

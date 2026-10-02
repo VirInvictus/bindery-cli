@@ -9,6 +9,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from bindery.epub import (
+    RepairFlags,
     _locate_opf,
     downgrade_epub3_tags,
     fix_manifest_ids,
@@ -192,7 +193,7 @@ class TestNcxIds(unittest.TestCase):
                 z.writestr("OEBPS/toc.ncx", ncx)
             report = repair_epub(src, dst)  # off by default
             self.assertNotIn("fix_ncx_ids", report.fixes)
-            report = repair_epub(src, dst, fix_ids=True)
+            report = repair_epub(src, dst, RepairFlags(fix_ids=True))
             self.assertEqual(report.fixes.get("fix_ncx_ids"), 1)
             with zipfile.ZipFile(dst) as z:
                 self.assertIn('id="id_620a6fe8"', z.read("OEBPS/toc.ncx").decode())
@@ -255,7 +256,7 @@ class TestPageMap(unittest.TestCase):
             report = repair_epub(src, dst)  # off by default
             self.assertNotIn("page_map_stripped", report.fixes)
             self.assertNotIn("pagelist_class_added", report.fixes)
-            report = repair_epub(src, dst, page_map=True)
+            report = repair_epub(src, dst, RepairFlags(page_map=True))
             self.assertEqual(report.fixes.get("page_map_stripped"), 1)
             self.assertEqual(report.fixes.get("pagelist_class_added"), 1)
             with zipfile.ZipFile(dst) as z:
@@ -352,7 +353,7 @@ class TestPackageVersion(unittest.TestCase):
                 z.writestr("OEBPS/c1.xhtml", content)
             report = repair_epub(src, dst)  # off by default
             self.assertNotIn("epub3_attrs_stripped", report.fixes)
-            report = repair_epub(src, dst, strip_epub3_attrs=True)
+            report = repair_epub(src, dst, RepairFlags(strip_epub3_attrs=True))
             self.assertEqual(report.fixes.get("epub3_attrs_stripped"), 3)
             with zipfile.ZipFile(dst) as z:
                 opf_out = z.read("OEBPS/content.opf").decode()
@@ -383,7 +384,7 @@ class TestPackageVersion(unittest.TestCase):
                 z.writestr("mimetype", "application/epub+zip")
                 z.writestr("OEBPS/content.opf", opf)
                 z.writestr("OEBPS/c1.xhtml", content)
-            report = repair_epub(src, dst, strip_epub3_attrs=True)
+            report = repair_epub(src, dst, RepairFlags(strip_epub3_attrs=True))
             self.assertNotIn("epub3_attrs_stripped", report.fixes)
             with zipfile.ZipFile(dst) as z:
                 c_out = z.read("OEBPS/c1.xhtml").decode()
@@ -408,7 +409,7 @@ class TestPackageVersion(unittest.TestCase):
                         '<html xmlns="http://www.w3.org/1999/xhtml">'
                         '<body epub:type="chapter"><p>x</p></body></html>',
                     )
-                report = repair_epub(src, dst, strip_epub3_attrs=True)
+                report = repair_epub(src, dst, RepairFlags(strip_epub3_attrs=True))
                 self.assertNotIn("epub3_attrs_stripped", report.fixes)
 
 
@@ -465,7 +466,7 @@ class TestDowngradeEpub3Tags(unittest.TestCase):
                     z.writestr("OEBPS/c1.xhtml", content)
                     if sheet:
                         z.writestr("OEBPS/s.css", sheet)
-                report = repair_epub(src, dst, downgrade_epub3=True)
+                report = repair_epub(src, dst, RepairFlags(downgrade_epub3=True))
                 with zipfile.ZipFile(dst) as z:
                     out = z.read("OEBPS/c1.xhtml").decode()
             if expect_downgraded:
@@ -573,7 +574,7 @@ class TestMimetypeRepair(unittest.TestCase):
             outs = []
             for i in range(2):
                 d = Path(td) / f"out{i}.epub"
-                repair_epub(src, d, fix_ids=True)
+                repair_epub(src, d, RepairFlags(fix_ids=True))
                 outs.append(d.read_bytes())
             self.assertEqual(outs[0], outs[1])
 
@@ -595,7 +596,7 @@ class TestEscapeEntitiesFlag(unittest.TestCase):
             self.assertNotIn("escape_unknown_entities", report.fixes)
             with zipfile.ZipFile(dst) as z:
                 self.assertIn("<p>&foo;</p>", z.read("c1.xhtml").decode())
-            report = repair_epub(src, dst, escape_entities=True)
+            report = repair_epub(src, dst, RepairFlags(escape_entities=True))
             self.assertEqual(report.fixes.get("escape_unknown_entities"), 1)
             with zipfile.ZipFile(dst) as z:
                 self.assertIn("<p>&amp;foo;</p>", z.read("c1.xhtml").decode())
@@ -780,11 +781,13 @@ class TestOptInStructuralRepairs(unittest.TestCase):
         report = repair_epub(
             self.src,
             self.dst,
-            missing_title=True,
-            id_colons=True,
-            block_in_inline=True,
-            invalid_value=True,
-            illegal_tags=True,
+            RepairFlags(
+                missing_title=True,
+                id_colons=True,
+                block_in_inline=True,
+                invalid_value=True,
+                illegal_tags=True,
+            ),
         )
         self.assertIn("fix_missing_title", report.fixes)
         self.assertIn("fix_id_colons", report.fixes)
@@ -804,7 +807,7 @@ class TestOptInStructuralRepairs(unittest.TestCase):
 
     def test_unstyled_book_loses_all_illegal_tags(self):
         self._build(css="p { margin: 0 }")
-        repair_epub(self.src, self.dst, illegal_tags=True)
+        repair_epub(self.src, self.dst, RepairFlags(illegal_tags=True))
         with zipfile.ZipFile(self.dst) as z:
             c = z.read("OEBPS/c1.xhtml").decode()
         self.assertNotIn("<w>", c)
@@ -820,7 +823,7 @@ class TestOptInStructuralRepairs(unittest.TestCase):
                 "<body><w>x</w><sentence>y</sentence></body></html>"
             ),
         )
-        repair_epub(self.src, self.dst, illegal_tags=True)
+        repair_epub(self.src, self.dst, RepairFlags(illegal_tags=True))
         with zipfile.ZipFile(self.dst) as z:
             c = z.read("OEBPS/c1.xhtml").decode()
         self.assertIn("<sentence>y</sentence>", c)  # protected via inline <style>
@@ -838,7 +841,7 @@ class TestOptInStructuralRepairs(unittest.TestCase):
             z.writestr("mimetype", b"application/epub+zip")
             z.writestr("OEBPS/c1.xhtml", content)
         self.assertFalse(repair_epub(self.src, self.dst))
-        report = repair_epub(self.src, self.dst, empty_body=True)
+        report = repair_epub(self.src, self.dst, RepairFlags(empty_body=True))
         self.assertIn("fix_empty_body", report.fixes)
 
 
@@ -897,7 +900,7 @@ class TestPruneMissingResources(unittest.TestCase):
 
     def test_prunes_only_missing_references(self):
         self._build()
-        report = repair_epub(self.src, self.dst, prune_missing=True)
+        report = repair_epub(self.src, self.dst, RepairFlags(prune_missing=True))
         self.assertEqual(report.fixes.get("dead_links_pruned"), 1)
         self.assertEqual(report.fixes.get("missing_file_hrefs_stripped"), 1)
         self.assertEqual(report.fixes.get("missing_imgs_unwrapped"), 1)
@@ -938,9 +941,9 @@ class TestPruneMissingResources(unittest.TestCase):
 
     def test_idempotent(self):
         self._build()
-        repair_epub(self.src, self.dst, prune_missing=True)
+        repair_epub(self.src, self.dst, RepairFlags(prune_missing=True))
         dst2 = Path(self.tmp.name) / "out2.epub"
-        report = repair_epub(self.dst, dst2, prune_missing=True)
+        report = repair_epub(self.dst, dst2, RepairFlags(prune_missing=True))
         for key in (
             "dead_links_pruned",
             "missing_file_hrefs_stripped",
@@ -1017,7 +1020,7 @@ class TestStripBrokenAnchors(unittest.TestCase):
 
     def test_strips_only_unresolvable_hrefs(self):
         self._build()
-        report = repair_epub(self.src, self.dst, strip_anchors=True)
+        report = repair_epub(self.src, self.dst, RepairFlags(strip_anchors=True))
         self.assertEqual(report.fixes.get("broken_fragment_hrefs_stripped"), 2)
         self.assertEqual(report.fixes.get("nonfile_scheme_hrefs_stripped"), 1)
         self.assertEqual(report.fixes.get("ncx_fragments_stripped"), 1)
@@ -1043,7 +1046,7 @@ class TestStripBrokenAnchors(unittest.TestCase):
 
         with zipfile.ZipFile(self.src) as z:
             before = _re.sub(r"<[^>]+>", "", z.read("OEBPS/b.xhtml").decode())
-        repair_epub(self.src, self.dst, strip_anchors=True)
+        repair_epub(self.src, self.dst, RepairFlags(strip_anchors=True))
         with zipfile.ZipFile(self.dst) as z:
             after = _re.sub(r"<[^>]+>", "", z.read("OEBPS/b.xhtml").decode())
         self.assertEqual(before, after)
@@ -1079,7 +1082,7 @@ class TestStripBrokenAnchors(unittest.TestCase):
             z.writestr("mimetype", "application/epub+zip")
             z.writestr("OEBPS/bad.xhtml", cp1252_doc)
             z.writestr("OEBPS/good.xhtml", utf8_doc)
-        report = repair_epub(self.src, self.dst, block_in_inline=True)
+        report = repair_epub(self.src, self.dst, RepairFlags(block_in_inline=True))
         self.assertEqual(report.fixes.get("non_utf8_docs_skipped"), 1)
         with zipfile.ZipFile(self.dst) as z:
             self.assertEqual(z.read("OEBPS/bad.xhtml"), cp1252_doc)
@@ -1118,7 +1121,9 @@ class TestStripBrokenAnchors(unittest.TestCase):
             z.writestr("mimetype", "application/epub+zip")
             z.writestr("OEBPS/a.xhtml", doc)
             z.writestr("OEBPS/content.opf", opf)
-        report = repair_epub(self.src, self.dst, strip_anchors=True, illegal_tags=True)
+        report = repair_epub(
+            self.src, self.dst, RepairFlags(strip_anchors=True, illegal_tags=True)
+        )
         self.assertEqual(report.fixes.get("unwrap_illegal_tags"), 1)
         self.assertEqual(report.fixes.get("broken_fragment_hrefs_stripped"), 1)
         with zipfile.ZipFile(self.dst) as z:
@@ -1179,7 +1184,7 @@ class TestEncodeUrlSpacesEpub(unittest.TestCase):
 
     def test_spaces_encoded_everywhere(self):
         self._build()
-        report = repair_epub(self.src, self.dst, url_spaces=True)
+        report = repair_epub(self.src, self.dst, RepairFlags(url_spaces=True))
         # The existing entry renames and its three references rewrite;
         # the absent "i 1.jpg" has no entry to rename, so its reference
         # takes the percent-encode as always.
@@ -1199,9 +1204,9 @@ class TestEncodeUrlSpacesEpub(unittest.TestCase):
 
     def test_idempotent(self):
         self._build()
-        repair_epub(self.src, self.dst, url_spaces=True)
+        repair_epub(self.src, self.dst, RepairFlags(url_spaces=True))
         dst2 = Path(self.tmp.name) / "out2.epub"
-        report = repair_epub(self.dst, dst2, url_spaces=True)
+        report = repair_epub(self.dst, dst2, RepairFlags(url_spaces=True))
         self.assertNotIn("url_spaces_encoded", report.fixes)
 
     def test_opt_in(self):
@@ -1254,7 +1259,7 @@ class TestFixContainer(unittest.TestCase):
             )
             report = repair_epub(src, dst)  # off by default
             self.assertNotIn("container_generated", report.fixes)
-            report = repair_epub(src, dst, fix_container=True)
+            report = repair_epub(src, dst, RepairFlags(fix_container=True))
             self.assertEqual(report.fixes.get("container_generated"), 1)
             with zipfile.ZipFile(dst) as z:
                 self.assertIsNone(z.testzip())
@@ -1282,7 +1287,7 @@ class TestFixContainer(unittest.TestCase):
                     "OEBPS/c1.xhtml": CONTENT,
                 },
             )
-            report = repair_epub(src, dst, fix_container=True)
+            report = repair_epub(src, dst, RepairFlags(fix_container=True))
             self.assertEqual(report.fixes.get("container_generated"), 1)
             with zipfile.ZipFile(dst) as z:
                 self.assertEqual(
@@ -1302,7 +1307,7 @@ class TestFixContainer(unittest.TestCase):
                 "OEBPS/c1.xhtml": CONTENT,
             }
             self._build(src, original)
-            report = repair_epub(src, dst, fix_container=True)
+            report = repair_epub(src, dst, RepairFlags(fix_container=True))
             self.assertNotIn("container_generated", report.fixes)
             with zipfile.ZipFile(dst) as z:
                 self.assertEqual(
@@ -1317,7 +1322,7 @@ class TestFixContainer(unittest.TestCase):
                 src,
                 {"mimetype": "application/epub+zip", "c1.xhtml": CONTENT},
             )
-            report = repair_epub(src, dst, fix_container=True)
+            report = repair_epub(src, dst, RepairFlags(fix_container=True))
             self.assertNotIn("container_generated", report.fixes)
             with zipfile.ZipFile(dst) as z:
                 self.assertNotIn("META-INF/container.xml", z.namelist())
@@ -1334,8 +1339,8 @@ class TestFixContainer(unittest.TestCase):
                     "OEBPS/c1.xhtml": CONTENT,
                 },
             )
-            repair_epub(src, once, fix_container=True)
-            report = repair_epub(once, twice, fix_container=True)
+            repair_epub(src, once, RepairFlags(fix_container=True))
+            report = repair_epub(once, twice, RepairFlags(fix_container=True))
             self.assertNotIn("container_generated", report.fixes)
 
     def test_generate_container_escapes_xml_specials(self):
@@ -1363,7 +1368,7 @@ class TestFixContainer(unittest.TestCase):
                     "OEBPS/c1.xhtml": CONTENT,
                 },
             )
-            report = repair_epub(src, once, fix_container=True)
+            report = repair_epub(src, once, RepairFlags(fix_container=True))
             self.assertEqual(report.fixes.get("container_generated"), 1)
             with zipfile.ZipFile(once) as z:
                 self.assertIsNone(z.testzip())
@@ -1378,7 +1383,7 @@ class TestFixContainer(unittest.TestCase):
                 # fallback (which a stray duplicate .opf could poison)
                 self.assertEqual(_locate_opf(z), opf_name)
             # and the escaped container reads back as healthy, not stale
-            report = repair_epub(once, twice, fix_container=True)
+            report = repair_epub(once, twice, RepairFlags(fix_container=True))
             self.assertNotIn("container_generated", report.fixes)
 
 
@@ -1448,7 +1453,7 @@ class TestPruneDanglingEdges(unittest.TestCase):
                 z.writestr("OEBPS/k.xhtml", CONTENT)
                 # the audio file survives the prune; only its edge dies
                 z.writestr("OEBPS/s.mp3", b"ID3snd")
-            report = repair_epub(src, dst, prune_missing=True)
+            report = repair_epub(src, dst, RepairFlags(prune_missing=True))
             self.assertEqual(report.fixes.get("manifest_items_pruned"), 1)
             self.assertEqual(report.fixes.get("prune_edges_rewritten"), 3)
             with zipfile.ZipFile(dst) as z:
@@ -1489,7 +1494,7 @@ class TestFixMediaTypes(unittest.TestCase):
             self._build(src, "image/png", b"\xff\xd8\xff\xe0JFIF")
             report = repair_epub(src, dst)  # off by default
             self.assertNotIn("media_types_normalized", report.fixes)
-            report = repair_epub(src, dst, fix_media_types=True)
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
             self.assertEqual(report.fixes.get("media_types_normalized"), 1)
             with zipfile.ZipFile(dst) as z:
                 self.assertIn(
@@ -1501,7 +1506,7 @@ class TestFixMediaTypes(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
             self._build(src, "image/png", b"\xff\xd8\xff\xe0JFIF", quote="'")
-            report = repair_epub(src, dst, fix_media_types=True)
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
             self.assertEqual(report.fixes.get("media_types_normalized"), 1)
             with zipfile.ZipFile(dst) as z:
                 self.assertIn(
@@ -1532,14 +1537,14 @@ class TestFixMediaTypes(unittest.TestCase):
                 z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
                 z.writestr("OEBPS/content.opf", opf)
                 z.writestr("OEBPS/im%20g.jpg", b"\xff\xd8\xff\xe0JFIF")
-            report = repair_epub(src, dst, fix_media_types=True)
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
             self.assertEqual(report.fixes.get("media_types_normalized"), 1)
 
     def test_correct_declaration_is_untouched(self):
         with tempfile.TemporaryDirectory() as td:
             src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
             self._build(src, "image/jpeg", b"\xff\xd8\xff\xe0JFIF")
-            report = repair_epub(src, dst, fix_media_types=True)
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
             self.assertNotIn("media_types_normalized", report.fixes)
 
     def test_extension_lie_is_kept_when_the_magic_disagrees(self):
@@ -1548,7 +1553,7 @@ class TestFixMediaTypes(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
             self._build(src, "image/png", b"\x89PNG\r\n\x1a\ndata")
-            report = repair_epub(src, dst, fix_media_types=True)
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
             self.assertNotIn("media_types_normalized", report.fixes)
 
     def test_absent_file_is_left_to_the_prune(self):
@@ -1567,7 +1572,7 @@ class TestFixMediaTypes(unittest.TestCase):
                 z.writestr("mimetype", "application/epub+zip")
                 z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
                 z.writestr("OEBPS/content.opf", opf)
-            report = repair_epub(src, dst, fix_media_types=True)
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
             self.assertNotIn("media_types_normalized", report.fixes)
 
 
@@ -1612,7 +1617,7 @@ class TestFixCover(unittest.TestCase):
             self._build(src, opf)
             report = repair_epub(src, dst)  # off by default
             self.assertNotIn("cover_meta_repointed", report.fixes)
-            report = repair_epub(src, dst, fix_cover=True)
+            report = repair_epub(src, dst, RepairFlags(fix_cover=True))
             self.assertEqual(report.fixes.get("cover_meta_repointed"), 1)
             with zipfile.ZipFile(dst) as z:
                 out = z.read("OEBPS/content.opf").decode("utf-8")
@@ -1630,7 +1635,7 @@ class TestFixCover(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
             self._build(src, opf)
-            report = repair_epub(src, dst, fix_cover=True)
+            report = repair_epub(src, dst, RepairFlags(fix_cover=True))
             self.assertEqual(report.fixes.get("cover_meta_removed"), 1)
             with zipfile.ZipFile(dst) as z:
                 out = z.read("OEBPS/content.opf").decode("utf-8")
@@ -1648,7 +1653,7 @@ class TestFixCover(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
             self._build(src, opf)
-            report = repair_epub(src, dst, fix_cover=True)
+            report = repair_epub(src, dst, RepairFlags(fix_cover=True))
             self.assertNotIn("cover_meta_repointed", report.fixes)
             self.assertNotIn("cover_meta_removed", report.fixes)
             with zipfile.ZipFile(dst) as z:
@@ -1670,7 +1675,7 @@ class TestFixCover(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
             self._build(src, opf)
-            report = repair_epub(src, dst, fix_cover=True)
+            report = repair_epub(src, dst, RepairFlags(fix_cover=True))
             self.assertEqual(report.fixes.get("cover_meta_repointed"), 1)
             with zipfile.ZipFile(dst) as z:
                 self.assertIn(
@@ -1696,10 +1701,12 @@ class TestFixCover(unittest.TestCase):
                 z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
                 z.writestr("OEBPS/content.opf", opf)
                 z.writestr("OEBPS/c1.xhtml", CONTENT)
-            report = repair_epub(src, dst, fix_cover=True)
+            report = repair_epub(src, dst, RepairFlags(fix_cover=True))
             self.assertNotIn("cover_meta_repointed", report.fixes)
             self.assertNotIn("cover_meta_removed", report.fixes)
-            report = repair_epub(src, dst, fix_cover=True, prune_missing=True)
+            report = repair_epub(
+                src, dst, RepairFlags(fix_cover=True, prune_missing=True)
+            )
             self.assertEqual(report.fixes.get("manifest_items_pruned"), 1)
             self.assertEqual(report.fixes.get("prune_edges_rewritten"), 1)
 
@@ -1794,7 +1801,7 @@ class TestStripStubDocs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             src = self._build(td)
             dst = Path(td) / "out.epub"
-            report = repair_epub(src, dst, strip_stub_docs=True)
+            report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
             self.assertEqual(report.fixes.get("stub_docs_dropped"), 3)
             self.assertEqual(report.fixes.get("stub_manifest_items_dropped"), 3)
             self.assertEqual(report.fixes.get("stub_itemrefs_dropped"), 3)
@@ -1828,7 +1835,7 @@ class TestStripStubDocs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             src = self._build(td, stubs=4, chapters=0)
             dst = Path(td) / "out.epub"
-            report = repair_epub(src, dst, strip_stub_docs=True)
+            report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
         self.assertNotIn("stub_docs_dropped", report.fixes)
 
     def test_no_repeat_is_refused(self):
@@ -1846,7 +1853,7 @@ class TestStripStubDocs(unittest.TestCase):
                 for n, b in entries.items():
                     zout.writestr(n, b)
             dst = Path(td) / "out.epub"
-            report = repair_epub(src, dst, strip_stub_docs=True)
+            report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
         self.assertNotIn("stub_docs_dropped", report.fixes)
 
     def test_below_fraction_is_refused(self):
@@ -1854,5 +1861,5 @@ class TestStripStubDocs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             src = self._build(td, stubs=3, chapters=12)
             dst = Path(td) / "out.epub"
-            report = repair_epub(src, dst, strip_stub_docs=True)
+            report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
         self.assertNotIn("stub_docs_dropped", report.fixes)

@@ -30,7 +30,7 @@ from .audit import (
 from .audit import (
     run_library as run_audit_library,
 )
-from .epub import ncx_uid_mismatch, repair_epub
+from .epub import RepairFlags, ncx_uid_mismatch, repair_epub
 from .library import (
     CalibreIdResolver,
     atomic_replace,
@@ -65,35 +65,45 @@ class Outcome:
     watermark_refusals: int = 0
 
 
+def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
+    """The repair selection from parsed args: each flag OR'd with --all, so
+    --all enables every opt-in. The one place the argparse-to-RepairFlags
+    name mapping is spelled out; both verbs share it."""
+    all_ = getattr(args, "all", False)
+    return RepairFlags(
+        fix_ids=args.fix_ids or all_,
+        reserialize=args.reserialize or all_,
+        strip_attrs=args.strip_bad_attrs or all_,
+        strip_pagination=args.strip_pagination or all_,
+        strip_brokentags=args.strip_broken_tags or all_,
+        strip_watermarks=args.strip_watermarks or all_,
+        strip_stub_docs=args.strip_stub_docs or all_,
+        escape_entities=args.escape_unknown_entities or all_,
+        img_alt=args.add_img_alt or all_,
+        empty_body=args.fix_empty_body or all_,
+        missing_title=args.fix_missing_title or all_,
+        id_colons=args.fix_id_colons or all_,
+        block_in_inline=args.unwrap_block_in_inline or all_,
+        invalid_value=args.strip_invalid_value or all_,
+        illegal_tags=args.unwrap_illegal_tags or all_,
+        page_map=args.fix_page_map or all_,
+        strip_epub3_attrs=args.strip_epub3_attrs or all_,
+        downgrade_epub3=args.downgrade_epub3_tags or all_,
+        prune_missing=args.prune_missing_resources or all_,
+        strip_anchors=args.strip_broken_anchors or all_,
+        url_spaces=args.encode_url_spaces or all_,
+        fix_container=args.fix_container or all_,
+        fix_media_types=args.fix_media_types or all_,
+        fix_cover=args.fix_cover or all_,
+        comment_double_hyphens=args.fix_comment_double_hyphen or all_,
+    )
+
+
 def process_book(
     epub: Path,
     workdir: Path,
     validate: bool,
-    fix_ids: bool = False,
-    reserialize: bool = False,
-    strip_attrs: bool = False,
-    strip_pagination: bool = False,
-    strip_brokentags: bool = False,
-    strip_watermarks: bool = False,
-    strip_stub_docs: bool = False,
-    escape_entities: bool = False,
-    img_alt: bool = False,
-    empty_body: bool = False,
-    missing_title: bool = False,
-    id_colons: bool = False,
-    block_in_inline: bool = False,
-    invalid_value: bool = False,
-    illegal_tags: bool = False,
-    page_map: bool = False,
-    strip_epub3_attrs: bool = False,
-    downgrade_epub3: bool = False,
-    prune_missing: bool = False,
-    strip_anchors: bool = False,
-    url_spaces: bool = False,
-    fix_container: bool = False,
-    fix_media_types: bool = False,
-    fix_cover: bool = False,
-    comment_double_hyphens: bool = False,
+    flags: RepairFlags | None = None,
     before: CheckResult | None = None,
 ) -> Outcome:
     """Repair `epub` into a temp file and decide whether the result is acceptable.
@@ -101,35 +111,7 @@ def process_book(
     `before` is a pre-measured epubcheck result for `epub` (from a --sweep pass),
     saving a second multi-second run; when None it is measured here."""
     repaired = workdir / "repaired.epub"
-    report = repair_epub(
-        epub,
-        repaired,
-        fix_ids=fix_ids,
-        reserialize=reserialize,
-        strip_attrs=strip_attrs,
-        strip_pagination=strip_pagination,
-        strip_brokentags=strip_brokentags,
-        strip_watermarks=strip_watermarks,
-        strip_stub_docs=strip_stub_docs,
-        escape_entities=escape_entities,
-        img_alt=img_alt,
-        empty_body=empty_body,
-        missing_title=missing_title,
-        id_colons=id_colons,
-        block_in_inline=block_in_inline,
-        invalid_value=invalid_value,
-        illegal_tags=illegal_tags,
-        page_map=page_map,
-        strip_epub3_attrs=strip_epub3_attrs,
-        downgrade_epub3=downgrade_epub3,
-        prune_missing=prune_missing,
-        strip_anchors=strip_anchors,
-        url_spaces=url_spaces,
-        fix_container=fix_container,
-        fix_media_types=fix_media_types,
-        fix_cover=fix_cover,
-        comment_double_hyphens=comment_double_hyphens,
-    )
+    report = repair_epub(epub, repaired, flags=flags)
     if not report:
         return Outcome(epub, "nochange", None, None, "no applicable fixes")
 
@@ -591,43 +573,7 @@ def run_library(args) -> int:
                     epub,
                     work,
                     validate,
-                    fix_ids=args.fix_ids or getattr(args, "all", False),
-                    reserialize=args.reserialize or getattr(args, "all", False),
-                    strip_attrs=args.strip_bad_attrs or getattr(args, "all", False),
-                    strip_pagination=args.strip_pagination
-                    or getattr(args, "all", False),
-                    strip_brokentags=args.strip_broken_tags
-                    or getattr(args, "all", False),
-                    strip_watermarks=args.strip_watermarks
-                    or getattr(args, "all", False),
-                    strip_stub_docs=args.strip_stub_docs or getattr(args, "all", False),
-                    escape_entities=args.escape_unknown_entities
-                    or getattr(args, "all", False),
-                    img_alt=args.add_img_alt or getattr(args, "all", False),
-                    empty_body=args.fix_empty_body or getattr(args, "all", False),
-                    missing_title=args.fix_missing_title or getattr(args, "all", False),
-                    id_colons=args.fix_id_colons or getattr(args, "all", False),
-                    block_in_inline=args.unwrap_block_in_inline
-                    or getattr(args, "all", False),
-                    invalid_value=args.strip_invalid_value
-                    or getattr(args, "all", False),
-                    illegal_tags=args.unwrap_illegal_tags
-                    or getattr(args, "all", False),
-                    page_map=args.fix_page_map or getattr(args, "all", False),
-                    strip_epub3_attrs=args.strip_epub3_attrs
-                    or getattr(args, "all", False),
-                    downgrade_epub3=args.downgrade_epub3_tags
-                    or getattr(args, "all", False),
-                    prune_missing=args.prune_missing_resources
-                    or getattr(args, "all", False),
-                    strip_anchors=args.strip_broken_anchors
-                    or getattr(args, "all", False),
-                    url_spaces=args.encode_url_spaces or getattr(args, "all", False),
-                    fix_container=args.fix_container or getattr(args, "all", False),
-                    fix_media_types=args.fix_media_types or getattr(args, "all", False),
-                    fix_cover=args.fix_cover or getattr(args, "all", False),
-                    comment_double_hyphens=args.fix_comment_double_hyphen
-                    or getattr(args, "all", False),
+                    flags=_flags_from_args(args),
                     before=checks.get(epub),
                 )
             except (zipfile.BadZipFile, OSError, RuntimeError) as e:
@@ -846,36 +792,7 @@ def run_repair(args) -> int:
                 src,
                 work,
                 validate=not args.no_validate,
-                fix_ids=args.fix_ids or getattr(args, "all", False),
-                reserialize=args.reserialize or getattr(args, "all", False),
-                strip_attrs=args.strip_bad_attrs or getattr(args, "all", False),
-                strip_pagination=args.strip_pagination or getattr(args, "all", False),
-                strip_brokentags=args.strip_broken_tags or getattr(args, "all", False),
-                strip_watermarks=args.strip_watermarks or getattr(args, "all", False),
-                strip_stub_docs=args.strip_stub_docs or getattr(args, "all", False),
-                escape_entities=args.escape_unknown_entities
-                or getattr(args, "all", False),
-                img_alt=args.add_img_alt or getattr(args, "all", False),
-                empty_body=args.fix_empty_body or getattr(args, "all", False),
-                missing_title=args.fix_missing_title or getattr(args, "all", False),
-                id_colons=args.fix_id_colons or getattr(args, "all", False),
-                block_in_inline=args.unwrap_block_in_inline
-                or getattr(args, "all", False),
-                invalid_value=args.strip_invalid_value or getattr(args, "all", False),
-                illegal_tags=args.unwrap_illegal_tags or getattr(args, "all", False),
-                page_map=args.fix_page_map or getattr(args, "all", False),
-                strip_epub3_attrs=args.strip_epub3_attrs or getattr(args, "all", False),
-                downgrade_epub3=args.downgrade_epub3_tags
-                or getattr(args, "all", False),
-                prune_missing=args.prune_missing_resources
-                or getattr(args, "all", False),
-                strip_anchors=args.strip_broken_anchors or getattr(args, "all", False),
-                url_spaces=args.encode_url_spaces or getattr(args, "all", False),
-                fix_container=args.fix_container or getattr(args, "all", False),
-                fix_media_types=args.fix_media_types or getattr(args, "all", False),
-                fix_cover=args.fix_cover or getattr(args, "all", False),
-                comment_double_hyphens=args.fix_comment_double_hyphen
-                or getattr(args, "all", False),
+                flags=_flags_from_args(args),
             )
         except (zipfile.BadZipFile, OSError, RuntimeError) as e:
             print(f"error: cannot read {src}: {e}", file=sys.stderr)

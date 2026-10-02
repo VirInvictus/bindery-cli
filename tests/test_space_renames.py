@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 
 from bindery.epub import (
+    RepairFlags,
     repair_epub,
     rewrite_space_renames,
     rewrite_space_renames_css,
@@ -152,7 +153,7 @@ class RenameEndToEndTests(_TempEpub):
     def test_entries_renamed_and_every_reference_rewritten(self):
         src = self._spaces_book()
         dst = self._path("out.epub")
-        report = repair_epub(src, dst, url_spaces=True)
+        report = repair_epub(src, dst, RepairFlags(url_spaces=True))
         self.assertEqual(report.fixes.get("entries_renamed"), 2)
         with zipfile.ZipFile(dst) as z:
             names = z.namelist()
@@ -202,7 +203,7 @@ class RenameEndToEndTests(_TempEpub):
             },
         )
         dst = self._path("out.epub")
-        report = repair_epub(src, dst, url_spaces=True)
+        report = repair_epub(src, dst, RepairFlags(url_spaces=True))
         # "a b.xhtml" collides with the existing "a_b.xhtml" and stays;
         # "c d.xhtml" renames.
         self.assertEqual(report.fixes.get("entries_renamed"), 1)
@@ -248,7 +249,7 @@ class RenameEndToEndTests(_TempEpub):
             },
         )
         dst = self._path("out.epub")
-        report = repair_epub(src, dst, url_spaces=True, fix_container=True)
+        report = repair_epub(src, dst, RepairFlags(url_spaces=True, fix_container=True))
         self.assertEqual(report.fixes.get("entries_renamed"), 1)
         with zipfile.ZipFile(dst) as z:
             self.assertIn("OEBPS/the_book.opf", z.namelist())

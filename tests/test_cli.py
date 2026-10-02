@@ -19,7 +19,7 @@ from unittest import mock
 
 from bindery import cli
 from bindery.cli import _load_audit, _phase1_decisions, build_parser, main, process_book
-from bindery.epub import RepairReport
+from bindery.epub import RepairFlags, RepairReport
 from bindery.validate import CheckResult
 
 try:
@@ -62,7 +62,10 @@ class TestStripPaginationGate(unittest.TestCase):
             mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
         ):
             return process_book(
-                Path("x.epub"), Path("."), validate=True, strip_pagination=True
+                Path("x.epub"),
+                Path("."),
+                validate=True,
+                flags=RepairFlags(strip_pagination=True),
             )
 
     def test_still_fatal_book_is_partial_not_accept(self):
@@ -92,7 +95,10 @@ class TestStripWatermarkGate(unittest.TestCase):
             mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
         ):
             return process_book(
-                Path("x.epub"), Path("."), validate=True, strip_watermarks=True
+                Path("x.epub"),
+                Path("."),
+                validate=True,
+                flags=RepairFlags(strip_watermarks=True),
             )
 
     def test_identical_counts_accept_via_no_worse(self) -> None:
@@ -609,9 +615,9 @@ class TestOptInFlagWiring(unittest.TestCase):
                 self.assertFalse(getattr(args, flag), f"{argv} {flag}")
 
     def test_all_enables_every_new_flag_at_the_call_site(self):
-        # --all ORs into each flag where process_book calls repair_epub (the same
+        # --all ORs into each RepairFlags field via _flags_from_args (the same
         # wiring the pre-existing opt-ins use); argparse itself stays a plain
-        # store_true, so assert at the call site.
+        # store_true, so assert on the flags object repair_epub receives.
         FLAG_KWARGS = (
             "empty_body",
             "missing_title",
@@ -638,9 +644,9 @@ class TestOptInFlagWiring(unittest.TestCase):
                 redirect_stderr(err),
             ):
                 main(["repair", str(src), "--all"])
-            kwargs = repair.call_args.kwargs
+            flags = repair.call_args.kwargs["flags"]
             for kw in FLAG_KWARGS:
-                self.assertTrue(kwargs.get(kw), kw)
+                self.assertTrue(getattr(flags, kw), kw)
 
 
 class TestAuditTagWiring(unittest.TestCase):
@@ -1717,7 +1723,10 @@ class TestCoverGate(unittest.TestCase):
             mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
         ):
             return process_book(
-                Path("x.epub"), Path("."), validate=True, fix_cover=True
+                Path("x.epub"),
+                Path("."),
+                validate=True,
+                flags=RepairFlags(fix_cover=True),
             )
 
     def test_identical_counts_accept_via_no_worse(self):
@@ -1766,7 +1775,10 @@ class TestStripStubDocsGate(unittest.TestCase):
             mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
         ):
             return process_book(
-                Path("x.epub"), Path("."), validate=True, strip_stub_docs=True
+                Path("x.epub"),
+                Path("."),
+                validate=True,
+                flags=RepairFlags(strip_stub_docs=True),
             )
 
     def test_identical_counts_accept_via_no_worse(self) -> None:
