@@ -117,8 +117,8 @@ metadata.db registration and the Calibre plugin. Dispositions recorded under the
   v0.46.0 as `--fix-comment-double-hyphen` (the candidate box above), so no open
   repair class blocks epubcheck acceptance on prevalence anymore; the
   prevalence-gated classes (encryption.xml, href case/backslash,
-  zip dedupe, CSS url()) reopen only on acquisition mix. The RepairFlags refactor stays
-  deferred with its recorded reason.
+  zip dedupe, CSS url()) reopen only on acquisition mix. The RepairFlags refactor shipped
+  v0.46.0 (the ticked box above).
 - **Brandon-parked items are unchanged**: the MobileRead plugin listing and the README
   screenshot regeneration stay his; the program does not schedule them.
 

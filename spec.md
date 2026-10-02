@@ -237,8 +237,9 @@ Fifteen of the sixteen are evaluated by the normal `gate`: unlike the lossy stri
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. The exception is `--fix-cover`, whose
 gain is invisible to epubcheck: it is accepted under the same `no_worse` bar the
-lossy strips use, with the partial rule intact. CDATA sections and comments are never
-rewritten, as everywhere else.
+lossy strips use, with the partial rule intact. CDATA sections are never rewritten
+anywhere; comment bodies only by the double-hyphen fix above, and nothing else inside
+them.
 
 ### Transform invariants
 

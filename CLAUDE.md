@@ -48,8 +48,8 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
     never percent-encoding (epubcheck decodes references before entry lookup,
     verified against 5.3), ambiguous renames refused per entry (`space_rename_map`),
     accepted under `no_worse` because PKG-010 sits on the warning axis the gate
-    does not measure:
-    they alter markup structure or fabricate minimal content. v0.14–v0.16 ran these unconditionally, which broke this rule;
+    does not measure.
+    They alter markup structure or fabricate minimal content. v0.14–v0.16 ran these unconditionally, which broke this rule;
     v0.17.0 restored it. `--unwrap-illegal-tags` additionally protects any illegal-tag
     name that an EPUB stylesheet styles as an element selector (`css_protected_tags`,
     book-wide, inline `<style>` blocks included). The two EPUB2-targeted fixes
