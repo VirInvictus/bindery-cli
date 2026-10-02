@@ -721,8 +721,11 @@ def fix_comment_double_hyphen(s: str) -> tuple[str, int]:
     in character data is legal XML), CDATA sections are never touched, and
     each comment's `-->` terminator is left intact (the span ends there, so
     the body replacement cannot reach it). Every replaced sequence is
-    counted. An unclosed comment matches no span and is left for whatever
-    reports it; the fix claims only the double-hyphen class.
+    counted. An unclosed `<!--` runs the span to the first later `-->`, which is
+    exactly what an XML parser sees (once the opener never closes, that whole
+    region is comment content), so the fix rewrites wherever a parser reads a
+    comment; CDATA is protected either way, and the fix claims only the
+    double-hyphen class.
     """
     count = 0
 

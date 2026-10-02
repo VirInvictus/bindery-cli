@@ -20,8 +20,9 @@ The deliberate exceptions to "semantics-preserving" come in opt-in groups. The s
 `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
 `--fix-container`, `--fix-media-types`, `--fix-cover`,
 `--fix-comment-double-hyphen`) alter
-markup structure or fabricate minimal content; the three
-**lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`) remove
+markup structure or fabricate minimal content; the four
+**lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
+`--strip-stub-docs`) remove
 content a converter injected rather than content the author wrote. A fourth group of
 **safe opt-ins** (`--fix-ids`, `--add-img-alt`, `--strip-bad-attrs`,
 `--escape-unknown-entities`) repairs without altering visible markup, and
@@ -233,11 +234,13 @@ use, with the `partial` rule intact.
   different fatal class and is left alone. It applies to content documents, the NCX, and
   the OPF alike, and every replaced sequence is counted.
 
-Fifteen of the sixteen are evaluated by the normal `gate`: unlike the lossy strips,
+Fourteen of the sixteen are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
-improvement is a noop and nothing is applied. The exception is `--fix-cover`, whose
-gain is invisible to epubcheck: it is accepted under the same `no_worse` bar the
-lossy strips use, with the partial rule intact. CDATA sections are never rewritten
+improvement is a noop and nothing is applied. The two exceptions are `--fix-cover` and
+`--encode-url-spaces`, whose gains sit on axes epubcheck does not measure (cover
+wiring is not a schema finding; the rename half's PKG-010 gain sits on the warning
+axis): both are accepted under the same `no_worse` bar the lossy strips use, with
+the partial rule intact. CDATA sections are never rewritten
 anywhere; comment bodies only by the double-hyphen fix above, and nothing else inside
 them.
 
@@ -445,7 +448,7 @@ Two more advisory analyzers ship in v0.44.0. `cover` reads the package's own cov
 wiring (the EPUB3 half of the ruled hybrid): a dangling EPUB2 `<meta name="cover">`
 (the `--fix-cover` repair class), an EPUB3 `properties~="cover-image"` declaration,
 and whether the named cover file exists. `tocdrift` diffs the two tables of contents
-an EPUB 3 book may carry -- the NCX navMap against the nav document -- reporting
+an EPUB 3 book may carry (the NCX navMap against the nav document), reporting
 entries each side is missing and labels that disagree; it feeds decisions, never a
 rewrite (ToC synthesis is out of the repair charter permanently). Both never flag a
 book and never move the exit code.

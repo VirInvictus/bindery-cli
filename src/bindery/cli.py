@@ -1488,7 +1488,7 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="replace `--` inside XML comments with an en-dash (RSC-016: "
         "`--` is not permitted within comments); comment bodies only, "
-        "text and CDATA never touched",
+        "CDATA never touched",
     )
     p.add_argument(
         "--strip-pagination",

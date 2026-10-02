@@ -107,7 +107,7 @@ metadata.db registration and the Calibre plugin. Dispositions recorded under the
   embed/subset fonts, jacket, smarten punctuation, remove-unused-css, compress-images,
   upgrade-book, download-external-resources, the --opf rewrite, --cover. They are
   content-improving rather than repair, and dc: metadata editing is out of charter
-  (spec.md:583). Recorded here so the parity ledger's bindery row names them declined,
+  (spec.md:597). Recorded here so the parity ledger's bindery row names them declined,
   not missing.
 - **The `data`-row waiver note**: bindery has updated `data` rows through
   `WritableCalibreDB.set_format` since v0.24.0 (the sanctioned install path);
@@ -134,7 +134,7 @@ metadata.db registration and the Calibre plugin. Dispositions recorded under the
   also fires on `add_format`, so the plugin is byte-idempotent. The vendor slice
   (transforms/epub/pagination/watermark/reserialize + a plugin `__init__`) is
   generated at release from the tagged tree with a byte-equality drift test. Active
-  set = the gate-safe default pass only: every structural repair and the three
+  set = the gate-safe default pass only: every structural repair and the four
   lossy strips stay CLI-only, because epubcheck cannot gate inside Calibre (no jar/JVM
   and seconds-per-book latency). Config via `site_customization` JSON (`log`,
   `log_path`, `max_size_mb`, recorded default 150MB); `publish.yml` attaches
