@@ -270,7 +270,9 @@ class BinderyRepair(FileTypePlugin):
     def customization_help(self, gui=False):
         return (
             'Enter a JSON object: {"log": true, "log_path": ..., '
-            '"max_size_mb": 150, "epubcheck_path": null}. '
-            "epubcheck_path enables the experimental post-repair validation "
-            "with the epubcheck binary (slow; off by default)."
+            '"max_size_mb": 150, "max_log_mb": 2, "epubcheck_path": null}. '
+            "max_log_mb is the log rotation cap in MB (default 2, one .old "
+            "generation kept, 0 disables). epubcheck_path enables the "
+            "experimental post-repair validation with the epubcheck binary "
+            "(slow; off by default)."
         )
