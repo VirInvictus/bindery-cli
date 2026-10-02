@@ -39,6 +39,7 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
 | 16 | Package-structure repairs: the prevalence study, `--fix-container`, the OBFUSCATED vs DRM verdict split, prune edge completion, `--fix-media-types`, `--fix-cover` (the ruled hybrid), the boxed classes below | v0.38.0-v0.39.0 |
 | Waves 15 + blitz | The plugin PEP-758 HIGH + the 3.11-3.14 interpreter matrix, analyzer robustness, the per-matcher census (possessive bounding; cited by tests/test_matcher_hardening.py), stdlib XML hardening, FastDaemon v2 (reconcile-not-retire), `--strip-stub-docs`, `bindery doctor` + `repair --json`, `--encode-url-spaces` entry renames, the cover + tocdrift analyzers, the privacy/GitHub/docs/comment/hygiene batches, requires-python 3.12 with markers, the em-dash sweep | v0.40.0-v0.44.0 |
 | 0.45 | Structured fix records (`fixes`, `ncx_uid_synced`, `watermark_refusals`) in every JSON payload; CalibreQuarry consumes them with the 0.45.0 floor | v0.45.0 |
+| 0.46 | RSC-016 `--fix-comment-double-hyphen` (the last open repair class) and the RepairFlags dataclass | v0.46.0 |
 
 ## Open work
 
