@@ -92,7 +92,7 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
 - [x] **The 2026-10-02 closing sweep** (the four-lane verification's doc
       findings against the v0.46.0 tree): the safety contract's lossy
       enumeration names all four modes, the core-compat em-dash is gone,
-      ci.yml's module comment covers all ten stack-free modules, and the
+      ci.yml's module comment covers all eleven stack-free modules, and the
       plugin's `customization_help` names `max_log_mb`. *(SHIPPED v0.46.1:
       text plus the one plugin string; no surface change.)*
 
