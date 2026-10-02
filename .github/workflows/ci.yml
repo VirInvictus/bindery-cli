@@ -44,9 +44,10 @@ jobs:
         # The install floor (decision 63): vir-tui/cquarry are marker-gated
         # to 3.14 there, so these legs install the core (tqdm only) and run
         # exactly the test modules that never touch the gated stack: the
-        # repair core, the plugin under calibre stubs, validate, and the
-        # version/grammar pins. audit/library/CLI-stack tests stay on the
-        # 3.14 leg above.
+        # repair core, the plugin under calibre stubs, validate, the
+        # version/grammar pins, the RSC-016 comment-hyphen fix, the
+        # RepairFlags wiring pins, and the flags-driven real-core run.
+        # audit/library/CLI-stack tests stay on the 3.14 leg above.
         python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v5
