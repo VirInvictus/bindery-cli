@@ -1,4 +1,32 @@
 # bindery-cli Patch Notes
+## v0.46.1 (2026-10-02)
+
+### The closing sweep: documentation truth after the 0.46 line
+
+The 2026-10-02 verification of the four-lane run left four documentation
+findings against the v0.46.0 tree; all four land here as text plus one
+plugin string. No surface change beyond the plugin's help text.
+
+* The safety contract's lossy enumeration names all four modes: the
+  paragraph listed three and omitted `--strip-stub-docs` (shipped
+  v0.41.0), while the mode list twenty lines up, spec.md, and CLAUDE.md
+  all carry four. Its rationale sentence now says converter-injected
+  content rather than visible markup, true of the document-dropping stub
+  mode too.
+* CLAUDE.md's tests bullet loses its em-dash: the one straggler in the
+  v0.45.0..HEAD markdown delta, recast with a semicolon.
+* ci.yml's core-compat comment describes every module its list runs: the
+  v0.46.0 follow-ups added comment-hyphens, flags-wiring, and
+  flags-real-core to the module list without touching the enumeration
+  above it, so a reader reconciling comment against list found three
+  orphans.
+* The plugin's `customization_help` names `max_log_mb`: the rotation cap
+  is documented in the README and honored by the log writer, but the
+  in-Calibre customization dialog never mentioned the key. Rides the
+  release-attached plugin zip.
+* Suite: 544 -> 575 tests since v0.46.0 (the two follow-up wiring-test
+  commits, unpinned in that entry's count), all green on this text-only
+  sweep.
 ## v0.46.0 (2026-10-02)
 
 ### The last open repair class closes: RSC-016, plus the RepairFlags refactor

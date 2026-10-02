@@ -89,6 +89,12 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
       docs/screenshots/library-sweep.png against a synthetic testing_facility
       library (invented titles, real dry-run output); the current PNG shows 16
       real rows. Asked 2026-09-15, unanswered.
+- [x] **The 2026-10-02 closing sweep** (the four-lane verification's doc
+      findings against the v0.46.0 tree): the safety contract's lossy
+      enumeration names all four modes, the core-compat em-dash is gone,
+      ci.yml's module comment covers all ten stack-free modules, and the
+      plugin's `customization_help` names `max_log_mb`. *(SHIPPED v0.46.1:
+      text plus the one plugin string; no surface change.)*
 
 ## The repair domain in the ecosystem parity program (recorded 2026-09-29)
 
