@@ -1,5 +1,31 @@
 # bindery-cli Patch Notes
 
+## v0.47.2 (2026-10-06)
+
+### The --help-repairs reference keeps argparse's color
+
+The lattice-music lesson, landed here the same day: Python 3.14's argparse
+colors `-h` on terminals by itself, so the argparse-rendered surfaces (the
+top-level help and `-h` for every verb) kept their theme through the
+v0.47.1 restructure untouched. The one gap was the page v0.47.1 added: the
+custom-rendered `--help-repairs` reference printed plain, silently losing
+the colorization every other surface has (the exact regression
+lattice-music repaired in its 6b88a52).
+
+* The reference now paints with the exact CPython 3.14 default theme
+  (bold blue headings, magenta prog, bold cyan long options; read off real
+  3.14 output, so the page reads like the argparse-rendered `-h` beside
+  it) through a single layout path whose disabled style emits empty codes.
+* The color gate IS argparse's own detection (`_colorize.can_colorize` on
+  3.14+; plain False below 3.14, where argparse has no colorization to
+  match), so the two help levels can never disagree: verified under a pty
+  that `--help-repairs` carries the same code vocabulary as `-h` and that
+  `TERM=dumb` and `NO_COLOR` silence both, and that piped output stays
+  plain for README embedding and tests.
+* Four new tests: the theme codes, the strip invariant (colored, codes
+  stripped == plain, byte for byte), pipe safety, and gate tracking.
+  TestHelpLayout is now nine; suite: 624.
+
 ## v0.47.1 (2026-10-06)
 
 ### The two-level help: compact grouped --help, full --help-repairs reference
