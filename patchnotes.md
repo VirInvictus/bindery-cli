@@ -1,5 +1,39 @@
 # bindery-cli Patch Notes
 
+## v0.47.1 (2026-10-06)
+
+### The two-level help: compact grouped --help, full --help-repairs reference
+
+The per-verb help had grown into a wall: a 16-line usage line listing all 27
+repair flags, then roughly 30 paragraph-length descriptions in one flat
+options list with the safe, structural, and lossy classes visually
+undifferentiated, and the shared set printed a third time in the top-level
+help. Flag names, semantics, and the argparse surface are untouched
+(CalibreQuarry's consent mirror drives the shipped parser); this release
+reorganizes how they are presented.
+
+* One inventory, two renderings: the repair flags now live in a single
+  table (dest, one-line short help, long reference text) that registers
+  the compact `--help` into titled argparse groups and renders
+  `--help-repairs` as the full reference with every flag's long
+  description. Structural repairs are grouped by defect class (markup and
+  nesting; references and resources; package wiring), and adding a flag
+  now means adding a table row.
+* Short usage lines replace the flag wall (`bindery repair [options] path
+  [output]`), repair and library carry examples epilogs, and the
+  top-level help becomes a verb list plus a pointer to the two levels.
+* The four lossy strips are consistently `LOSSY:`-prefixed (two of four
+  carried it before) and live in their own warning-titled section ("these
+  delete converter-injected content; accepted on a no-worse bar").
+* library's own 13 flags are grouped (run control, candidate selection,
+  backups, output and library integration) instead of one flat list.
+* `--help-repairs` is a custom argparse action, deliberately not
+  store_true, so the wiring test's repair-selection count ignores it;
+  TestHelpLayout (five tests) pins the usage lines, group titles, LOSSY
+  prefixes, reference content, and that guarantee.
+
+Tests: 620 (up from 615).
+
 ## v0.47.0 (2026-10-06)
 
 ### The intake-wave batch: five repair surfaces from five open issues
