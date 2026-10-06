@@ -30,15 +30,27 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   `xmlns`, bare `&`, named entities, void self-closing), the NCX pipeline, and the
   mimetype fix (added/normalized/first-stored, epub.py's archive rewrite); every core
   fix must render identically to the author's intent: never add, remove, or reorder
-  visible content. The canonical opt-in inventory lives in spec.md: sixteen structural
+  visible content. The canonical opt-in inventory lives in spec.md: twenty-one structural
   repairs, four lossy strips, four safe opt-ins, plus `--reserialize`.
   * **Structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
     `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
     `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
     `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
     `--fix-container`, `--fix-media-types`, `--fix-cover`,
-    `--fix-comment-double-hyphen`; transforms.py, threaded
-    through epub.py). `--fix-comment-double-hyphen` (v0.46.0, the RSC-016 fatal)
+    `--fix-comment-double-hyphen`, `--fix-svg-dup-ids`, `--fix-cdata-terminator`,
+    `--fix-misnested-inline`, `--fix-stray-close`, `--fix-unterminated-attr`;
+    transforms.py, threaded through epub.py). The v0.47.0 five (the 2026-10-06
+    issue batch): `--fix-svg-dup-ids` renames duplicate glyph ids inside
+    standalone `.svg` entries (first keeps its name, references resolve to the
+    first definition so they are never rewritten); `--fix-cdata-terminator`
+    completes a truncated `/*]]>` CDATA-terminator comment inside inline
+    `<style>` blocks (CSS-008); `--fix-misnested-inline` normalizes the
+    Mobipocket drop-cap mis-nest `<i><b>X</i></b>` (punctuation between the
+    reversed closers survives outside both spans; a letter run is refused);
+    `--fix-stray-close` removes an end tag with no open start frame (a merely
+    mis-nested pair is never touched); `--fix-unterminated-attr` closes an
+    attribute value open to the tag's own `>` (bare-word values, no quote
+    before the next `<`); all normal `gate`. `--fix-comment-double-hyphen` (v0.46.0, the RSC-016 fatal)
     replaces `--` inside XML comments with an en-dash: comment bodies only (text
     nodes and CDATA never touched, the one deliberate exception to the
     never-rewrite-comments invariant), in content documents, the NCX, and the OPF
@@ -71,7 +83,10 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
     in `RepairReport.watermark_refusals`, and surfaced as a `manual_watermark_repair`
     decision by `run phase1` on both the read-only and apply paths. `--strip-stub-docs`
     (2026-09-15) mirrors emptytext's placeholder signals: identical short text across
-    >= 3 spine docs and >= 30% of the spine; the whole-spine-stubs book is refused
+    >= 3 spine docs and >= 30% of the spine; since v0.47.0 the pool is the `<body>`
+    span and image-carrier pages (empty body text, an `<img>` present) are exempt, so
+    identical head `<title>`s can never weld illustrated divider pages into a fake
+    stub class (the Great Change misfire); the whole-spine-stubs book is refused
     (EMPTY, re-source), and the drop cascades to archive entries, manifest, spine,
     NCX navPoints, and nav toc entries.
   Do not let any NEW fix touch content without its own flag; if a candidate repair cannot

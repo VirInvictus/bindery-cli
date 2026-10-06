@@ -13,13 +13,14 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The sixteen
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-one
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
 `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
-`--fix-container`, `--fix-media-types`, `--fix-cover`,
-`--fix-comment-double-hyphen`) alter
+`--fix-container`, `--fix-media-types`, `--fix-cover`, `--fix-comment-double-hyphen`,
+`--fix-svg-dup-ids`, `--fix-cdata-terminator`, `--fix-misnested-inline`,
+`--fix-stray-close`, `--fix-unterminated-attr`) alter
 markup structure or fabricate minimal content; the four
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
 `--strip-stub-docs`) remove
@@ -124,7 +125,7 @@ byte-for-byte. The normal gate applies.
 
 ### Opt-in: structural repairs
 
-Sixteen repairs go past well-formedness and therefore require their own flag; none is ever
+Twenty-one repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
@@ -233,8 +234,54 @@ use, with the `partial` rule intact.
   never touched, and each comment's `-->` terminator stays intact. An unclosed comment is a
   different fatal class and is left alone. It applies to content documents, the NCX, and
   the OPF alike, and every replaced sequence is counted.
+- **`--fix-svg-dup-ids`**: rename duplicate `id` values inside standalone `.svg`
+  entries (old calibre 0.8.x SVG page renders repeat glyph ids within one document;
+  four books from one intake wave carried 445 to 1,339 'Duplicate "glNNNN"' RSC-005s
+  each). The first occurrence keeps its name; every later one gains `_2`, `_3`, ... in
+  document order (prefixed with `_` until the name is free). Internal
+  `xlink:href="#x"` / `url(#x)` references are deliberately never rewritten: they
+  already resolve to the first definition under every reader's first-match lookup, so
+  first-keeps-id preserves exactly what rendered. Scope is standalone `.svg` entries
+  only: content-document ids are styled by CSS selectors and targeted by anchors, and
+  renaming those needs a reference graph this repair does not build.
+- **`--fix-cdata-terminator`**: complete a truncated CDATA-terminator comment in an
+  inline `<style>` block: `/*]]>` becomes `/*]]>*/` (a comment-wrapped CDATA block
+  whose closing `*/` the converter dropped; epubcheck's CSS parser reads the dangling
+  `/*` as an unterminated comment and answers CSS-008 'Premature end of file' once per
+  affected document, 19 identical errors on the 2002-era fixture). Deliberately narrow:
+  only the malformed-terminator token class, inside `<style>` blocks only; invalid CSS
+  properties and selectors stay unfixed (renderers degrade gracefully), stylesheet FILE
+  entries are not touched, and a closer that already sits intact (possibly after
+  whitespace) is left alone.
+- **`--fix-misnested-inline`**: rewrite the Mobipocket drop-cap mis-nest
+  `<i><b>X</i></b>` to `<i><b>X</b></i>` (em/strong variants and either tag order
+  included). Only the both-open-then-reversed-close shape is rewritten: any match is
+  XML fatal, and swapping the closers is the unique well-formed form carrying the same
+  two spans over the same text. The Exile variant, where a short punctuation run sits
+  between the reversed closers (`<i><b>xile</i>,</b>`), is covered: the punctuation
+  survives outside both spans, byte-preserved. A letter run between the closers
+  (`<i><b>S</i>ome</b>`, where `<b>` spans `Some` and `<i>` only `S`) is refused: which
+  span keeps the letters has no deterministic answer. Same-tag pairs, attribute-bearing
+  starts, and markup crossing the run are untouched.
+- **`--fix-stray-close`**: remove an end tag whose element has no open start tag
+  anywhere above it (the stray extra `</div>` on a shell page, which cascades into
+  'body must be terminated by the matching end-tag'). The rule is deliberately narrower
+  than a nesting repair: a close is removed only when NOTHING by that name is open, so
+  a merely mis-nested pair (`<div><span></div></span>`) is left exactly as written
+  (its `</span>` still has an open frame and is never misread as stray). Self-closed
+  and void starts open no frame; raw-text elements (`script`, `style`) are skipped to
+  their end tag so JS/CSS text is never read as markup; the walk stops at an unclosed
+  comment or CDATA opener, where the parser stops reading markup too.
+- **`--fix-unterminated-attr`**: close an attribute value left open to the tag's own
+  `>` (`<p class="footnote>` -> `<p class="footnote">`; the parser swallows prose into
+  the value until the next quote, meets a `<`, and dies with the RSC-016 fatal "the
+  value of attribute ... must not contain the '<' character"). Three guards keep it off
+  legal `>`-bearing values: the value is one bare word, the `>` must be followed by no
+  quote before the next `<` (a real multi-line value closes quote-first), and only
+  double-quoted values are judged. It runs before the other tag-shape readers, which an
+  open value otherwise lies to.
 
-Fourteen of the sixteen are evaluated by the normal `gate`: unlike the lossy strips,
+Nineteen of the twenty-one are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. The two exceptions are `--fix-cover` and
 `--encode-url-spaces`, whose gains sit on axes epubcheck does not measure (cover
@@ -267,7 +314,7 @@ Since this removes visible text from the reading experience, it is lossy by desi
 Strips known producer and redistributor watermarks out of EPUBs (e.g. OceanofPDF.com, ABC Amber LIT Converter). The removal is a balanced-element surgery rather than regex slicing: it locates the stamp and deletes the outermost wrapper whose *entire visible text* is the watermark, ensuring prose that merely mentions the URL is preserved. Also drops known zero-byte marker files. Like other lossy operations, this is verified via `no_worse`.
 
 ### Opt-in, lossy: stub-document strip (`--strip-stub-docs`)
-Drops spine documents whose entire visible text is one identical short placeholder repeated across the spine: the Bookmate/DRM-sample export whose chapters are all the same "content unavailable" notice, valid XHTML that epubcheck passes. The identity rule mirrors the emptytext analyzer's placeholder signals and is deliberately conservative: a candidate doc's visible text is 12-600 characters (short, not blank) and IDENTICAL to the text of at least two other spine docs, and the class covers at least 30% of the spine; only the single most common repeated class qualifies.
+Drops spine documents whose entire visible BODY text is one identical short placeholder repeated across the spine: the Bookmate/DRM-sample export whose chapters are all the same "content unavailable" notice, valid XHTML that epubcheck passes. The identity rule mirrors the emptytext analyzer's placeholder signals and is deliberately conservative: a candidate doc's visible body text is 12-600 characters (short, not blank) and IDENTICAL to the text of at least two other spine docs, and the class covers at least 30% of the spine; only the single most common repeated class qualifies. The pool is the `<body>` span, not the whole document (whole document when a doc has none; a converter stamps the same head `<title>` on every shell page, which used to weld unrelated docs into a fake stub class), and an image-carrier page (empty body text, an `<img>`/`<image>` present) is exempt outright: those are illustrated part-divider pages, furniture the strip must never delete (the Great Change misfire, 2026-10-05).
 
 The drop cascades fully: the placeholder archive entries, their manifest items and spine itemrefs (with every package edge rewritten), their NCX navPoints (the always-on playOrder resequencing heals the sequence afterward), and their nav toc `<li>` entries. Refusals, each reported as a no-op: no repeated class, the class under the fraction bar, and the class covering the whole spine (a book whose every spine doc is the same stub is EMPTY; it needs a re-source, never a repair). Accepted under the `no_worse` bar with the partial rule intact.
 

@@ -40,6 +40,7 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
 | Waves 15 + blitz | The plugin PEP-758 HIGH + the 3.11-3.14 interpreter matrix, analyzer robustness, the per-matcher census (possessive bounding; cited by tests/test_matcher_hardening.py), stdlib XML hardening, FastDaemon v2 (reconcile-not-retire), `--strip-stub-docs`, `bindery doctor` + `repair --json`, `--encode-url-spaces` entry renames, the cover + tocdrift analyzers, the privacy/GitHub/docs/comment/hygiene batches, requires-python 3.12 with markers, the em-dash sweep | v0.40.0-v0.44.0 |
 | 0.45 | Structured fix records (`fixes`, `ncx_uid_synced`, `watermark_refusals`) in every JSON payload; CalibreQuarry consumes them with the 0.45.0 floor | v0.45.0 |
 | 0.46 | RSC-016 `--fix-comment-double-hyphen` (the last open repair class) and the RepairFlags dataclass | v0.46.0 |
+| 0.47 | The intake-wave batch (five open issues): the stub classifier's body-pool + image-carrier exemption, the NCName-complete `--fix-ids`, and `--fix-svg-dup-ids`, `--fix-cdata-terminator`, `--fix-misnested-inline`, `--fix-stray-close`, `--fix-unterminated-attr` | v0.47.0 |
 
 ## Open work
 
