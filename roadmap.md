@@ -41,6 +41,7 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
 | 0.45 | Structured fix records (`fixes`, `ncx_uid_synced`, `watermark_refusals`) in every JSON payload; CalibreQuarry consumes them with the 0.45.0 floor | v0.45.0 |
 | 0.46 | RSC-016 `--fix-comment-double-hyphen` (the last open repair class) and the RepairFlags dataclass | v0.46.0 |
 | 0.47 | The intake-wave batch (five open issues): the stub classifier's body-pool + image-carrier exemption, the NCName-complete `--fix-ids`, and `--fix-svg-dup-ids`, `--fix-cdata-terminator`, `--fix-misnested-inline`, `--fix-stray-close`, `--fix-unterminated-attr` | v0.47.0 |
+| 0.48 | The AI-probe batch: the enforced closed-Calibre gate on both metadata.db doors (`audit --tag`, `library --apply --install-to-calibre`), the stated contracts (exit codes, no-prompt, NCX-001, --id scoping, json envelope keys), and `--help-json` | v0.48.0 |
 
 ## Open work
 

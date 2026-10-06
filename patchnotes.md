@@ -1,5 +1,35 @@
 # bindery-cli Patch Notes
 
+## v0.48.0 (2026-10-06)
+
+### The closed-Calibre guard, stated contracts, and --help-json
+
+The AI-grokability probe (a fresh agent learning the CLI from help
+alone, the same method CalibreQuarry ran) confirmed the repair-semantics
+help is complete and found the cross-cutting contracts missing. Three
+fixes:
+
+- **The closed-Calibre gate is enforced, not just stated.** audit
+  --tag and library --apply --install-to-calibre both write
+  metadata.db, and nothing stopped that write under a live Calibre
+  (WritableCalibreDB waits on the sqlite lock and proceeds; a running
+  Calibre holds no persistent exclusive lock). Both doors now share a
+  fail-closed pgrep refusal (exit 1: an environment condition, not a
+  usage error), and --install-to-calibre's help says so.
+- **The help states the contracts** the probe could not find: exit
+  codes on the repair, library, and run-slice pages (0 clean, 2
+  trouble, 1 invocation problem); neither mode ever prompts (--apply is
+  the only confirmation); an existing output without --force is exit 1;
+  NCX-001 defined (toc.ncx dtb:uid != the OPF unique-identifier); --id
+  works without --sweep; the repair and library --json envelopes name
+  their keys.
+- **--help-json**: the complete surface (subcommands with every flag,
+  the run slices, the full repair reference, the exit contract, the
+  Calibre gates) as deterministic JSON, generated from the live parser
+  and _REPAIR_FLAG_TABLE, never colored.
+
+15 new tests (639 total).
+
 ## v0.47.2 (2026-10-06)
 
 ### The --help-repairs reference keeps argparse's color
