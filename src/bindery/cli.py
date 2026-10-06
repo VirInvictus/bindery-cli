@@ -420,17 +420,33 @@ class _HelpJsonAction(argparse.Action):
             "tool": "bindery",
             "version": __version__,
             "exit_contract": {
-                "0": "clean",
-                "1": "invocation problem (bad args; repair: existing output "
-                "without --force); lock-class refusals (Calibre open at a "
-                "metadata.db door)",
-                "2": "trouble found (rejected/error/unreadable/partial "
-                "books; unscoped phase3 sweep); argparse usage errors",
+                "0": "clean (repair: also written, including partial)",
+                "1": "library/run slices: trouble found; repair: trouble "
+                "(refused/failed/unreadable) or invocation problem; audit: "
+                "FINDINGS (the inverse contract, per spec.md); "
+                "lock-class refusals (Calibre open at a metadata.db door)",
+                "2": "library/run slices: trouble found (rejected/error/"
+                "unreadable/partial books; unscoped phase3 sweep); audit: "
+                "usage/environment errors; argparse usage errors; missing "
+                "vir_tui/cquarry on Python < 3.14",
+                "3": "audit: findings PLUS a failed --json/--tag write",
                 "130": "interrupted",
+                "per_verb": {
+                    "repair": "0 clean/written (partial writes, exit 0); "
+                    "1 trouble or invocation problem; never 2",
+                    "audit": "0 clean; 1 findings; 2 usage/environment; "
+                    "3 findings + failed report write",
+                    "library": "0 clean; 2 trouble (rejected/error/"
+                    "unreadable/partial); 1 invocation problem",
+                    "run phase1": "0 clean; 2 trouble (audit-flagged, "
+                    "rejected, partial, error, unreadable); 1 invocation",
+                },
             },
             "calibre_gates": [
                 "audit --tag",
                 "library --apply --install-to-calibre",
+                "run phase3 (transitively: it wraps library --apply "
+                "--install-to-calibre)",
             ],
             "subcommands": [],
             "repair_reference": [
@@ -632,7 +648,12 @@ def run_library(args) -> int:
     if (
         args.apply
         and not wants_backup
-        and (args.strip_pagination or args.strip_broken_tags or args.strip_watermarks)
+        and (
+            args.strip_pagination
+            or args.strip_broken_tags
+            or args.strip_watermarks
+            or args.strip_stub_docs
+        )
     ):
         print(
             "WARNING: the --strip-* modes are lossy; strongly consider --backup DIR "
@@ -1841,12 +1862,21 @@ def _repair_flag_reference(color: bool | None = None) -> str:
         + " repair-flag reference (shared by `bindery repair` and "
         "`bindery library`)",
         "",
-        "The always-on core pass is exactly five well-formedness fixes, the NCX",
-        "pipeline, and the mimetype fix. Everything below is opt-in, and every",
-        "repair is epubcheck-gated: applied only when the measured result improved",
-        "(lossy strips: only when it did not get worse). Library mode is dry-run",
-        "by default; `--all` enables every flag below at once. The README and",
-        "spec.md carry the full rationale for each repair.",
+        "The always-on core pass is exactly five well-formedness fixes",
+        "(strip prolog junk, drop duplicate xmlns, escape bare ampersands,",
+        "fix named entities, self-close void tags), the NCX pipeline, and",
+        "the mimetype fix. Everything below is opt-in, and every repair is",
+        "epubcheck-gated: applied only when the measured result improved",
+        "(strictly fewer findings than before); the lossy strips, the",
+        "cover wiring repairs, and the space-entry renames are held to the",
+        "weaker no-worse bar (not more findings). Library mode is dry-run",
+        "by default; `--all` enables every flag below at once. Statuses a",
+        "record can carry: accept (gate-applied), partial (written but",
+        "still failing epubcheck), reject (the gate refused), error,",
+        "unreadable, nochange (nothing to do), equal (already as good as",
+        "the result), unvalidated (applied under --no-validate, never",
+        "gate-checked). The README and spec.md carry the full rationale",
+        "for each repair.",
     ]
     for title, rows in _REPAIR_FLAG_TABLE.items():
         lines.append("")
@@ -1943,12 +1973,15 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
     g.add_argument(
         "--all",
         action="store_true",
-        help="enable every opt-in fix flag (safe, structural, and lossy)",
+        help="enable every opt-in fix flag (safe, structural, and lossy); "
+        "this IS the lossy consent here (run phase1's separate "
+        "--apply-lossy door is the phase1 equivalent)",
     )
     g.add_argument(
         "--no-validate",
         action="store_true",
-        help="skip the epubcheck gate",
+        help="skip the epubcheck gate: the repair still writes/appends "
+        "with status unvalidated (no gate check runs)",
     )
     p.add_argument(
         "--help-repairs",
@@ -2051,9 +2084,12 @@ def build_parser() -> argparse.ArgumentParser:
         "core pass: the five well-formedness fixes, the NCX pipeline, and the "
         "mimetype fix run always; every other repair is opt-in (grouped "
         "below) and applied only when epubcheck confirms the result improved. "
-        "Never prompts. Exit codes: 0 clean, 2 trouble found (repairs refused "
-        "or failed; --json carries the records), 1 invocation problem (bad "
-        "args, or an existing output without --force).",
+        "Never prompts. Exit codes: 0 clean or written (a PARTIAL repair "
+        "writes its best output and exits 0; the --json record's status "
+        "says so), 1 trouble (repair refused by the gate, epubcheck "
+        "failure, or unreadable input) or invocation problem (bad args, "
+        "or an existing output without --force). This verb does not use "
+        "the tool-wide trouble=2 contract; library and the run slices do.",
         epilog="examples:\n"
         "  bindery repair book.epub out.epub\n"
         "  bindery repair book.epub out.epub --all\n"
@@ -2084,12 +2120,25 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor",
         help="check the environment: Python stack tier, epubcheck, Java, "
         "html5lib, and Calibre-library discovery",
+        description="Check the environment and exit 0 ALWAYS: the output "
+        "is the diagnosis, never a failure (run this first). Checks: the "
+        "Python stack tier, epubcheck, Java, html5lib, and Calibre-library "
+        "discovery.",
     )
     doc.set_defaults(func=run_doctor)
 
     audit = sub.add_parser(
         "audit",
         help="audit EPUB body text to detect non-schema content flaws (OCR damage, hardcoded page numbers, empty books, non-English text)",
+        description="Read-only content audit (eight analyzers: monolithic "
+        "scans, completeness, cover wiring, toc drift, and the body-text "
+        "battery over OCR damage, hardcoded page numbers, empty/thin "
+        "books, and non-English text). Library mode resolves the Calibre "
+        "library from the CURRENT DIRECTORY's metadata.db, or pass a "
+        "directory, or --id for specific books (--id plus --json takes "
+        "exactly one id). Exit codes are the audit inverse: 0 clean, "
+        "1 FINDINGS (flagged books), 2 usage or environment errors, "
+        "3 findings plus a failed --json/--tag write. Never prompts.",
     )
     audit.add_argument(
         "mode",
@@ -2141,7 +2190,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--id",
         metavar="BOOK_IDS",
         default=None,
-        help="audit library book(s) by Calibre id — one id or a comma-separated "
+        help="audit library book(s) by Calibre id: one id or a comma-separated "
         "list (fetched via cquarry's single-entity get_book; cannot be "
         "combined with a directory)",
     )
@@ -2163,10 +2212,12 @@ def build_parser() -> argparse.ArgumentParser:
         "repair them in place. Dry run by default; --apply atomically "
         "replaces accepted books. Shares the repair-flag set with `bindery "
         "repair` (--all enables every opt-in). Never prompts: --apply is "
-        "the only confirmation. Exit codes: 0 all clean, 2 any "
-        "flagged/rejected/error/partial book, 1 invocation problem. "
-        "--apply --install-to-calibre writes metadata.db and demands a "
-        "closed Calibre (refused, exit 1, while it runs).",
+        "the only confirmation. --apply WITHOUT --backup or --backup-inplace "
+        "replaces in place and keeps NO copy of the original. Exit codes: "
+        "0 all clean, 2 any flagged/rejected/error/unreadable/partial book, "
+        "1 invocation problem. --apply --install-to-calibre writes "
+        "metadata.db and demands a closed Calibre (refused, exit 1, while "
+        "it runs).",
         epilog="examples:\n"
         "  bindery library ~/docs/Calibre\\ Library --sweep\n"
         "  bindery library ~/docs/Calibre\\ Library --id 1234 --apply "
@@ -2185,7 +2236,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("fatals", "ncx", "all"),
         default="all",
         help="restrict to books with fatals, the NCX-001 mismatch "
-        "(toc.ncx dtb:uid != the OPF unique-identifier), or all (default)",
+        "(toc.ncx dtb:uid != the OPF unique-identifier), or all (default); "
+        "fatals requires --audit CSV or --sweep",
     )
     rc.add_argument(
         "--limit", type=int, help="process at most N candidates (for sampling)"
@@ -2241,7 +2293,7 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument(
         "--json",
         metavar="FILE",
-        help="write a machine-readable JSON report of the run to FILE Top-level envelope keys: mode (apply|dry-run), root, only, validate, candidates, summary",
+        help="write a machine-readable JSON report of the run to FILE. Top-level envelope keys: mode (apply|dry-run), root, only, validate, candidates, summary, books (one record per candidate)",
     )
     out.add_argument(
         "--manual-list",

@@ -104,14 +104,18 @@ class TestHelpTruth(unittest.TestCase):
     def test_repair_page_states_the_contract(self):
         text = self._sub(self._parser(), "repair").description
         self.assertIn("Never prompts", text)
-        self.assertIn("0 clean, 2 trouble", text)
+        self.assertIn("PARTIAL repair writes its best output and exits 0", text)
+        self.assertIn("does not use", text)
         self.assertIn("without --force", text)
 
     def test_library_page_states_gate_and_codes(self):
         text = self._sub(self._parser(), "library").description
         self.assertIn("Never prompts", text)
         self.assertIn("closed Calibre", text)
-        self.assertIn("0 all clean, 2 any", text)
+        self.assertIn(
+            "0 all clean, 2 any flagged/rejected/error/unreadable/partial", text
+        )
+        self.assertIn("keeps NO copy of the original", text)
 
     def test_install_to_calibre_names_the_gate(self):
         parser = self._parser()
@@ -165,9 +169,15 @@ class TestHelpJson(unittest.TestCase):
             list(cli._REPAIR_FLAG_TABLE),
         )
         self.assertEqual(
-            data["calibre_gates"],
+            data["calibre_gates"][0:2],
             ["audit --tag", "library --apply --install-to-calibre"],
         )
+        # the third door is phase3, guarded transitively through library
+        self.assertIn("run phase3", data["calibre_gates"][2])
+        # the contract now carries the per-verb truth
+        self.assertEqual(data["exit_contract"]["per_verb"]["repair"][-7:], "never 2")
+        self.assertIn("1 findings", data["exit_contract"]["per_verb"]["audit"])
+        self.assertIn("3", data["exit_contract"])
         self.assertEqual(payload_text, self._dump())
 
     def _dump(self):
