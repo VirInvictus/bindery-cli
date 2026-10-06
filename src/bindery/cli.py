@@ -395,8 +395,155 @@ def _epubs_for_ids(root: Path, id_csv: str) -> list[Path] | None:
     return epubs
 
 
+class _HelpJsonAction(argparse.Action):
+    """The machine surface: dump the complete CLI surface as JSON and exit.
+    Like _HelpRepairsAction, deliberately not a store_true dest, and never
+    colored: the output must stay valid JSON under any environment."""
+
+    def __init__(
+        self,
+        option_strings,
+        dest=argparse.SUPPRESS,
+        default=argparse.SUPPRESS,
+        help=None,
+    ):
+        super().__init__(
+            option_strings=option_strings,
+            dest=dest,
+            default=default,
+            nargs=0,
+            help=help,
+        )
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        payload = {
+            "tool": "bindery",
+            "version": __version__,
+            "exit_contract": {
+                "0": "clean",
+                "1": "invocation problem (bad args; repair: existing output "
+                "without --force); lock-class refusals (Calibre open at a "
+                "metadata.db door)",
+                "2": "trouble found (rejected/error/unreadable/partial "
+                "books; unscoped phase3 sweep); argparse usage errors",
+                "130": "interrupted",
+            },
+            "calibre_gates": [
+                "audit --tag",
+                "library --apply --install-to-calibre",
+            ],
+            "subcommands": [],
+            "repair_reference": [
+                {
+                    "group": title,
+                    "flags": [
+                        {"dest": dest, "summary": summary, "reference": long}
+                        for dest, summary, long in rows
+                    ],
+                }
+                for title, rows in _REPAIR_FLAG_TABLE.items()
+            ],
+        }
+        subparsers = next(
+            (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)),
+            None,
+        )
+        sub_helps = (
+            {pa.dest: pa.help for pa in subparsers._choices_actions}
+            if subparsers
+            else {}
+        )
+        for name, sub in subparsers.choices.items() if subparsers else []:
+
+            def sub_flags(subparser):
+                out = []
+                for group in subparser._action_groups:
+                    for action in group._group_actions:
+                        if action.dest in ("help",):
+                            continue
+                        entry = {
+                            "flags": list(action.option_strings) or [action.dest],
+                            "dest": action.dest,
+                            "help": " ".join((action.help or "").split()),
+                        }
+                        if action.metavar:
+                            met = action.metavar
+                            entry["metavar"] = (
+                                " ".join(met) if isinstance(met, tuple) else met
+                            )
+                        if action.choices:
+                            entry["choices"] = [str(c) for c in action.choices]
+                        out.append(entry)
+                return out
+
+            payload["subcommands"].append(
+                {
+                    "name": name,
+                    "help": " ".join((sub_helps.get(name) or "").split()),
+                    "description": " ".join((sub.description or "").split()),
+                    "flags": sub_flags(sub),
+                    "flag_groups": [
+                        {
+                            "title": group.title,
+                            "flags": [
+                                " ".join((a.help or "").split())
+                                for a in group._group_actions
+                                if a.dest != "help"
+                            ],
+                        }
+                        for group in sub._action_groups
+                        if group.title
+                    ],
+                }
+            )
+        # the run slices are one level deeper
+        run_choice = subparsers.choices.get("run") if subparsers else None
+        if run_choice is not None:
+            run_subs = next(
+                (
+                    a
+                    for a in run_choice._actions
+                    if isinstance(a, argparse._SubParsersAction)
+                ),
+                None,
+            )
+            run_entry = next(
+                (s for s in payload["subcommands"] if s["name"] == "run"),
+                None,
+            )
+            if (
+                run_choice is not None
+                and run_subs is not None
+                and run_entry is not None
+            ):
+                slice_helps = {pa.dest: pa.help for pa in run_subs._choices_actions}
+                run_entry["slices"] = [
+                    {
+                        "name": name,
+                        "help": " ".join((slice_helps.get(name) or "").split()),
+                        "flags": [
+                            {
+                                "flags": list(a.option_strings) or [a.dest],
+                                "dest": a.dest,
+                                "help": " ".join((a.help or "").split()),
+                            }
+                            for group in sub._action_groups
+                            for a in group._group_actions
+                            if a.dest != "help"
+                        ],
+                    }
+                    for name, sub in run_subs.choices.items()
+                ]
+        print(json.dumps(payload, indent=1, sort_keys=True))
+        raise SystemExit(0)
+
+
 def run_library(args) -> int:
     root = Path(args.path).expanduser()
+    if args.apply and args.install_to_calibre:
+        rc = _require_closed_calibre("--apply --install-to-calibre")
+        if rc:
+            return rc
     # cquarry-backed id resolution for --install-to-calibre: one lazy map
     # build per run, read-only against metadata.db.
     id_resolver = CalibreIdResolver(root)
@@ -1720,6 +1867,37 @@ def _repair_flag_reference(color: bool | None = None) -> str:
     return "\n".join(lines)
 
 
+def _calibre_running() -> bool:
+    """pgrep -x calibre. Fail-closed: this gates a metadata.db write, and
+    an unrunnable or timed-out pgrep means "can't tell", so the safe
+    answer is running (refusing costs a closed-Calibre re-run; guessing
+    wrong writes underneath a live Calibre)."""
+    try:
+        return (
+            subprocess.run(
+                ["pgrep", "-x", "calibre"], capture_output=True, timeout=10
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+
+
+def _require_closed_calibre(door: str) -> int:
+    """The lock-class refusal shared by the metadata.db write doors
+    (`audit --tag`, `library --apply --install-to-calibre`). Exit 1, not
+    a usage error: an open Calibre is an environment condition, exactly
+    like the companion tools' convention (usage problems exit 2)."""
+    if _calibre_running():
+        print(
+            f"ERROR: Calibre is running; close it before {door} "
+            "(the write goes through metadata.db).",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 class _HelpRepairsAction(argparse.Action):
     """The second help level: print the full repair-flag reference and exit.
 
@@ -1781,6 +1959,10 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
 
 
 def run_audit_cmd(args: argparse.Namespace) -> int:
+    if getattr(args, "tag", None):
+        rc = _require_closed_calibre("audit --tag")
+        if rc:
+            return rc
     selected = list(ALL) if args.mode == "all" else [args.mode]
     max_doc = args.max_doc_chars
     if args.min_chars > args.thin_chars:
@@ -1853,6 +2035,12 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--version", action="version", version=f"bindery {__version__}")
+    ap.add_argument(
+        "--help-json",
+        action=_HelpJsonAction,
+        help="dump the complete CLI surface (subcommands, flags, the "
+        "repair reference, the exit contract) as JSON and exit",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser(
@@ -1862,7 +2050,10 @@ def build_parser() -> argparse.ArgumentParser:
         description="Repair one EPUB into a new file with the epubcheck-gated "
         "core pass: the five well-formedness fixes, the NCX pipeline, and the "
         "mimetype fix run always; every other repair is opt-in (grouped "
-        "below) and applied only when epubcheck confirms the result improved.",
+        "below) and applied only when epubcheck confirms the result improved. "
+        "Never prompts. Exit codes: 0 clean, 2 trouble found (repairs refused "
+        "or failed; --json carries the records), 1 invocation problem (bad "
+        "args, or an existing output without --force).",
         epilog="examples:\n"
         "  bindery repair book.epub out.epub\n"
         "  bindery repair book.epub out.epub --all\n"
@@ -1882,8 +2073,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         dest="json_path",
         metavar="FILE",
-        help="write a machine-readable report (status, before/after counts, "
-        "fix summary) in the library --json per-book shape",
+        help="write a machine-readable report: one record per file with "
+        "mode, path, output, status, before, after, and the per-fix "
+        "summary (the library --json per-book shape)",
     )
     _add_repair_flags(r)
     r.set_defaults(func=run_repair)
@@ -1970,7 +2162,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Scan a Calibre library tree for repair candidates and "
         "repair them in place. Dry run by default; --apply atomically "
         "replaces accepted books. Shares the repair-flag set with `bindery "
-        "repair` (--all enables every opt-in).",
+        "repair` (--all enables every opt-in). Never prompts: --apply is "
+        "the only confirmation. Exit codes: 0 all clean, 2 any "
+        "flagged/rejected/error/partial book, 1 invocation problem. "
+        "--apply --install-to-calibre writes metadata.db and demands a "
+        "closed Calibre (refused, exit 1, while it runs).",
         epilog="examples:\n"
         "  bindery library ~/docs/Calibre\\ Library --sweep\n"
         "  bindery library ~/docs/Calibre\\ Library --id 1234 --apply "
@@ -1988,7 +2184,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--only",
         choices=("fatals", "ncx", "all"),
         default="all",
-        help="restrict to books with fatals, NCX-001 mismatch, or all (default)",
+        help="restrict to books with fatals, the NCX-001 mismatch "
+        "(toc.ncx dtb:uid != the OPF unique-identifier), or all (default)",
     )
     rc.add_argument(
         "--limit", type=int, help="process at most N candidates (for sampling)"
@@ -2021,9 +2218,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--id",
         default="",
         metavar="IDS",
-        help="comma-separated Calibre book ids to scope the sweep to "
-        "(resolved via cquarry's get_format_path; mutually exclusive with "
-        "--audit)",
+        help="comma-separated Calibre book ids to scope the run to "
+        "(resolved via cquarry's get_format_path; works without --sweep, "
+        "since ids replace the tree walk; mutually exclusive with --audit)",
     )
     bk = lib.add_argument_group("backups")
     bk.add_argument("--backup", help="directory to mirror backups into before --apply")
@@ -2044,7 +2241,7 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument(
         "--json",
         metavar="FILE",
-        help="write a machine-readable JSON report of the run to FILE",
+        help="write a machine-readable JSON report of the run to FILE Top-level envelope keys: mode (apply|dry-run), root, only, validate, candidates, summary",
     )
     out.add_argument(
         "--manual-list",
@@ -2055,7 +2252,7 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument(
         "--install-to-calibre",
         action="store_true",
-        help="with --apply, re-register the format natively in metadata.db "
+        help="Calibre must be closed for this door (the row write goes through metadata.db; refused with exit 1 while it runs). with --apply, re-register the format natively in metadata.db "
         "through cquarry's write module (remove + add in one transaction) "
         "instead of a bare filesystem replace",
     )
@@ -2074,7 +2271,9 @@ def build_parser() -> argparse.ArgumentParser:
         "phase1",
         help="the EPUB pre-import vetting slice over a directory of loose "
         "files: corruption sweep, epubcheck, content battery, monolithic, "
-        "watermark detection, repairability. Read-only without --apply-lossy",
+        "watermark detection, repairability. Read-only without --apply-lossy. "
+        "Exit codes: 0 clean, 2 trouble (reject/partial/error/unreadable "
+        "books; decisions_needed in --json), 1 invocation problem",
     )
     p1.add_argument("path")
     p1.add_argument(
@@ -2110,7 +2309,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="the post-import scoped repair sweep: library --id <ids> --sweep "
         "--only all --apply --all --install-to-calibre with a pre/post "
         "summary. Refuses unscoped library-wide sweeps (exit 2); run from "
-        "the library directory",
+        "the library directory. Exit codes follow library's: 0 clean, "
+        "2 trouble, 1 invocation problem",
     )
     p3.add_argument(
         "--ids",
