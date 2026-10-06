@@ -35,11 +35,16 @@ from .transforms import (
     css_protected_tags,
     encode_url_spaces,
     escape_unknown_entities,
+    fix_cdata_terminator,
     fix_comment_double_hyphen,
     fix_empty_body,
     fix_id_colons,
+    fix_misnested_inline,
     fix_missing_title,
     fix_ncx_src_fragments,
+    fix_stray_close,
+    fix_svg_dup_ids,
+    fix_unterminated_attr,
     outside_protected_map,
     strip_attrs_in_start_tags,
     strip_broken_tags,
@@ -96,14 +101,34 @@ def _locate_opf(z: zipfile.ZipFile) -> str | None:
     return next((n for n in z.namelist() if n.lower().endswith(".opf")), None)
 
 
+# XML NameChar, one char, XSD NCName-shaped: \w covers the letter/digit/
+# underscore scripts, then the name punctuation XML allows. Colons are
+# deliberately absent: an id must be an NCName (no colons), which the
+# dedicated check below keeps.
+_XML_NAMECHAR_RE = re.compile(
+    r"[\w.\-\u00B7\u00C0-\u00D6\u00D8-\u00F6\u02FF-\u037D\u037F-\u1FFF\u200C\u200D\u203F-\u2040\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]+"
+)
+
+
 def _is_invalid_ncname(s: str) -> bool:
-    """True if `s` cannot be an XML id (NCName): empty, leading non-letter/underscore,
-    or containing a colon. This is what epubcheck flags as RSC-005 'must be an XML name'."""
+    """True if `s` cannot be an XML id (NCName): empty, containing a colon,
+    or carrying any character outside the XML NameChar set at any position.
+    This is what epubcheck flags as RSC-005 'must be an XML name' — and its
+    message names only colons, which is how the apostrophe-bearing calibre
+    ids (`Stephen_King_-_Lisey's_story22`) hid from the original
+    empty/colon/leading-char check (issue #3, 2026-10-06)."""
     if not s:
         return True
     if ":" in s:
         return True
-    return not (s[0].isalpha() or s[0] == "_")
+    return not (s[0].isalpha() or s[0] == "_") or not _XML_NAMECHAR_RE.fullmatch(s)
+
+
+def _sanitize_ncname(old: str) -> str:
+    """The rename base for an invalid id: every character the id could not
+    keep (colon, apostrophe, space, ...) becomes `_`. \\w keeps valid
+    script letters and digits, so only genuine defects are rewritten."""
+    return re.sub(r"[^\w.-]", "_", old)
 
 
 def _plan_renames(existing: set[str]) -> dict[str, str]:
@@ -119,7 +144,7 @@ def _plan_renames(existing: set[str]) -> dict[str, str]:
     for old in sorted(existing):
         if not _is_invalid_ncname(old):
             continue
-        new = "id_" + old.replace(":", "_")
+        new = "id_" + _sanitize_ncname(old)
         while new in taken:
             new = "_" + new
         taken.add(new)
@@ -254,6 +279,11 @@ class RepairFlags:
     fix_media_types: bool = False
     fix_cover: bool = False
     comment_double_hyphens: bool = False
+    svg_dup_ids: bool = False
+    cdata_terminator: bool = False
+    misnested_inline: bool = False
+    stray_close: bool = False
+    unterminated_attr: bool = False
 
 
 @dataclass
@@ -903,15 +933,38 @@ def _stub_visible_text(html: str) -> str:
     return _STUB_WS_RE.sub(" ", t).strip()
 
 
+# Body-scoped stub identity (the image-carrier fix, 2026-10-06): a converter
+# stamps the same head <title> on every shell page, so whole-document text
+# welded unrelated docs into a fake stub class; the body span is what a stub
+# actually repeats. An image-carrier rule mirrors audit._is_image_carrier.
+_STUB_BODY_SPAN_RE = re.compile(r"<body\b[^>]*>(.*)</body>", re.IGNORECASE | re.DOTALL)
+_STUB_IMAGE_CARRIER_RE = re.compile(r"<(?:img|image)\b", re.IGNORECASE)
+
+
+def _stub_body_text(html: str) -> str:
+    """Visible text of the <body> span (whole document when there is none)."""
+    m = _STUB_BODY_SPAN_RE.search(html)
+    return _stub_visible_text(m.group(1)) if m else _stub_visible_text(html)
+
+
+def _stub_is_image_carrier(html: str, body_text: str) -> bool:
+    """True for a doc with no body text that carries an image element: a
+    divider page (furniture), never a stub."""
+    return body_text == "" and bool(_STUB_IMAGE_CARRIER_RE.search(html))
+
+
 def detect_stub_docs(z: zipfile.ZipFile, opf_text: str, opf_dir: str) -> frozenset[str]:
     """The stub docs this repair may drop: spine content documents whose
-    entire visible text is one identical short placeholder repeated across
-    STUB_MIN_REPEAT docs and at least STUB_MIN_FRAC of the spine.
+    entire visible BODY text is one identical short placeholder repeated
+    across STUB_MIN_REPEAT docs and at least STUB_MIN_FRAC of the spine.
 
     Refusals (empty set): no repeated short class, or the class IS the whole
     spine (that book is EMPTY: it needs a re-source, never a repair). A doc
-    that cannot be read is never a stub. Returns resolved archive paths so
-    the manifest, NCX, nav, and archive-copy passes agree on the targets.
+    that cannot be read is never a stub, and an image-carrier page (no body
+    text, an <img> present) is furniture, never a stub: dropping it would
+    delete real illustrations (the Great Change divider-page misfire,
+    2026-10-05). Returns resolved archive paths so the manifest, NCX, nav,
+    and archive-copy passes agree on the targets.
     """
     from collections import Counter
 
@@ -930,6 +983,7 @@ def detect_stub_docs(z: zipfile.ZipFile, opf_text: str, opf_dir: str) -> frozens
     nameset = set(z.namelist())
     hrefs = [id_to_href.get(i) for i in spine_ids]
     texts: list[str] = []
+    carriers: list[bool] = []
     for h in hrefs:
         doc = ""
         if h and h in nameset:
@@ -937,9 +991,17 @@ def detect_stub_docs(z: zipfile.ZipFile, opf_text: str, opf_dir: str) -> frozens
                 doc = z.read(h).decode("utf-8", "replace")
             except Exception:
                 doc = ""
-        texts.append(_stub_visible_text(doc) if doc else "")
+        if doc:
+            body = _stub_body_text(doc)
+            texts.append(body)
+            carriers.append(_stub_is_image_carrier(doc, body))
+        else:
+            texts.append("")
+            carriers.append(False)
     counts = Counter(
-        t for t in texts if PLACEHOLDER_STUB_MIN <= len(t) <= PLACEHOLDER_STUB_MAX
+        t
+        for t, carrier in zip(texts, carriers, strict=True)
+        if not carrier and PLACEHOLDER_STUB_MIN <= len(t) <= PLACEHOLDER_STUB_MAX
     )
     if not counts:
         return frozenset()
@@ -1397,6 +1459,25 @@ def repair_epub(
     en-dash (RSC-016: `--` is not permitted within comments); comment bodies
     only, text nodes and CDATA sections never touched, in content documents,
     the NCX, and the OPF alike.
+    With `svg_dup_ids`, rename duplicate `id` values inside standalone `.svg`
+    entries (old calibre SVG page renders; RSC-005 'Duplicate "glNNNN"'):
+    first occurrence keeps its name, later ones gain `_2`/`_3`..., and
+    internal references need no rewrite because they resolve to the first
+    definition under every reader's first-match lookup.
+    With `cdata_terminator`, complete a truncated CDATA-terminator comment in
+    an inline <style> block (`/*]]>` -> `/*]]>*/`; the CSS-008 'Premature end
+    of file' class, one error per affected document).
+    With `misnested_inline`, rewrite the Mobipocket drop-cap mis-nest
+    (`<i><b>X</i></b>` -> `<i><b>X</b></i>`, em/strong variants and either
+    tag order included): the unique well-formed form of the same two spans.
+    With `stray_close`, remove an end tag whose element has no open start tag
+    (the stray extra `</div>` on a shell page that cascades into 'body must
+    be terminated by the matching end-tag'); mis-nested-but-open pairs are
+    never touched.
+    With `unterminated_attr`, close an attribute value left open to the tag's
+    own `>` (`<p class="footnote>` -> `<p class="footnote">`; the RSC-016
+    'must not contain the < character' fatal). It runs before the tag-shape
+    readers, which an open value otherwise lies to.
     With `strip_stub_docs` (lossy, the no_worse bar), drop spine documents whose
     entire visible text is one identical short placeholder repeated across the
     spine (the Bookmate/DRM-sample export whose chapters are all the same
@@ -1844,6 +1925,10 @@ def repair_epub(
                     data = text.encode("utf-8")
             elif low.endswith(CONTENT_SUFFIXES):
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
+                if flags.cdata_terminator:
+                    text, n = fix_cdata_terminator(text)
+                    if n:
+                        counts["fix_cdata_terminator"] = n
                 if flags.comment_double_hyphens:
                     text, n = fix_comment_double_hyphen(text)
                     if n:
@@ -1859,6 +1944,15 @@ def repair_epub(
                     text, n = escape_unknown_entities(text)
                     if n:
                         counts["escape_unknown_entities"] = n
+                # The unterminated-attr repair runs before every tag-shape
+                # reader below it: an attribute value open to the tag's own
+                # `>` makes the quote-aware start-tag matchers swallow
+                # markup into one pseudo-tag, which would feed the attribute
+                # scrub and the stray-close walk a lie.
+                if flags.unterminated_attr:
+                    text, n = fix_unterminated_attr(text)
+                    if n:
+                        counts["fix_unterminated_attr"] = n
                 if flags.strip_attrs:
                     text, n = strip_invalid_attributes(text)
                     if n:
@@ -1867,6 +1961,17 @@ def repair_epub(
                     text, n = add_img_alt(text)
                     if n:
                         counts["img_alt_added"] = n
+                # The XML-structural pair runs before --reserialize so the
+                # html5lib rebuild only sees documents still broken after the
+                # narrow repairs had their turn.
+                if flags.stray_close:
+                    text, n = fix_stray_close(text)
+                    if n:
+                        counts["fix_stray_close"] = n
+                if flags.misnested_inline:
+                    text, n = fix_misnested_inline(text)
+                    if n:
+                        counts["fix_misnested_inline"] = n
                 if flags.reserialize:
                     text, n = reserialize_if_broken(text)
                     if n:
@@ -1957,6 +2062,21 @@ def repair_epub(
                     report.add(counts)
                     report.files_changed += 1
                     data = text.encode("utf-8")
+            elif low.endswith(".svg") and flags.svg_dup_ids:
+                # Old calibre SVG page renders repeat glyph ids within one
+                # document (hundreds of RSC-005s); the first occurrence keeps
+                # its name, later ones are suffixed, and references still
+                # resolve (they always hit the first definition).
+                try:
+                    svg_text = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    report.add({"non_utf8_docs_skipped": 1})
+                else:
+                    svg_text, n = fix_svg_dup_ids(svg_text)
+                    if n:
+                        report.add({"fix_svg_dup_ids": n})
+                        report.files_changed += 1
+                        data = svg_text.encode("utf-8")
             elif low.endswith((".css", ".xpgt")) and space_renames:
                 # Stylesheets pass through the rewrite too: a url() that
                 # resolved against a raw-space entry would dangle the

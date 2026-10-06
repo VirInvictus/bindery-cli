@@ -327,6 +327,57 @@ def _fixtures() -> dict:
             },
             "stub_docs_dropped",
         ),
+        "--fix-svg-dup-ids": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": plain,
+                "OEBPS/page0001.svg": (
+                    '<svg xmlns="http://www.w3.org/2000/svg" '
+                    'xmlns:xlink="http://www.w3.org/1999/xlink">'
+                    '<defs><path id="gl2305" d="M0 0"/>'
+                    '<path id="gl2305" d="M1 1"/></defs>'
+                    '<use xlink:href="#gl2305"/></svg>'
+                ),
+            },
+            "fix_svg_dup_ids",
+        ),
+        "--fix-cdata-terminator": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": _doc(
+                    '<style type="text/css">/*<![CDATA[*/ p { color: red; } '
+                    "/*]]></style><p>x</p>"
+                ),
+            },
+            "fix_cdata_terminator",
+        ),
+        "--fix-misnested-inline": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": _doc("<p><i><b>S</i></b> <i><b>ome</i></b></p>"),
+            },
+            "fix_misnested_inline",
+        ),
+        "--fix-stray-close": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": _doc(
+                    '<div class="wedge" /><div class="container"><p>x</p></div></div>'
+                ),
+            },
+            "fix_stray_close",
+        ),
+        "--fix-unterminated-attr": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": (
+                    '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+                    '<head><title>t</title></head><body><p class="footnote>\n'
+                    "footnote text here</p></body></html>"
+                ),
+            },
+            "fix_unterminated_attr",
+        ),
     }
 
 
@@ -480,6 +531,31 @@ class FlagEndToEndTests(unittest.TestCase):
     def test_strip_stub_docs(self):
         self.assertGreaterEqual(
             self._fixes_for("--strip-stub-docs")["stub_docs_dropped"], 3
+        )
+
+    def test_fix_svg_dup_ids(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-svg-dup-ids")["fix_svg_dup_ids"], 1
+        )
+
+    def test_fix_cdata_terminator(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-cdata-terminator")["fix_cdata_terminator"], 1
+        )
+
+    def test_fix_misnested_inline(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-misnested-inline")["fix_misnested_inline"], 2
+        )
+
+    def test_fix_stray_close(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-stray-close")["fix_stray_close"], 1
+        )
+
+    def test_fix_unterminated_attr(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-unterminated-attr")["fix_unterminated_attr"], 1
         )
 
 

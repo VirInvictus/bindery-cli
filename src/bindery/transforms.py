@@ -745,6 +745,252 @@ def fix_comment_double_hyphen(s: str) -> tuple[str, int]:
     return "".join(parts), count
 
 
+# A truncated CDATA-terminator comment inside an inline <style> block:
+# `/*]]>` with no `*/` after it (optionally separated by whitespace, which a
+# real closer may carry). The `/*` opens a CSS comment the parser never sees
+# closed, so epubcheck answers CSS-008 'Premature end of file' once per
+# affected document; completing the closer is byte-minimal and renders
+# identically. Standalone (not _outside_protected): the token spans the
+# protection machinery's own CDATA boundary, since `/*<![CDATA[*/ ... /*]]>`
+# is exactly the shape whose closer got truncated.
+_CDATA_TERMINATOR_RE = re.compile(r"/\*]]>(?!\s*\*/)")
+_STYLE_BLOCK_SPAN_RE = re.compile(
+    r"<style\b[^>]*>.*?</style>", re.IGNORECASE | re.DOTALL
+)
+
+
+def fix_cdata_terminator(s: str) -> tuple[str, int]:
+    """Complete a truncated CDATA-terminator comment in an inline <style>
+    block: `/*]]>` -> `/*]]>*/` (the CSS-008 'Premature end of file' class).
+
+    Opt-in (--fix-cdata-terminator). Deliberately narrow: only the
+    malformed-terminator token class, inside <style> blocks only. Invalid CSS
+    properties and selectors stay unfixed (renderers degrade gracefully), and
+    stylesheet FILE entries are not touched; extend only with a named
+    epubcheck finding.
+    """
+    count = 0
+
+    def fix_block(m: re.Match) -> str:
+        nonlocal count
+        block, n = _CDATA_TERMINATOR_RE.subn("/*]]>*/", m.group(0))
+        count += n
+        return block
+
+    return _STYLE_BLOCK_SPAN_RE.sub(fix_block, s), count
+
+
+# An id attribute inside a real start tag (the tempered-quote value idiom: a
+# double-quoted value may carry an apostrophe). Anchored to start tags so
+# literal `id="x"` text in element content is never renamed.
+_SVG_TAG_RE = re.compile(r"""<[a-zA-Z][\w:.-]*(?:"[^"]*"|'[^']*'|[^>])*+>""")
+_SVG_ID_ATTR_RE = re.compile(r"""(\bid\s*=\s*)(["'])((?:(?!\2).)*+)(\2)""")
+
+
+def fix_svg_dup_ids(s: str) -> tuple[str, int]:
+    """Rename duplicate `id` values within one SVG document, keeping the
+    FIRST occurrence (the RSC-005 'Duplicate "glNNNN"' class from old
+    calibre SVG page renders).
+
+    Opt-in (--fix-svg-dup-ids). The first occurrence keeps its name, every
+    later one gains `_2`, `_3`, ... (prefixed with `_` until free), in
+    document order; internal `xlink:href="#x"` / `url(#x)` references are
+    never rewritten because they already resolve to the first definition
+    under every reader's first-match lookup, so first-keeps-id preserves
+    exactly what was rendered. Runs on standalone `.svg` entries only:
+    content-document ids are styled by CSS selectors and targeted by
+    anchors, and renaming those needs a reference graph this repair
+    deliberately does not build.
+    """
+    values = [
+        m.group(3)
+        for tag in _SVG_TAG_RE.finditer(s)
+        for m in [_SVG_ID_ATTR_RE.search(tag.group(0))]
+        if m is not None
+    ]
+    counts: dict[str, int] = {}
+    taken = set(values)
+    count = 0
+
+    def fix_tag(tag: re.Match) -> str:
+        nonlocal count
+        m = _SVG_ID_ATTR_RE.search(tag.group(0))
+        if m is None:
+            return tag.group(0)
+        v = m.group(3)
+        if not v:
+            return tag.group(0)
+        n = counts.get(v, 0) + 1
+        counts[v] = n
+        if n == 1:
+            return tag.group(0)
+        new = f"{v}_{n}"
+        while new in taken:
+            new = "_" + new
+        taken.add(new)
+        count += 1
+        return tag.group(0)[: m.start(3)] + new + tag.group(0)[m.end(3) :]
+
+    return _SVG_TAG_RE.sub(fix_tag, s), count
+
+
+# The mis-nested inline pair (the Mobipocket drop-cap shape `<i><b>S</i></b>`):
+# two style tags opened, then closed in the WRONG order (`</i>` fires while
+# `<b>` is still open, so the closers read `</\1></\2>`; a WELL-FORMED pair
+# closes `</\2></\1>` and must not match, or the fix would phantom-count
+# healthy markup). The Exile variant (Life, Txt_014) carries a short
+# punctuation run between the reversed closers (`<i><b>xile</i>,</b>`); a
+# LETTER run there is excluded on purpose (`[^<\w]`): `<i><b>S</i>ome</b>`
+# spans b over `Some` and i over `S`, and which span the letters keep has no
+# deterministic answer, so it stays with manual rescue. Any match is XML
+# fatal, and swapping the closers is the unique well-formed form carrying
+# the same two spans over the same shared text. The shared-text run is
+# bounded (no tags inside, so `[^<]` alone; 64 covers every real drop-cap
+# and short emphasis) and the tag names are bare (attribute-bearing starts
+# keep their own shape).
+_MISNESTED_INLINE_RE = re.compile(
+    r"""<(i|b|em|strong)><(i|b|em|strong)>([^<]{1,64})</\1>([^<\w]{0,8})</\2>""",
+    re.IGNORECASE,
+)
+
+
+@_outside_protected
+def fix_misnested_inline(s: str) -> tuple[str, int]:
+    """Rewrite `<i><b>X</i></b>` to `<i><b>X</b></i>` (and the em/strong
+    variants, either order); a punctuation run between the reversed
+    closers (`<i><b>xile</i>,</b>`) survives outside both spans.
+
+    Opt-in (--fix-misnested-inline). Only the both-open-then-reversed-close
+    shape is rewritten; general mis-nesting has no deterministic repair and
+    stays with manual rescue. A same-tag pair (`<i><i>x</i></i>`) is already
+    well-formed and is returned untouched and uncounted.
+    """
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        if m.group(1).lower() == m.group(2).lower():
+            return m.group(0)
+        count += 1
+        return (
+            f"<{m.group(1)}><{m.group(2)}>{m.group(3)}"
+            f"</{m.group(2)}></{m.group(1)}>{m.group(4)}"
+        )
+
+    return _MISNESTED_INLINE_RE.sub(repl, s), count
+
+
+# One scan token: comments and CDATA sections are matched only when CLOSED
+# (an unclosed opener is handled by the walk, which stops there, because the
+# parser treats the whole rest as comment/CDATA content); start tags are the
+# quote-aware possessive matcher; end tags are plain.
+_STRAY_TOKEN_RE = re.compile(
+    r"""<!--.*?-->|<!\[CDATA\[.*?\]\]>"""
+    r"""|<([a-zA-Z][\w:.-]*)((?:"[^"]*"|'[^']*'|[^>])*+)>"""
+    r"""|</([\w:.-]+)\s*>""",
+    re.DOTALL,
+)
+_VOID_NAMES = frozenset(VOID.split("|"))
+_RAW_TEXT_TAGS = frozenset({"script", "style"})
+
+
+def fix_stray_close(s: str) -> tuple[str, int]:
+    """Remove an end tag whose element has no open start tag anywhere above
+    it (the stray extra `</div>` on a shell page, which cascades to 'body
+    must be terminated by the matching end-tag').
+
+    Opt-in (--fix-stray-close). The rule is deliberately narrower than a
+    nesting repair: a close is removed only when NOTHING by that name is
+    open, so a merely mis-nested pair (`<div><span></div></span>`) is left
+    exactly as written. Open-bookkeeping skips self-closed and void starts;
+    a close whose name is open but not on top pops nothing (conservative:
+    the stack may be stale, and under-popping only suppresses removals,
+    never causes them); raw-text elements (script/style) are skipped to
+    their end tag so JS/CSS text is never read as markup; the walk stops at
+    an unclosed comment or CDATA opener, where the parser stops reading
+    markup too.
+    """
+    stack: list[str] = []
+    removals: list[tuple[int, int]] = []
+    pos = 0
+    while True:
+        m = _STRAY_TOKEN_RE.search(s, pos)
+        if m is None:
+            break
+        # An unclosed comment/CDATA opener between tokens owns the rest of
+        # the document: no markup after it, so nothing left to judge.
+        opener = s.rfind("<!--", pos, m.start())
+        cdata_op = s.rfind("<![CDATA[", pos, m.start())
+        if max(opener, cdata_op) != -1:
+            break
+        token = m.group(0)
+        if token.startswith("<!--") or token.startswith("<![CDATA["):
+            pos = m.end()
+            continue
+        if m.group(1) is not None:  # start tag
+            name = m.group(1).lower()
+            if name in _RAW_TEXT_TAGS:
+                end = re.search(rf"</{m.group(1)}\s*>", s[m.end() :], re.IGNORECASE)
+                pos = m.end() + (end.end() if end else 0)
+                if not end:
+                    break
+                continue
+            attrs = m.group(2)
+            if attrs.rstrip().endswith("/") or name in _VOID_NAMES:
+                pos = m.end()
+                continue
+            stack.append(name)
+        else:  # end tag
+            name = m.group(3).lower()
+            if name in stack:
+                if stack[-1] == name:
+                    stack.pop()
+            else:
+                removals.append(m.span())
+        pos = m.end()
+    if not removals:
+        return s, 0
+    out: list[str] = []
+    last = 0
+    for start, end in removals:
+        out.append(s[last:start])
+        last = end
+    out.append(s[last:])
+    return "".join(out), len(removals)
+
+
+# An attribute value whose closing quote is missing before the tag's own `>`:
+# `<p class="footnote>` — the parser swallows everything up to the NEXT quote
+# as the value, meets a `<` inside it, and dies with RSC-016 ("the value of
+# attribute ... must not contain the '<' character"). The rewrite re-closes
+# the quote at the `>` that was meant to end the tag. Three guards keep it
+# off legal `>`-bearing values: the value is one bare word (no whitespace, no
+# angle brackets, no quotes), the `>` must be followed by markup or text but
+# NOT by a quote before the next `<` (`(?![^<]*")` — a real multi-line value
+# closes somewhere quote-first), and only double-quoted values are judged.
+_UNTERMINATED_ATTR_RE = re.compile(r"""(\s[\w:.-]+\s*=\s*")([^\s"<>]+)>(?![^<]*")""")
+
+
+@_outside_protected
+def fix_unterminated_attr(s: str) -> tuple[str, int]:
+    """Close an attribute value left open to the tag's own `>`
+    (`<p class="footnote>` -> `<p class="footnote">`, the RSC-016
+    'must not contain the < character' fatal).
+
+    Opt-in (--fix-unterminated-attr). Run it before --fix-stray-close: the
+    stack walk needs real tag boundaries, and an unterminated value makes
+    the start-tag matcher swallow markup into one pseudo-tag.
+    """
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        count += 1
+        return f'{m.group(1)}{m.group(2)}">'
+
+    return _UNTERMINATED_ATTR_RE.sub(repl, s), count
+
+
 # The always-on core for full (X)HTML content documents, in order: prolog and
 # root-tag fixes first, then ampersand/entity normalization, then void
 # self-closing. Exactly the five semantics-preserving well-formedness fixes the

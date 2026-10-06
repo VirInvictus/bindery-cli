@@ -96,6 +96,11 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         fix_media_types=args.fix_media_types or all_,
         fix_cover=args.fix_cover or all_,
         comment_double_hyphens=args.fix_comment_double_hyphen or all_,
+        svg_dup_ids=args.fix_svg_dup_ids or all_,
+        cdata_terminator=args.fix_cdata_terminator or all_,
+        misnested_inline=args.fix_misnested_inline or all_,
+        stray_close=args.fix_stray_close or all_,
+        unterminated_attr=args.fix_unterminated_attr or all_,
     )
 
 
@@ -1489,6 +1494,47 @@ def _add_repair_flags(p: argparse.ArgumentParser) -> None:
         help="replace `--` inside XML comments with an en-dash (RSC-016: "
         "`--` is not permitted within comments); comment bodies only, "
         "CDATA never touched",
+    )
+    p.add_argument(
+        "--fix-svg-dup-ids",
+        dest="fix_svg_dup_ids",
+        action="store_true",
+        help="rename duplicate id values inside standalone .svg entries "
+        "(old calibre SVG page renders, RSC-005 'Duplicate \"glNNNN\"'): "
+        "first occurrence keeps its name, later ones gain _2/_3; "
+        "references need no rewrite (they resolve to the first definition)",
+    )
+    p.add_argument(
+        "--fix-cdata-terminator",
+        dest="fix_cdata_terminator",
+        action="store_true",
+        help="complete a truncated CDATA-terminator comment in an inline "
+        "<style> block (/*]]> -> /*]]>*/; the CSS-008 'Premature end of "
+        "file' class, one error per affected document)",
+    )
+    p.add_argument(
+        "--fix-misnested-inline",
+        dest="fix_misnested_inline",
+        action="store_true",
+        help="rewrite the drop-cap mis-nest <i><b>X</i></b> to "
+        "<i><b>X</b></i> (em/strong variants, either tag order): the "
+        "unique well-formed form of the same two spans",
+    )
+    p.add_argument(
+        "--fix-stray-close",
+        dest="fix_stray_close",
+        action="store_true",
+        help="remove an end tag whose element has no open start tag (the "
+        "stray extra </div> that cascades into 'body must be terminated "
+        "by the matching end-tag'); mis-nested-but-open pairs never touched",
+    )
+    p.add_argument(
+        "--fix-unterminated-attr",
+        dest="fix_unterminated_attr",
+        action="store_true",
+        help="close an attribute value left open to the tag's own '>' "
+        '(<p class="footnote> -> <p class="footnote">; the RSC-016 '
+        "'must not contain the < character' fatal)",
     )
     p.add_argument(
         "--strip-pagination",

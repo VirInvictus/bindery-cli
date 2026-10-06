@@ -370,6 +370,103 @@ class TestPlaceholderExport(unittest.TestCase):
         self.assertEqual(audit.classify(r, 2000, 20000), "OK")
 
 
+class TestImageCarrierDividers(unittest.TestCase):
+    """The Great Change misfire (issue #1, 2026-10-05): four part-divider
+    pages whose only content is a full-bleed <img> share the converter's
+    identical head <title> with the title page, and the whole-document stub
+    pool welded them into a fake 5-doc stub class (PARTIAL, plus a
+    --strip-stub-docs consent that would delete real illustrations). Stub
+    identity must pool BODY text, and image-carrier pages are exempt
+    outright; identical titles alone must never be a stub class."""
+
+    CONTAINER = TestEmptyTextScan.CONTAINER
+    TITLE = "The Great Change (and Other Lies)"
+
+    def _epub(self, tmp, docs):
+        # docs: list of (name, full_html); spine follows the list order
+        import zipfile as zf
+
+        manifest = "".join(
+            f'<item id="d{i}" href="{n}" media-type="application/xhtml+xml"/>'
+            for i, (n, _) in enumerate(docs)
+        )
+        spine = "".join(f'<itemref idref="d{i}"/>' for i in range(len(docs)))
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            f"<manifest>{manifest}</manifest><spine>{spine}</spine></package>"
+        )
+        p = pathlib.Path(tmp) / "t.epub"
+        with zf.ZipFile(p, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", self.CONTAINER)
+            z.writestr("content.opf", opf)
+            for n, html in docs:
+                z.writestr(n, html)
+        return p
+
+    def _divider(self, i: int) -> str:
+        return (
+            f"<html><head><title>{self.TITLE}</title></head>"
+            '<body><p class="centered">'
+            f'<img class="full" src="../Images/{i}.jpg"/></p></body></html>'
+        )
+
+    def _title_page(self) -> str:
+        return f"<html><head><title>{self.TITLE}</title></head><body></body></html>"
+
+    def test_image_carrier_dividers_are_not_stubs(self):
+        real = (
+            "<html><head><title>t</title></head><body><p>"
+            + ("Real prose. " * 3000)
+            + "</p></body></html>"
+        )
+        docs = [
+            ("c0.xhtml", real),
+            ("title.xhtml", self._title_page()),
+        ] + [(f"div{i}.xhtml", self._divider(i)) for i in range(1, 5)]
+        with tempfile.TemporaryDirectory() as tmp:
+            r = audit.scan_emptytext(self._epub(tmp, docs))
+        self.assertFalse(r["placeholder"])
+        self.assertEqual(r["stub_docs"], 0)
+        self.assertEqual(audit.classify(r, 2000, 20000), "OK")
+
+    def test_identical_titles_without_images_never_a_stub_class(self):
+        # five empty-bodied pages sharing one head <title>, no img anywhere:
+        # the title is the only identical text, and it is not body content
+        real = (
+            "<html><head><title>t</title></head><body><p>"
+            + ("Real prose. " * 3000)
+            + "</p></body></html>"
+        )
+        docs = [("c0.xhtml", real)] + [
+            (f"t{i}.xhtml", self._title_page()) for i in range(5)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            r = audit.scan_emptytext(self._epub(tmp, docs))
+        self.assertFalse(r["placeholder"])
+        self.assertEqual(audit.classify(r, 2000, 20000), "OK")
+
+    def test_text_stubs_with_identical_titles_still_flagged(self):
+        # the fix narrows the pool to body text; real body-text stubs keep
+        # firing exactly as before
+        real = (
+            "<html><head><title>t</title></head><body><p>"
+            + ("Real prose. " * 3000)
+            + "</p></body></html>"
+        )
+        stub = (
+            f"<html><head><title>{self.TITLE}</title></head>"
+            "<body><p>This chapter is not included in this edition "
+            "preview.</p></body></html>"
+        )
+        docs = [("c0.xhtml", real)] + [(f"s{i}.xhtml", stub) for i in range(1, 5)]
+        with tempfile.TemporaryDirectory() as tmp:
+            r = audit.scan_emptytext(self._epub(tmp, docs))
+        self.assertTrue(r["placeholder"])
+        self.assertGreaterEqual(r["stub_docs"], 3)
+        self.assertEqual(audit.classify(r, 2000, 20000), "PARTIAL")
+
+
 class TestOcrSplitDetection(unittest.TestCase):
     """End-to-end scan_ocr() over synthetic EPUBs: a mid-sentence paragraph
     split counts; dialogue fragments and scene breaks do not."""

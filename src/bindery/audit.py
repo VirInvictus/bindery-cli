@@ -1224,6 +1224,28 @@ def _visible_chars(html: str) -> int:
     return len(_visible_text(html))
 
 
+# Stub identity pools BODY text (the image-carrier fix, 2026-10-06): a
+# converter stamps the same head <title> on every shell page, so
+# whole-document text welded unrelated docs into a fake stub class (the Great
+# Change divider-page misfire, issue #1). An image-carrier rule (empty body
+# text, an <img>/<image> present) marks divider pages: furniture, never
+# stubs. Mirrored by epub._stub_body_text / epub._stub_is_image_carrier.
+_BODY_SPAN_RE = re.compile(r"<body\b[^>]*>(.*)</body>", re.IGNORECASE | re.DOTALL)
+_IMAGE_CARRIER_RE = re.compile(r"<(?:img|image)\b", re.IGNORECASE)
+
+
+def _body_visible_text(html: str) -> str:
+    """Visible text of the <body> span (whole document when there is none)."""
+    m = _BODY_SPAN_RE.search(html)
+    return _visible_text(m.group(1)) if m else _visible_text(html)
+
+
+def _is_image_carrier(html: str, body_text: str) -> bool:
+    """True for a doc with no body text that carries an image element: a
+    divider page (furniture), never a stub."""
+    return body_text == "" and bool(_IMAGE_CARRIER_RE.search(html))
+
+
 def analyze_emptytext(book: Book) -> dict:
     """Count visible text across the (pre-read) spine and gather triage signals."""
     texts = book.visible_texts()
@@ -1235,10 +1257,23 @@ def analyze_emptytext(book: Book) -> dict:
     # short stub repeated across a large fraction of the spine (most chapters
     # replaced by an identical "content unavailable" notice). Blank docs are
     # excluded by PLACEHOLDER_STUB_MIN so well-made books full of small section
-    # dividers (each with distinct text) do not trip it.
+    # dividers (each with distinct text) do not trip it. The pool is the BODY
+    # text, and image-carrier pages are excluded outright: the four Kobo
+    # divider pages of the Great Change carry only a full-bleed <img>, and
+    # their identical head <title> used to be the "stub" every one of them
+    # matched (offering a --strip-stub-docs that deleted real illustrations).
     sig = any(_PLACEHOLDER_SIG.search(t) for t in texts)
+    body_texts = []
+    carriers = []
+    for d in book.spine:
+        doc_html = book.docs.get(d, "")
+        body = _body_visible_text(doc_html)
+        body_texts.append(body)
+        carriers.append(_is_image_carrier(doc_html, body))
     stubs = Counter(
-        t for t in texts if PLACEHOLDER_STUB_MIN <= len(t) <= PLACEHOLDER_STUB_MAX
+        t
+        for t, carrier in zip(body_texts, carriers, strict=True)
+        if not carrier and PLACEHOLDER_STUB_MIN <= len(t) <= PLACEHOLDER_STUB_MAX
     )
     stub_n = stubs.most_common(1)[0][1] if stubs else 0
     spine_n = max(1, len(book.spine))

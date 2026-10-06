@@ -123,6 +123,30 @@ class TestManifestIds(unittest.TestCase):
         self.assertIn('id="id_a_b"', out)
         self.assertIn('idref="id_a_b"', out)
 
+    def test_apostrophe_id_renamed_with_refs(self):
+        # The Lisey's Story shape (issue #3, 2026-10-06): calibre ids copied
+        # from filenames carry an apostrophe, which is not an XML NameChar.
+        # epubcheck's message says "without colons", but the original
+        # empty/colon/leading-char check passed these ids wholesale, so a
+        # full --all sweep left all 163 RSC-005s standing.
+        opf = (
+            "<manifest>"
+            '<item id="Stephen_King_-_Lisey\'s_story22" href="s22.htm" '
+            'media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="Stephen_King_-_Lisey\'s_story22"/></spine>'
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('id="id_Stephen_King_-_Lisey_s_story22"', out)
+        self.assertIn('idref="id_Stephen_King_-_Lisey_s_story22"', out)
+
+    def test_space_id_renamed(self):
+        out, n = fix_manifest_ids('<item id="a b" href="x"/><itemref idref="a b"/>')
+        self.assertEqual(n, 1)
+        self.assertIn('id="id_a_b"', out)
+        self.assertIn('idref="id_a_b"', out)
+
     def test_collision_rename_is_deterministic(self):
         # `1:2` and `1_2` are both invalid and both want `id_1_2`. Iterating the id
         # *set* made which one got the `_` prefix depend on the hash seed, so the same
@@ -1886,6 +1910,32 @@ class TestStripStubDocs(unittest.TestCase):
             dst = Path(td) / "out.epub"
             report = repair_epub(src, dst)
         self.assertNotIn("stub_docs_dropped", report.fixes)
+
+    def test_image_carrier_divider_pages_refused(self):
+        # the Great Change misfire (issue #1, 2026-10-05): four part-divider
+        # pages whose only content is a full-bleed <img>, byte-near-identical
+        # except the image number. Their identical head <title> used to weld
+        # them (plus the title page) into a fake stub class and offer a strip
+        # that deleted real illustrations; the gate caught the deletion at
+        # apply time, but the offer itself was wrong. Stub identity pools
+        # BODY text and image carriers are exempt outright.
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td, stubs=4, chapters=5)
+            rebuilt = Path(td) / "dividers.epub"
+            with zipfile.ZipFile(src) as zin, zipfile.ZipFile(rebuilt, "w") as zout:
+                for item in zin.infolist():
+                    data = zin.read(item)
+                    base = item.filename.rsplit("/", 1)[-1]
+                    if base.startswith("s") and base.endswith(".xhtml"):
+                        data = (
+                            b"<html><head><title>T</title></head><body>"
+                            b'<p class="centered">'
+                            b'<img class="full" src="1.jpg"/></p></body></html>'
+                        )
+                    zout.writestr(item, data)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(rebuilt, dst, RepairFlags(strip_stub_docs=True))
+        self.assertEqual(report.fixes, {})
 
     def test_whole_spine_of_stubs_is_refused(self):
         # every doc is the same stub: the book is EMPTY, not repairable

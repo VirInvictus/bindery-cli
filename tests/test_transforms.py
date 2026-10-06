@@ -14,12 +14,17 @@ from bindery.transforms import (
     encode_url_spaces,
     escape_bare_amp,
     escape_unknown_entities,
+    fix_cdata_terminator,
     fix_empty_body,
     fix_id_colons,
+    fix_misnested_inline,
     fix_missing_title,
     fix_named_entities,
     fix_ncx_playorder,
     fix_ncx_src_fragments,
+    fix_stray_close,
+    fix_svg_dup_ids,
+    fix_unterminated_attr,
     self_close_void,
     strip_broken_tags,
     strip_invalid_attributes,
@@ -598,6 +603,235 @@ class TestFixIdColons(unittest.TestCase):
         self.assertIn('src="c1.xhtml#sec_1"', out)
         self.assertIn('src="c2.xhtml#keep"', out)
         self.assertIn('src="http://example.com/x#a:b"', out)
+
+
+class TestFixCdataTerminator(unittest.TestCase):
+    def test_truncated_closer_completed(self):
+        # the Everything's Eventual shape (issue #4): the comment-wrapped
+        # CDATA pattern whose closing `*/` the converter dropped, one
+        # CSS-008 per affected document
+        doc = (
+            '<style type="text/css">/*<![CDATA[*/\n'
+            "  div.sgc-2 {text-align: center;}\n"
+            "/*]]></style>"
+        )
+        out, n = fix_cdata_terminator(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("/*]]>*/</style>", out)
+
+    def test_intact_block_untouched(self):
+        doc = "<style>/*<![CDATA[*/ p { color: red; } /*]]>*/</style>"
+        out, n = fix_cdata_terminator(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_spaced_closer_left_alone(self):
+        # `/*]]> */` is already a closed CSS comment; rewriting it would
+        # leave a stray second closer behind
+        doc = "<style>/*<![CDATA[*/ p { color: red; } /*]]> */</style>"
+        out, n = fix_cdata_terminator(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_only_style_blocks_are_judged(self):
+        # a `/*]]>` in body text (itself illegal XML: `]]>` may not appear
+        # in character data) is not this repair's class
+        doc = "<p>token /*]]> here</p>"
+        out, n = fix_cdata_terminator(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_idempotent(self):
+        doc = "<style>/*<![CDATA[*/ p { color: red; } /*]]></style>"
+        once, n1 = fix_cdata_terminator(doc)
+        twice, n2 = fix_cdata_terminator(once)
+        self.assertEqual(n1, 1)
+        self.assertEqual((twice, n2), (once, 0))
+
+
+class TestFixSvgDupIds(unittest.TestCase):
+    def test_duplicate_renamed_first_kept(self):
+        # the Terraplane shape (issue #2): old calibre SVG page renders
+        # repeat glyph ids within one document
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg">'
+            '<defs><path id="gl1" d="M0 0"/><path id="gl1" d="M1 1"/>'
+            '<path id="gl2" d="M2 2"/><path id="gl1" d="M3 3"/></defs></svg>'
+        )
+        out, n = fix_svg_dup_ids(svg)
+        self.assertEqual(n, 2)
+        self.assertEqual(out.count('id="gl1"'), 1)
+        self.assertIn('id="gl1_2"', out)
+        self.assertIn('id="gl1_3"', out)
+        self.assertIn('id="gl2"', out)
+
+    def test_suffixed_name_colliding_with_existing_gets_prefixed(self):
+        svg = '<svg><path id="gl1"/><path id="gl1"/><path id="gl1_2"/></svg>'
+        out, n = fix_svg_dup_ids(svg)
+        self.assertEqual(n, 1)
+        self.assertIn('id="_gl1_2"', out)
+
+    def test_references_untouched(self):
+        # references already resolve to the first definition under every
+        # reader's first-match lookup; renaming them could only move the
+        # target, never fix it
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" '
+            'xmlns:xlink="http://www.w3.org/1999/xlink">'
+            '<use xlink:href="#gl1"/><rect fill="url(#gl1)"/>'
+            '<path id="gl1"/><path id="gl1"/></svg>'
+        )
+        out, n = fix_svg_dup_ids(svg)
+        self.assertEqual(n, 1)
+        self.assertIn('xlink:href="#gl1"', out)
+        self.assertIn("url(#gl1)", out)
+
+    def test_idempotent_and_clean_svgs_untouched(self):
+        svg = '<svg><path id="a"/><path id="b"/></svg>'
+        out, n = fix_svg_dup_ids(svg)
+        self.assertEqual((out, n), (svg, 0))
+        once, _ = fix_svg_dup_ids('<svg><path id="a"/><path id="a"/></svg>')
+        again, n2 = fix_svg_dup_ids(once)
+        self.assertEqual((again, n2), (once, 0))
+
+    def test_literal_id_text_outside_tags_untouched(self):
+        svg = '<svg><text>the id="gl1" attribute</text><path id="gl1"/></svg>'
+        out, n = fix_svg_dup_ids(svg)
+        self.assertEqual((out, n), (svg, 0))
+
+
+class TestFixMisnestedInline(unittest.TestCase):
+    def test_drop_cap_pair_normalized(self):
+        # the Life shape (issue #5): Mobipocket-sourced conversions close
+        # the drop-cap pair in the wrong order
+        doc = "<p>the sessions for <i><b>S</i></b> <i><b>ome</i></b> <i><b>irls</i></b></p>"
+        out, n = fix_misnested_inline(doc)
+        self.assertEqual(n, 3)
+        self.assertIn("<i><b>S</b></i>", out)
+        self.assertIn("<i><b>ome</b></i>", out)
+        self.assertIn("<i><b>irls</b></i>", out)
+
+    def test_punctuation_between_reversed_closers_moved_outside(self):
+        # the Exile variant (Life, Txt_014): the trailing comma sits between
+        # the two closers; both spans only share `xile`, so the comma lands
+        # outside both, byte-preserved
+        doc = "<p>soon after <i><b>E</b></i> <i><b>xile</i>,</b> so much</p>"
+        out, n = fix_misnested_inline(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("<i><b>xile</b></i>, so much", out)
+
+    def test_letter_run_between_closers_is_ambiguous_and_refused(self):
+        # `<i><b>S</i>ome</b>` spans b over `Some` and i over `S`: which
+        # span keeps the letters has no deterministic answer, so the pair
+        # stays for manual rescue
+        doc = "<p><i><b>S</i>ome</b> word</p>"
+        out, n = fix_misnested_inline(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_reversed_order_and_em_strong_variants(self):
+        doc = "<p><b><i>x</b></i> <em><strong>y</strong></em></p>"
+        out, n = fix_misnested_inline(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("<b><i>x</i></b>", out)
+
+    def test_wellformed_pairs_untouched(self):
+        doc = "<p><i><b>fine</b></i> <i><i>same</i></i> plain</p>"
+        out, n = fix_misnested_inline(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_crossing_spans_with_inner_tags_untouched(self):
+        # `<i>foo<b>bar</i>baz</b>` has markup inside the run: not the
+        # drop-cap class, no deterministic repair, left for the gate
+        doc = "<p><i>foo<b>bar</i>baz</b></p>"
+        out, n = fix_misnested_inline(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_survives_comments_and_cdata(self):
+        doc = "<!-- <i><b>x</i></b> --><p><i><b>y</i></b></p>"
+        out, n = fix_misnested_inline(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("<!-- <i><b>x</i></b> -->", out)
+
+
+class TestFixStrayClose(unittest.TestCase):
+    def test_stray_extra_close_removed(self):
+        # the Life cover-page shape (issue #5): a self-closed div followed
+        # by an opened container, then TWO closes
+        doc = (
+            '<body><div class="wedge" />\n<div class="container">\n'
+            '<img src="c.jpg" />\n</div></div>\n</body>'
+        )
+        out, n = fix_stray_close(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("</div>\n</body>", out)
+        self.assertEqual(out.count("</div>"), 1)
+
+    def test_misnested_pair_never_touched(self):
+        # `</div>` closes while span is open: mis-nesting, not stray; the
+        # conservative no-pop rule also keeps the trailing `</span>` (its
+        # name is still on the stack) from being read as stray
+        doc = "<div><span></div></span>"
+        out, n = fix_stray_close(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_self_closed_and_void_starts_do_not_open_frames(self):
+        doc = '<body><br/><img src="x"/><hr></hr></body>'
+        out, n = fix_stray_close(doc)
+        self.assertEqual(n, 1)
+        self.assertNotIn("<hr></hr>", out)
+
+    def test_unclosed_comment_stops_the_walk(self):
+        # everything after an unclosed `<!--` is comment content to the
+        # parser; judging it as markup could only corrupt the repair
+        doc = "<body><p>x</p><!-- oops <div></div>"
+        out, n = fix_stray_close(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_script_text_never_read_as_markup(self):
+        doc = (
+            "<html><head><script>if (a</div>b) { }</script></head>"
+            "<body><div><p>x</p></div></body></html>"
+        )
+        out, n = fix_stray_close(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_idempotent(self):
+        doc = '<div class="wedge" /><div class="c"><p>x</p></div></div>'
+        once, n1 = fix_stray_close(doc)
+        twice, n2 = fix_stray_close(once)
+        self.assertEqual(n1, 1)
+        self.assertEqual((twice, n2), (once, 0))
+
+
+class TestFixUnterminatedAttr(unittest.TestCase):
+    def test_missing_quote_closed_at_tag_gt(self):
+        # the Life footnote shape (issue #5): `<p class="footnote>` makes
+        # the parser swallow prose into the class value until the next quote
+        doc = '<p class="footnote>\n* The boys&rsquo; adventure series.\n</p>'
+        out, n = fix_unterminated_attr(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('<p class="footnote">', out)
+
+    def test_legal_gt_in_attribute_untouched(self):
+        # a well-formed value carrying `>` closes quote-first; the
+        # no-quote-before-next-`<` guard keeps the rewrite off it
+        doc = '<img alt="a > b" src="x.png"/>'
+        out, n = fix_unterminated_attr(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_multiline_value_closing_later_untouched(self):
+        doc = '<img alt="a >\nand more" src="x.png"/>'
+        out, n = fix_unterminated_attr(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_value_with_markup_content_closes(self):
+        doc = '<p class="footnote><b>bold</b> tail</p>'
+        out, n = fix_unterminated_attr(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('<p class="footnote"><b>bold</b>', out)
+
+    def test_idempotent(self):
+        doc = '<p class="footnote>\ntext</p>'
+        once, _ = fix_unterminated_attr(doc)
+        twice, n2 = fix_unterminated_attr(once)
+        self.assertEqual((twice, n2), (once, 0))
 
 
 class TestCssProtectedTags(unittest.TestCase):
