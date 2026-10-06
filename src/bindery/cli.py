@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import zipfile
 from dataclasses import dataclass, field
 from itertools import islice
@@ -1345,228 +1346,388 @@ def run_phase3(args) -> int:
     return 2 if repair_rc != 0 else 0
 
 
+# The repair-flag inventory, one table, two renderings: `_add_repair_flags`
+# registers the short one-liners into argparse argument groups (the compact
+# `--help`), and `--help-repairs` renders the long descriptions as the full
+# reference. Adding a flag means adding a row here; the dests below are the
+# contract tests/test_flags_wiring.py pins.
+# Row shape: (dest, short one-liner, long reference text).
+_REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
+    "safe opt-ins (markup-neutral)": [
+        (
+            "fix_ids",
+            "rewrite invalid OPF/NCX ids (RSC-005), every reference in sync",
+            "rewrite ids that are not valid XML names (digit-led, colon-bearing, "
+            "or carrying any character outside the XML NameChar set, like the "
+            "apostrophes calibre copies from filenames) in the OPF manifest and "
+            "the NCX, updating every reference to them (spine idref, spine toc, "
+            "item fallback, media-overlay, the EPUB 2 cover meta). The dc: "
+            "metadata is never altered.",
+        ),
+        (
+            "add_img_alt",
+            'add alt="" to <img> elements missing the required attribute',
+            'add alt="" to <img> elements missing the required attribute. '
+            "Renders identically, but it adds markup the author never wrote, and "
+            'an empty alt asserts "decorative" to a screen reader where a '
+            "missing alt did not; hence opt-in.",
+        ),
+        (
+            "reserialize",
+            "rebuild still-malformed documents via html5lib",
+            "rebuild content documents that are still malformed by re-parsing "
+            "them with html5lib and re-emitting XHTML, closing unclosed non-void "
+            "elements the regex transforms cannot. Runs only on documents that "
+            "are not already well-formed, so good files are untouched.",
+        ),
+        (
+            "strip_bad_attrs",
+            "drop invalid attributes (digit-led names, unbound prefixes)",
+            "drop attributes that make the XML unparseable: a name starting "
+            'with a digit (a mangled 31="") or a namespaced name whose prefix '
+            "is not declared anywhere in the document (Office VML v:shapes). "
+            "Surgical and a no-op on well-formed files.",
+        ),
+        (
+            "escape_unknown_entities",
+            "&foo; -> &amp;foo; for names outside the HTML5 table",
+            "escape entity names outside the HTML5 table, which renders exactly "
+            "as browsers already render an unknown entity. Documents whose "
+            "DOCTYPE carries an internal subset (which can declare custom "
+            "entities) are skipped wholesale.",
+        ),
+    ],
+    "structural repairs: markup and nesting": [
+        (
+            "fix_empty_body",
+            "append &nbsp; to a strictly empty <body></body>",
+            "append &nbsp; inside a strictly empty <body></body> (the 'body "
+            "incomplete' error). Adds visible content the author never wrote; "
+            "hence opt-in.",
+        ),
+        (
+            "fix_missing_title",
+            "inject <title>Unknown</title> when the head has none",
+            "inject a <title>Unknown</title> fallback when the head has no "
+            "usable title: an empty <title/> is filled in, an absent tag is "
+            "added to the head.",
+        ),
+        (
+            "fix_id_colons",
+            'id="X:Y" colons and matching #X:Y fragments become underscores',
+            'translate illegal colons in id="X:Y" and their matching internal '
+            "#X:Y fragment references to underscores, so a ToC never dangles "
+            "against the ids it references (the NCX's content src fragments "
+            "follow the rename). Only the bare id attribute is in scope; the "
+            "fragment of an external URL names a position in that other "
+            "document and survives verbatim.",
+        ),
+        (
+            "unwrap_block_in_inline",
+            "unwrap a <span> illegally wrapping a block element",
+            "unwrap a <span> that illegally wraps a block element "
+            "(<div>/<p>/<blockquote>), keeping the block element and its text.",
+        ),
+        (
+            "strip_invalid_value",
+            "strip misplaced value= attributes from non-form elements",
+            'strip misplaced value="..." attributes from elements like <div>, '
+            "<span>, <p> where they are schema violations.",
+        ),
+        (
+            "unwrap_illegal_tags",
+            "delete illegal tags (<st>, <w>...) keeping text; styled names safe",
+            "delete illegal/deprecated tags (<st>, <sentence>, <o>, <w>, "
+            "<pagebreak>) while keeping their inner text. Any of those names a "
+            "stylesheet styles as an element selector (class/id selectors do "
+            "not count) is protected book-wide, so styled formatting is never "
+            "destroyed.",
+        ),
+        (
+            "strip_epub3_attrs",
+            "scrub EPUB3-only attributes an EPUB2 package rejects (fixed set)",
+            "scrub the EPUB3-only attributes epubcheck rejects on an EPUB2 "
+            "package: page-progression-direction, epub:type, aria-label (a "
+            "fixed, documented set; rendering is unchanged). Gated on the "
+            "package version: inert on EPUB 3 books.",
+        ),
+        (
+            "downgrade_epub3_tags",
+            "figure/section to div, figcaption to p; semantic name kept as class",
+            "downgrade EPUB3/HTML5 semantic elements to EPUB2 equivalents "
+            "(figure/section to div, figcaption to p), keeping existing classes "
+            "and appending the semantic name as the styling hook. Names a "
+            "stylesheet styles as an element selector are protected book-wide. "
+            "Gated on the package version: inert on EPUB 3 books.",
+        ),
+        (
+            "fix_misnested_inline",
+            "rewrite the drop-cap mis-nest <i><b>X</i></b> to <i><b>X</b></i>",
+            "rewrite the Mobipocket drop-cap mis-nest <i><b>X</i></b> to "
+            "<i><b>X</b></i> (em/strong variants, either tag order): the unique "
+            "well-formed form of the same two spans. A punctuation run caught "
+            "between the reversed closers (<i><b>xile</i>,</b>) survives "
+            "outside both spans; a letter run there is refused (which span "
+            "keeps the letters has no deterministic answer).",
+        ),
+        (
+            "fix_stray_close",
+            "remove end tags whose element has no open start (stray </div>)",
+            "remove an end tag whose element has no open start tag anywhere "
+            "above it (the stray extra </div> on a shell page, which cascades "
+            "into 'body must be terminated by the matching end-tag'). A merely "
+            "mis-nested pair (<div><span></div></span>) is never touched: a "
+            "close is removed only when nothing by that name is open.",
+        ),
+        (
+            "fix_unterminated_attr",
+            "close attribute values open to the tag's own '>' (RSC-016)",
+            "close an attribute value left open to the tag's own '>' "
+            '(<p class="footnote> -> <p class="footnote">): the parser '
+            "swallows prose into the value until the next quote and dies on the "
+            "first '<' it meets. Guards keep it off legal >-bearing values: "
+            "bare-word values only, and no quote may close before the next '<'.",
+        ),
+        (
+            "fix_cdata_terminator",
+            "complete truncated /*]]> closers in inline <style> blocks (CSS-008)",
+            "complete a truncated CDATA-terminator comment in an inline <style> "
+            "block: /*]]> becomes /*]]>*/. A comment-wrapped CDATA block whose "
+            "closing */ the converter dropped leaves the CSS parser inside an "
+            "unterminated comment: one CSS-008 'Premature end of file' per "
+            "affected document. Only the malformed-terminator token class; "
+            "invalid CSS stays unfixed, and stylesheet files are not touched.",
+        ),
+    ],
+    "structural repairs: references and resources": [
+        (
+            "fix_page_map",
+            'drop the OPF page-map attribute; class="pages" on NCX pageLists',
+            "normalize legacy page-map markup: drop the non-standard page-map "
+            'attribute from the OPF <spine> and add class="pages" to classless '
+            "NCX <pageList> elements (epubcheck rejects both on older "
+            "HarperCollins / Anna's Archive conversions).",
+        ),
+        (
+            "prune_missing_resources",
+            "remove references to files the archive does not contain (RSC-007)",
+            "remove references to files the archive does not contain "
+            "(RSC-007/PKG-010): dead <link> elements, anchors' href to absent "
+            "files (anchor text preserved), absent <img> sources (replaced by "
+            "their alt text when they carry one), and orphaned non-spine OPF "
+            "manifest items, with every package edge that pointed at them "
+            "rewritten. Spine documents are never pruned: a missing spine "
+            "document is reported as a damaged fragment, not silently dropped.",
+        ),
+        (
+            "strip_broken_anchors",
+            "strip hrefs that cannot resolve; anchor text always preserved",
+            "strip href attributes that cannot resolve, keeping the anchor text "
+            "byte-for-byte: a #fragment the target document does not define "
+            "(RSC-020/RSC-012; NCX navTargets keep the document target, so "
+            "chapter navigation survives) and unresolvable URI schemes "
+            "(kindle:, file:).",
+        ),
+        (
+            "encode_url_spaces",
+            "encode raw spaces in URLs; rename space-bearing entries (PKG-010)",
+            "repair raw-space URLs two ways: percent-encode raw spaces in "
+            "src/href attribute values across the package (a literal space is "
+            "not a valid URL, RSC-020), and rename the archive entries whose "
+            "names carry raw spaces to their underscore spellings, rewriting "
+            "every reference to them (underscore, never percent-encoding: "
+            "epubcheck decodes references before entry lookup). Accepted under "
+            "the no-worse bar: the rename half's gain sits on the warning axis.",
+        ),
+        (
+            "fix_svg_dup_ids",
+            "rename duplicate glyph ids in .svg entries (first keeps its name)",
+            "rename duplicate id values inside standalone .svg entries (old "
+            "calibre SVG page renders repeat glyph ids within one document; the "
+            "intake wave that found this carried 445 to 1,339 'Duplicate "
+            '"glNNNN"\' errors per book). The first occurrence keeps its name, '
+            "later ones gain _2/_3, and internal references are deliberately "
+            "untouched: they already resolve to the first definition under "
+            "every reader's first-match lookup. Content-document ids are styled "
+            "by CSS selectors and targeted by anchors; they stay out of scope.",
+        ),
+    ],
+    "structural repairs: package wiring": [
+        (
+            "fix_container",
+            "generate container.xml when missing or stale (the gateway defect)",
+            "generate META-INF/container.xml at the located OPF when the "
+            "container is missing or names a file the archive does not contain. "
+            "This is the gateway defect: epubcheck stays fatal while the OPF is "
+            "unfindable, so no repair can be gate-accepted on such a book until "
+            "the container exists.",
+        ),
+        (
+            "fix_media_types",
+            "normalize wrong manifest media-types (magic-byte confirmed)",
+            "normalize wrong manifest media-type declarations (OPF-029, e.g. a "
+            "jpg stamped image/png by an aggregator). Attribute-only and "
+            "quote-preserving; it fires only when the file's magic bytes "
+            "confirm the extension, so a misnamed-but-consistent file is never "
+            "made worse.",
+        ),
+        (
+            "fix_cover",
+            "re-point or remove a dangling EPUB2 cover meta (no-worse bar)",
+            'repair dangling EPUB2 cover wiring: a <meta name="cover"> whose '
+            "content names no manifest item is re-pointed when the OPF guide's "
+            "own cover reference names an existing item, and removed when "
+            'nothing identifies it. EPUB3 properties="cover-image" is '
+            "deliberately audit-only (guessing which image is the cover is not "
+            "deterministic). Cover wiring is invisible to epubcheck, so "
+            "cover-only repairs are accepted under the same no-worse bar the "
+            "lossy strips use.",
+        ),
+        (
+            "fix_comment_double_hyphen",
+            "replace -- inside XML comments with an en-dash (RSC-016)",
+            "replace -- sequences inside XML comments with en-dashes. -- is "
+            "illegal inside an XML comment (epubcheck fatal RSC-016: the book "
+            "opens in lenient readers but never passes epubcheck). The edit "
+            "stays inside the comment bodies: text nodes and CDATA sections are "
+            "never touched, and each comment's terminator is left intact.",
+        ),
+    ],
+    "lossy strips (these delete converter-injected content; accepted on a no-worse bar)": [
+        (
+            "strip_pagination",
+            "LOSSY: page numbers/running heads baked into the body text",
+            "remove print page numbers and running headers that a PDF/OCR "
+            "conversion baked into the body text as literal paragraphs (so they "
+            "reflow into the middle of a sentence). It removes only that "
+            "injected furniture, never the author's prose: where a number split "
+            "a sentence it rejoins the two paragraphs, and it preserves roman "
+            "chapter numbers, page-list nav anchors, and years. Three safety "
+            "nets guard every edit (character conservation, tag balance, and "
+            "the epubcheck no-regression check); any failure leaves the "
+            "document untouched.",
+        ),
+        (
+            "strip_broken_tags",
+            "LOSSY: leaked close tags rendered as text (</p> without <)",
+            "remove leaked HTML closing tags missing their open brackets (e.g. "
+            "</p> rendered as raw text in the reader).",
+        ),
+        (
+            "strip_watermarks",
+            "LOSSY: producer stamps (OceanofPDF ...) and marker files",
+            "remove known producer and distributor watermarks and stray marker "
+            "files. It locates the stamp and deletes the outermost wrapper "
+            "whose entire visible text is the watermark, so prose that merely "
+            "mentions the URL is preserved. An inline stamp link is deleted "
+            "only when it holds nothing but the stamp; a match too large to be "
+            "safe is refused and reported for manual repair rather than "
+            "deleted.",
+        ),
+        (
+            "strip_stub_docs",
+            "LOSSY: repeated placeholder spine docs, full manifest/NCX cascade",
+            "drop spine documents whose entire visible body text is one "
+            "identical short placeholder repeated across the spine: the "
+            "Bookmate-style export whose chapters are all the same 'content "
+            "unavailable' notice. The drop cascades (archive entries, manifest "
+            "items, spine order, NCX navPoints, nav toc entries), so the book "
+            "opens straight into its real chapters. Deliberately conservative "
+            "(the pool is the <body> span, image-carrier divider pages are "
+            "exempt) and a book whose every spine doc is the stub is refused "
+            "outright: that book is empty and needs a re-source, never a "
+            "repair.",
+        ),
+    ],
+}
+
+
+class _HelpRepairsAction(argparse.Action):
+    """The second help level: print the full repair-flag reference and exit.
+
+    Deliberately NOT a store_true action: tests/test_flags_wiring.py counts
+    every store_true dest in _add_repair_flags as a repair selection, and
+    this is a help affordance like -h, not a selection."""
+
+    def __init__(
+        self,
+        option_strings,
+        dest=argparse.SUPPRESS,
+        default=argparse.SUPPRESS,
+        help=None,
+    ):
+        super().__init__(
+            option_strings=option_strings,
+            dest=dest,
+            default=default,
+            nargs=0,
+            help=help,
+        )
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        lines = [
+            "bindery repair-flag reference (shared by `bindery repair` and "
+            "`bindery library`)",
+            "",
+            "The always-on core pass is exactly five well-formedness fixes, the NCX",
+            "pipeline, and the mimetype fix. Everything below is opt-in, and every",
+            "repair is epubcheck-gated: applied only when the measured result improved",
+            "(lossy strips: only when it did not get worse). Library mode is dry-run",
+            "by default; `--all` enables every flag below at once. The README and",
+            "spec.md carry the full rationale for each repair.",
+        ]
+        for title, rows in _REPAIR_FLAG_TABLE.items():
+            lines.append("")
+            lines.append(title)
+            lines.append("")
+            for dest, _short, long_help in rows:
+                option = "--" + dest.replace("_", "-")
+                lines.append(f"  {option}")
+                for para in long_help.split("\n"):
+                    lines.extend(
+                        textwrap.wrap(
+                            para,
+                            width=88,
+                            initial_indent="      ",
+                            subsequent_indent="      ",
+                        )
+                        or ["     "]
+                    )
+        print("\n".join(lines))
+        parser.exit(0)
+
+
 def _add_repair_flags(p: argparse.ArgumentParser) -> None:
-    """The fix-selection and gate flags shared by both subcommands."""
-    p.add_argument(
-        "--fix-ids",
-        action="store_true",
-        help="also rewrite invalid ids in the OPF manifest and the NCX (RSC-005)",
-    )
-    p.add_argument(
-        "--add-img-alt",
-        action="store_true",
-        help='add alt="" to <img> elements missing the required attribute '
-        "(renders identically; asserts 'decorative' to screen readers)",
-    )
-    p.add_argument(
-        "--reserialize",
-        action="store_true",
-        help="rebuild still-malformed documents via html5lib (closes unclosed elements)",
-    )
-    p.add_argument(
-        "--strip-bad-attrs",
-        action="store_true",
-        help="drop invalid attributes (digit-led names, unbound namespace prefixes)",
-    )
-    p.add_argument(
-        "--escape-unknown-entities",
-        action="store_true",
-        help="escape entity names outside the HTML5 table (&foo; -> &amp;foo;), "
-        "rendering as browsers already render them; documents with a DOCTYPE "
-        "internal subset (which can declare custom entities) are skipped",
-    )
-    p.add_argument(
-        "--fix-empty-body",
-        action="store_true",
-        help="append &nbsp; to a strictly empty <body></body> (adds visible "
-        "content; hence opt-in)",
-    )
-    p.add_argument(
-        "--fix-missing-title",
-        action="store_true",
-        help="inject a <title>Unknown</title> fallback when the head has none",
-    )
-    p.add_argument(
-        "--fix-id-colons",
-        action="store_true",
-        help='translate illegal colons in id="X:Y" and their matching #X:Y '
-        "fragment references to underscores",
-    )
-    p.add_argument(
-        "--unwrap-block-in-inline",
-        action="store_true",
-        help="unwrap a <span> that illegally wraps a block element (<div>/<p>/"
-        "<blockquote>), keeping the block and its text",
-    )
-    p.add_argument(
-        "--strip-invalid-value",
-        action="store_true",
-        help='strip misplaced value="..." attributes from non-form elements',
-    )
-    p.add_argument(
-        "--unwrap-illegal-tags",
-        action="store_true",
-        help="delete illegal/deprecated tags (<st>, <sentence>, <o>, <w>, "
-        "<pagebreak>) keeping inner text; any tag a stylesheet styles as an "
-        "element selector is protected book-wide",
-    )
-    p.add_argument(
-        "--fix-page-map",
-        dest="fix_page_map",
-        action="store_true",
-        help="normalize legacy page-map markup: drop the non-standard page-map "
-        'attribute from the OPF spine and add class="pages" to classless NCX '
-        "<pageList> elements (epubcheck rejects both)",
-    )
-    p.add_argument(
-        "--strip-epub3-attrs",
-        dest="strip_epub3_attrs",
-        action="store_true",
-        help="scrub the EPUB3-only attributes epubcheck rejects on an EPUB2 "
-        "package (page-progression-direction, epub:type, aria-label; fixed set)",
-    )
-    p.add_argument(
-        "--downgrade-epub3-tags",
-        dest="downgrade_epub3_tags",
-        action="store_true",
-        help="downgrade EPUB3/HTML5 semantic elements to EPUB2 equivalents "
-        "(figure/section to div, figcaption to p; semantic name kept as a "
-        "class; names a stylesheet styles as an element selector are "
-        "protected book-wide)",
-    )
-    p.add_argument(
-        "--prune-missing-resources",
-        dest="prune_missing_resources",
-        action="store_true",
-        help="remove references to files the archive does not contain "
-        "(RSC-007/PKG-010): dead <link> elements, anchors' href to absent "
-        "files, absent <img> sources (replaced by their alt text when they "
-        "carry one), and orphaned non-spine OPF manifest items; spine "
-        "documents are never pruned",
-    )
-    p.add_argument(
-        "--strip-broken-anchors",
-        dest="strip_broken_anchors",
-        action="store_true",
-        help="strip href attributes that cannot resolve: a #fragment the "
-        "target document does not define (RSC-020/RSC-012; NCX navTargets "
-        "keep the document target) and non-resolvable URI schemes (kindle:, "
-        "file:); anchor text is always preserved",
-    )
-    p.add_argument(
-        "--encode-url-spaces",
-        dest="encode_url_spaces",
-        action="store_true",
-        help="percent-encode raw spaces in src/href attribute values across "
-        "the package (OPF href, NCX src, content docs): a literal space is "
-        "not a valid URL (RSC-020)",
-    )
-    p.add_argument(
-        "--fix-container",
-        dest="fix_container",
-        action="store_true",
-        help="generate META-INF/container.xml at the located OPF when the "
-        "container is missing or names a file the archive does not contain "
-        "(the gateway defect: epubcheck stays fatal while the OPF is "
-        "unfindable)",
-    )
-    p.add_argument(
-        "--fix-media-types",
-        dest="fix_media_types",
-        action="store_true",
-        help="normalize wrong manifest media-type declarations (OPF-029): "
-        "attribute-only, fired only when the file's magic bytes confirm the "
-        "extension (jpg/png/gif)",
-    )
-    p.add_argument(
-        "--fix-cover",
-        dest="fix_cover",
-        action="store_true",
-        help='repair dangling EPUB2 cover wiring: re-point <meta name="cover"> '
-        "from the guide's cover reference when that names an existing manifest "
-        "item, remove the dead meta when nothing does; EPUB3 "
-        'properties="cover-image" is audit-only by ruling',
-    )
-    p.add_argument(
-        "--fix-comment-double-hyphen",
-        dest="fix_comment_double_hyphen",
-        action="store_true",
-        help="replace `--` inside XML comments with an en-dash (RSC-016: "
-        "`--` is not permitted within comments); comment bodies only, "
-        "CDATA never touched",
-    )
-    p.add_argument(
-        "--fix-svg-dup-ids",
-        dest="fix_svg_dup_ids",
-        action="store_true",
-        help="rename duplicate id values inside standalone .svg entries "
-        "(old calibre SVG page renders, RSC-005 'Duplicate \"glNNNN\"'): "
-        "first occurrence keeps its name, later ones gain _2/_3; "
-        "references need no rewrite (they resolve to the first definition)",
-    )
-    p.add_argument(
-        "--fix-cdata-terminator",
-        dest="fix_cdata_terminator",
-        action="store_true",
-        help="complete a truncated CDATA-terminator comment in an inline "
-        "<style> block (/*]]> -> /*]]>*/; the CSS-008 'Premature end of "
-        "file' class, one error per affected document)",
-    )
-    p.add_argument(
-        "--fix-misnested-inline",
-        dest="fix_misnested_inline",
-        action="store_true",
-        help="rewrite the drop-cap mis-nest <i><b>X</i></b> to "
-        "<i><b>X</b></i> (em/strong variants, either tag order): the "
-        "unique well-formed form of the same two spans",
-    )
-    p.add_argument(
-        "--fix-stray-close",
-        dest="fix_stray_close",
-        action="store_true",
-        help="remove an end tag whose element has no open start tag (the "
-        "stray extra </div> that cascades into 'body must be terminated "
-        "by the matching end-tag'); mis-nested-but-open pairs never touched",
-    )
-    p.add_argument(
-        "--fix-unterminated-attr",
-        dest="fix_unterminated_attr",
-        action="store_true",
-        help="close an attribute value left open to the tag's own '>' "
-        '(<p class="footnote> -> <p class="footnote">; the RSC-016 '
-        "'must not contain the < character' fatal)",
-    )
-    p.add_argument(
-        "--strip-pagination",
-        action="store_true",
-        help="LOSSY: remove print page numbers/running headers baked into the body "
-        "text by a bad conversion, rejoining sentences they split (epubcheck-gated, "
-        "accepted when no worse)",
-    )
-    p.add_argument(
-        "--strip-broken-tags",
-        action="store_true",
-        help="LOSSY: remove leaked HTML closing tags missing their open bracket (e.g. </p> rendered as text) (epubcheck-gated)",
-    )
-    p.add_argument(
-        "--strip-watermarks",
-        action="store_true",
-        help="remove known producer/distributor watermarks and stray marker files",
-    )
-    p.add_argument(
-        "--strip-stub-docs",
-        action="store_true",
-        help="drop spine docs whose entire text is one identical short "
-        "placeholder repeated across the spine (Bookmate/DRM-sample exports); "
-        "manifest/NCX/nav cascade; refuses a book whose whole spine is stubs",
-    )
-    p.add_argument(
+    """The fix-selection and gate flags shared by both subcommands,
+    registered from _REPAIR_FLAG_TABLE into titled groups (the compact
+    --help); --help-repairs prints the same inventory with the long
+    descriptions."""
+    for title, rows in _REPAIR_FLAG_TABLE.items():
+        g = p.add_argument_group(title)
+        for dest, short, _long in rows:
+            g.add_argument(
+                "--" + dest.replace("_", "-"),
+                dest=dest,
+                action="store_true",
+                help=short,
+            )
+    g = p.add_argument_group("gate and selection")
+    g.add_argument(
         "--all",
         action="store_true",
-        help="enable every opt-in fix flag (the safe structural repairs above "
-        "and all lossy strips)",
+        help="enable every opt-in fix flag (safe, structural, and lossy)",
     )
-    p.add_argument("--no-validate", action="store_true", help="skip the epubcheck gate")
+    g.add_argument(
+        "--no-validate",
+        action="store_true",
+        help="skip the epubcheck gate",
+    )
+    p.add_argument(
+        "--help-repairs",
+        action=_HelpRepairsAction,
+        help="print the full repair-flag reference (every flag's long "
+        "description, grouped) and exit",
+    )
 
 
 def run_audit_cmd(args: argparse.Namespace) -> int:
@@ -1632,38 +1793,42 @@ def run_audit_cmd(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    # Generate an attractive, perfectly aligned help block for the shared flags
-    dummy = argparse.ArgumentParser(add_help=False, usage=argparse.SUPPRESS)
-    group = dummy.add_argument_group(
-        "shared fix flags (can be passed to either repair or library)"
-    )
-    _add_repair_flags(group)
-    lib_group = dummy.add_argument_group("library-specific integration")
-    lib_group.add_argument(
-        "--install-to-calibre",
-        action="store_true",
-        help="with --apply, re-register the format natively in metadata.db through cquarry's write module (remove + add in one transaction) instead of a bare filesystem replace",
-    )
-    shared_help = dummy.format_help().strip()
-
     ap = argparse.ArgumentParser(
         prog="bindery",
         description="Repair EPUBs, epubcheck-gated.",
-        epilog=shared_help,
+        epilog="both `repair` and `library` accept the same opt-in repair-flag\n"
+        "set (--all enables every one): `bindery repair --help` lists them\n"
+        "grouped, and `bindery repair --help-repairs` prints the full\n"
+        "reference.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--version", action="version", version=f"bindery {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("repair", help="repair a single EPUB to a new file")
+    r = sub.add_parser(
+        "repair",
+        help="repair a single EPUB to a new file",
+        usage="bindery repair [options] path [output]",
+        description="Repair one EPUB into a new file with the epubcheck-gated "
+        "core pass: the five well-formedness fixes, the NCX pipeline, and the "
+        "mimetype fix run always; every other repair is opt-in (grouped "
+        "below) and applied only when epubcheck confirms the result improved.",
+        epilog="examples:\n"
+        "  bindery repair book.epub out.epub\n"
+        "  bindery repair book.epub out.epub --all\n"
+        "  bindery repair book.epub out.epub --fix-svg-dup-ids "
+        "--fix-cdata-terminator\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     r.add_argument("path")
     r.add_argument("output", nargs="?")
-    r.add_argument(
+    rc = r.add_argument_group("run control")
+    rc.add_argument(
         "--force",
         action="store_true",
         help="overwrite the output file if it already exists",
     )
-    r.add_argument(
+    rc.add_argument(
         "--json",
         dest="json_path",
         metavar="FILE",
@@ -1748,69 +1913,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     audit.set_defaults(func=run_audit_cmd)
 
-    lib = sub.add_parser("library", help="scan/repair a Calibre library tree")
+    lib = sub.add_parser(
+        "library",
+        help="scan/repair a Calibre library tree",
+        usage="bindery library [options] path",
+        description="Scan a Calibre library tree for repair candidates and "
+        "repair them in place. Dry run by default; --apply atomically "
+        "replaces accepted books. Shares the repair-flag set with `bindery "
+        "repair` (--all enables every opt-in).",
+        epilog="examples:\n"
+        "  bindery library ~/docs/Calibre\\ Library --sweep\n"
+        "  bindery library ~/docs/Calibre\\ Library --id 1234 --apply "
+        "--backup /tmp/bindery-backups --install-to-calibre\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     lib.add_argument("path")
-    lib.add_argument(
+    rc = lib.add_argument_group("run control")
+    rc.add_argument(
         "--apply",
         action="store_true",
         help="atomically replace accepted books in place (default: dry run)",
     )
-    lib.add_argument(
+    rc.add_argument(
         "--only",
         choices=("fatals", "ncx", "all"),
         default="all",
         help="restrict to books with fatals, NCX-001 mismatch, or all (default)",
     )
-    lib.add_argument(
-        "--audit", help="audit CSV (fatals,errors,warnings,path) to filter candidates"
-    )
-    lib.add_argument(
-        "--sweep",
-        action="store_true",
-        help="select candidates via a live epubcheck sweep instead of an --audit CSV "
-        "(each sweep result doubles as that book's 'before' measurement)",
-    )
-    lib.add_argument(
-        "--json",
-        metavar="FILE",
-        help="write a machine-readable JSON report of the run to FILE",
-    )
-    lib.add_argument(
-        "--manual-list",
-        metavar="FILE",
-        help="write the paths of books that were not auto-repaired "
-        "(nochange/equal/partial/reject/error/unreadable), one per line",
-    )
-    lib.add_argument(
-        "--install-to-calibre",
-        action="store_true",
-        help="with --apply, re-register the format natively in metadata.db through cquarry's write module (remove + add in one transaction) instead of a bare filesystem replace",
-    )
-    lib.add_argument(
-        "--id",
-        default="",
-        metavar="IDS",
-        help="comma-separated Calibre book ids to scope the sweep to "
-        "(resolved via cquarry's get_format_path; mutually exclusive with --audit)",
-    )
-    lib.add_argument("--backup", help="directory to mirror backups into before --apply")
-    lib.add_argument(
-        "--backup-inplace",
-        action="store_true",
-        help="with --apply, write a .epub.bak beside each replaced file",
-    )
-    lib.add_argument(
-        "--backup-keep",
-        type=int,
-        metavar="N",
-        help="with backups, rotate: at most N backup files per book "
-        "(minimum 2; the author original .bak is never deleted). Opt-in: "
-        "without it the rotation grows unbounded",
-    )
-    lib.add_argument(
+    rc.add_argument(
         "--limit", type=int, help="process at most N candidates (for sampling)"
     )
-    lib.add_argument(
+    rc.add_argument(
         "--workers",
         type=int,
         default=1,
@@ -1818,10 +1951,63 @@ def build_parser() -> argparse.ArgumentParser:
         help="concurrent epubcheck workers for the --sweep candidate pass "
         "(default 1: serial, unchanged). The repair phase stays serial",
     )
-    lib.add_argument(
+    rc.add_argument(
         "--quiet",
         action="store_true",
         help="suppress the per-book progress line on stderr",
+    )
+    cs = lib.add_argument_group("candidate selection")
+    cs.add_argument(
+        "--sweep",
+        action="store_true",
+        help="select candidates via a live epubcheck sweep instead of an "
+        "--audit CSV (each sweep result doubles as that book's 'before' "
+        "measurement)",
+    )
+    cs.add_argument(
+        "--audit", help="audit CSV (fatals,errors,warnings,path) to filter candidates"
+    )
+    cs.add_argument(
+        "--id",
+        default="",
+        metavar="IDS",
+        help="comma-separated Calibre book ids to scope the sweep to "
+        "(resolved via cquarry's get_format_path; mutually exclusive with "
+        "--audit)",
+    )
+    bk = lib.add_argument_group("backups")
+    bk.add_argument("--backup", help="directory to mirror backups into before --apply")
+    bk.add_argument(
+        "--backup-inplace",
+        action="store_true",
+        help="with --apply, write a .epub.bak beside each replaced file",
+    )
+    bk.add_argument(
+        "--backup-keep",
+        type=int,
+        metavar="N",
+        help="with backups, rotate: at most N backup files per book "
+        "(minimum 2; the author original .bak is never deleted). Opt-in: "
+        "without it the rotation grows unbounded",
+    )
+    out = lib.add_argument_group("output and library integration")
+    out.add_argument(
+        "--json",
+        metavar="FILE",
+        help="write a machine-readable JSON report of the run to FILE",
+    )
+    out.add_argument(
+        "--manual-list",
+        metavar="FILE",
+        help="write the paths of books that were not auto-repaired "
+        "(nochange/equal/partial/reject/error/unreadable), one per line",
+    )
+    out.add_argument(
+        "--install-to-calibre",
+        action="store_true",
+        help="with --apply, re-register the format natively in metadata.db "
+        "through cquarry's write module (remove + add in one transaction) "
+        "instead of a bare filesystem replace",
     )
     _add_repair_flags(lib)
     lib.set_defaults(func=run_library)

@@ -4,6 +4,7 @@ the single-file repair must write the exact bytes the gate accepted (flags inclu
 and label partial output honestly, and candidate selection must refuse --only fatals
 without an audit."""
 
+import argparse
 import contextlib
 import io
 import json
@@ -1792,3 +1793,84 @@ class TestStripStubDocsGate(unittest.TestCase):
     def test_regression_rejects(self) -> None:
         o = self._strip_verdict(CheckResult(0, 1, 0), CheckResult(0, 2, 0))
         self.assertEqual(o.status, "reject")
+
+
+class TestHelpLayout(unittest.TestCase):
+    """The two-level help contract (the 2026-10-06 restructure): the compact
+    --help is grouped with one-line flags and a short usage line, and
+    --help-repairs prints the full reference carrying every flag's long
+    description. The flag surface itself is pinned by test_flags_wiring; this
+    module pins the presentation."""
+
+    def _subparser(self, name):
+        parser = build_parser()
+        for a in parser._actions:
+            if isinstance(a, argparse._SubParsersAction):
+                return a.choices[name]
+        self.fail("no subparsers on build_parser()")
+
+    def _format(self, name):
+        return self._subparser(name).format_help()
+
+    def test_usage_line_is_short(self):
+        for verb, tail_ in (
+            ("repair", "[options] path [output]"),
+            ("library", "[options] path"),
+        ):
+            usage = self._format(verb).splitlines()[0]
+            self.assertEqual(usage, f"usage: bindery {verb} {tail_}", verb)
+
+    def test_compact_help_groups_every_flag_once(self):
+        from bindery.cli import _REPAIR_FLAG_TABLE
+
+        for verb in ("repair", "library"):
+            text = self._format(verb)
+            self.assertIn(
+                "lossy strips (these delete converter-injected content; "
+                "accepted on a no-worse bar)",
+                text,
+                verb,
+            )
+            for rows in _REPAIR_FLAG_TABLE.values():
+                for dest, _short, _long in rows:
+                    option = "--" + dest.replace("_", "-")
+                    self.assertIn(option, text, f"{verb}: {option}")
+
+    def test_lossy_flags_carry_the_prefix(self):
+        from bindery.cli import _REPAIR_FLAG_TABLE
+
+        text = self._format("repair")
+        for dest, short, _long in _REPAIR_FLAG_TABLE[
+            "lossy strips (these delete converter-injected content; "
+            "accepted on a no-worse bar)"
+        ]:
+            self.assertTrue(short.startswith("LOSSY:"), dest)
+            # the one-liner must survive into the rendered help intact
+            self.assertIn(short.split(":")[0] + ":", text)
+
+    def test_help_repairs_prints_the_full_reference(self):
+        from bindery.cli import _REPAIR_FLAG_TABLE
+
+        for verb in ("repair", "library"):
+            buf = io.StringIO()
+            with self.assertRaises(SystemExit) as cm, contextlib.redirect_stdout(buf):
+                main([verb, "--help-repairs"])
+            self.assertEqual(cm.exception.code, 0, verb)
+            text = buf.getvalue()
+            for rows in _REPAIR_FLAG_TABLE.values():
+                for dest, _short, _long in rows:
+                    self.assertIn(
+                        "--" + dest.replace("_", "-"), text, f"{verb}: {dest}"
+                    )
+            # long-text sentinels from two different groups
+            self.assertIn("XML NameChar set", text, verb)
+            self.assertIn("no-worse", text, verb)
+
+    def test_help_repairs_is_not_a_selection_flag(self):
+        # _HelpRepairsAction is deliberately not a store_true: the wiring
+        # test counts store_true dests as repair selections
+        from argparse import _StoreTrueAction
+
+        p = self._subparser("repair")
+        dests = {a.dest for a in p._actions if isinstance(a, _StoreTrueAction)}
+        self.assertNotIn("help_repairs", dests)
