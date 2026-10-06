@@ -1,5 +1,41 @@
 # bindery-cli Patch Notes
 
+## v0.48.1 (2026-10-06)
+
+### The 12-agent audit: the exit contracts tell the truth
+
+Three waves of four lenses audited this help surface. The flag
+inventory verified perfect (30/30 repair flags, zero misses, zero
+fabrications); the defects were the exit contracts and the safety
+silences:
+
+- **repair --help stated an exit contract the verb has never honored**
+  (trouble returns 1, not 2; a PARTIAL repair writes its output and
+  returns 0). The page and --help-json now tell the code's truth, per
+  verb: repair 0/written + 1, audit's deliberate inverse contract
+  (0 clean; 1 findings; 2 usage/environment; 3 findings plus a failed
+  report write), library and the run slices on the unified 0/2/1.
+  calibre_gates names the third metadata.db door (run phase3, guarded
+  transitively), and the contract admits the missing-stack exit-2 and
+  the exit-3 class.
+- **The library page states the no-backup default**: --apply without
+  --backup/--backup-inplace replaces in place and keeps no copy of the
+  original. --no-validate says the write still happens (status
+  unvalidated). --backup names the outside-the-library refusal.
+  --only fatals names its --audit/--sweep precondition.
+- audit and doctor got real descriptions (the eight analyzers, the CWD
+  library resolution, the one-id --json rule; doctor's always-exit-0
+  contract); the --help-repairs preamble names the five always-on
+  fixes, defines the gate metric, enumerates the status vocabulary,
+  and states the no-worse classes; phase1's exit list gains
+  audit-flagged books; repair's positionals, default output name, and
+  never-modifies-the-input are stated; the --json envelopes name all
+  keys including books; the root help points at doctor/README/spec.
+- One code fix: the no-backup lossy warning now covers
+  --strip-stub-docs (it warned for its three siblings only).
+
+15 pins updated/added (639 total).
+
 ## v0.48.0 (2026-10-06)
 
 ### The closed-Calibre guard, stated contracts, and --help-json
