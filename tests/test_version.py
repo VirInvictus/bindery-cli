@@ -39,6 +39,41 @@ class TestVersionSync(unittest.TestCase):
             f"pyproject.toml ({pyproject_version}) does not match code VERSION ({CODE_VERSION})",
         )
 
+    def test_uv_lock_root_version_matches(self):
+        """Ensure uv.lock's root package entry mirrors the code's VERSION.
+
+        v0.46.1 shipped with the lock still reading 0.46.0: the lock's root
+        version only catches up on the next `uv run`, and no test looked at
+        it (the release auditor found the drift post-hoc, 2026-10-06). The
+        lock is hand-parsed rather than tomllib-parsed for the same reason
+        the pyproject pin is: the shape this guard cares about is one line.
+        """
+        root_dir = Path(__file__).parent.parent
+        lock_path = root_dir / "uv.lock"
+        self.assertTrue(lock_path.exists(), "uv.lock missing")
+
+        lock_version = None
+        in_root_package = False
+        with open(lock_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip() == "[[package]]":
+                    in_root_package = False  # a new package block starts
+                    continue
+                if line.strip() == 'name = "bindery-cli"' and not lock_version:
+                    in_root_package = True
+                    continue
+                if in_root_package and line.startswith('version = "'):
+                    lock_version = line.split("=")[1].strip().strip('"')
+                    break
+
+        self.assertIsNotNone(lock_version, "Could not find bindery-cli in uv.lock")
+        self.assertEqual(
+            lock_version,
+            CODE_VERSION,
+            f"uv.lock ({lock_version}) does not match code VERSION ({CODE_VERSION}); "
+            "run `uv run` so the lock catches up before releasing",
+        )
+
 
 class TestSyntaxFloor(unittest.TestCase):
     """The Python floor is a package contract, enforced by parse, not trust.

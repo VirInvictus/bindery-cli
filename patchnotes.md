@@ -1,4 +1,71 @@
 # bindery-cli Patch Notes
+
+## v0.47.0 (2026-10-06)
+
+### The intake-wave batch: five repair surfaces from five open issues
+
+The 2026-10-05/06 acquisition wave filed five issues against real books; all
+five land here. Two are classifier and validity corrections to existing
+surfaces, three are new opt-in structural repairs, and each was verified
+epubcheck-gated against its own fixture before shipping.
+
+* The stub classifier pools BODY text and exempts image carriers (issue #1).
+  The four Kobo part-divider pages of the Great Change carry only a
+  full-bleed `<img>` each, and their identical head `<title>` welded them,
+  with the title page, into a fake five-doc stub class: emptytext answered
+  PARTIAL and `--strip-stub-docs` offered a strip that deleted real
+  illustrations (the apply-time gate caught the deletion, but the offer was
+  wrong). Both the analyzer and the repair twin now pool the `<body>` span,
+  and a doc with no body text that carries an image is furniture, never a
+  candidate; identical titles alone are never a stub class.
+* `--fix-ids` sees every invalid character, not just colons and digit leads
+  (issue #3). The Lisey's Story OPF carries ids like
+  `Stephen_King_-_Lisey's_story22` (apostrophes copied from filenames),
+  which passed the original empty/colon/leading-char NCName check
+  wholesale, so a full `--all` sweep left the RSC-005 id errors standing
+  (epubcheck's message says "without colons"; the defect was never colons).
+  The check now enforces the XML NameChar set at every position, and the
+  rename sanitizes every invalid character to `_`, references in sync as
+  before. Fixture: 22 ids renamed, the OPF id error class cleared; the
+  errors that remain on that book are unrelated classes (deprecated body
+  attributes, stray GeoXML elements).
+* `--fix-svg-dup-ids` (issue #2): old calibre 0.8.x SVG page renders repeat
+  glyph ids within one document. The first occurrence keeps its name, later
+  ones gain `_2`/`_3`, and references are deliberately untouched: they
+  resolve to the first definition under every reader's first-match lookup,
+  so first-keeps-id preserves exactly what rendered. Standalone `.svg`
+  entries only; content-document ids are styled and anchor-targeted and
+  stay out of scope. Fixture: 346 ids rewritten, 80 aggregated errors to
+  zero.
+* `--fix-cdata-terminator` (issue #4): completes the truncated `/*]]>`
+  CDATA-terminator comment inside inline `<style>` blocks (the 2002-era
+  conversion lineage whose 19 content docs each died with CSS-008
+  "Premature end of file"; the aggregated gate saw one message). Only the
+  malformed-terminator token class: invalid CSS stays unfixed, stylesheet
+  files are not touched, and an intact closer (even space-separated) is
+  left alone.
+* The markup-fatal trio (issue #5): `--fix-misnested-inline` normalizes the
+  Mobipocket drop-cap mis-nest `<i><b>X</i></b>` (em/strong variants and
+  either order; punctuation between the reversed closers survives outside
+  both spans; a letter run is refused as ambiguous),
+  `--fix-stray-close` removes an end tag whose element has no open start
+  frame (a merely mis-nested pair is never touched; script/style text is
+  skipped to its end tag and an unclosed comment stops the walk), and
+  `--fix-unterminated-attr` closes an
+  attribute value open to the tag's own `>` (`<p class="footnote>`;
+  bare-word values only, and only when no quote closes before the next
+  `<`). Life (Keith Richards): 3 fatals to zero, gate-accepted with the
+  unterminated-attr repair running before the tag-shape readers an open
+  value would otherwise lie to.
+
+Tests: 615 (up from 575), including a real-core row per new flag, the
+wiring-table pins for the five new dests, classifier regressions for both
+sides of the stub fix, and a version-sync pin for uv.lock's root entry
+(the pre-release audit found v0.46.1 shipped with the lock one patch
+stale, a class the pyproject pin cannot see). The plugin ships the default pass only; it
+vendors the changed modules byte-identically and CI byte-compiles it under
+3.11 through 3.14.
+
 ## v0.46.1 (2026-10-02)
 
 ### The closing sweep: documentation truth after the 0.46 line
