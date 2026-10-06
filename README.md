@@ -176,6 +176,14 @@ vetting, phase-3 scoped post-import repair) for a calling agent, and `bindery do
 checks the installation (see Install).
 The sections below take each in turn.
 
+Help is two-level: `bindery repair --help` (or `library --help`) lists the
+shared repair flags grouped with one-line descriptions, and
+`bindery repair --help-repairs` prints the full reference carrying every
+flag's long rationale. On a terminal both are ANSI-colored with the same
+theme Python 3.14's argparse uses; piped output stays plain, and `NO_COLOR`,
+`FORCE_COLOR`, and `TERM=dumb` are honored exactly as `python --help` honors
+them.
+
 ## Auditing
 
 bindery-cli's auditing tool inspects EPUB body text for non-schema flaws that epubcheck cannot catch. It extracts and analyzes the visible text to detect content issues, producing console reports that can be used to filter your library or feed into `bindery repair`.

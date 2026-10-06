@@ -1642,6 +1642,84 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
 }
 
 
+# The --help-repairs page is custom-rendered (not argparse output), so it
+# paints itself with the exact CPython 3.14 argparse default theme
+# (ColorfulTheme: bold blue headings, magenta prog, bold cyan long options
+# -- read off real 3.14 output, so the page reads like the argparse-rendered
+# -h beside it). This is the lattice-music lesson (6b88a52 there): a custom
+# help renderer that prints plain silently loses the colorization argparse
+# gives every other surface.
+_THEME = {
+    "heading": "\x1b[1;34m",
+    "prog": "\x1b[35m",
+    "long_option": "\x1b[1;36m",
+    "reset": "\x1b[0m",
+}
+
+
+def _can_color_help() -> bool:
+    """True exactly when argparse itself would colorize -h here: CPython
+    3.14's own detection (_colorize.can_colorize: PYTHON_COLORS, NO_COLOR,
+    FORCE_COLOR, TERM=dumb, isatty), so the two help levels can never
+    disagree about color. Plain False below 3.14, where argparse has no
+    colorization to match."""
+    if sys.version_info < (3, 14):
+        return False
+    from _colorize import can_colorize
+
+    return can_colorize()
+
+
+def _repair_flag_reference(color: bool | None = None) -> str:
+    """The full repair-flag reference: the _REPAIR_FLAG_TABLE rows with
+    their long descriptions. `color=None` decides by the same gate argparse
+    uses; the disabled style emits empty codes, so one layout path serves
+    both faces and the strip invariant (colored, codes stripped == plain)
+    holds by construction."""
+    if color is None:
+        color = _can_color_help()
+    if color:
+        heading, prog, option, reset = (
+            _THEME["heading"],
+            _THEME["prog"],
+            _THEME["long_option"],
+            _THEME["reset"],
+        )
+    else:
+        heading = prog = option = reset = ""
+    lines = [
+        prog
+        + "bindery"
+        + reset
+        + " repair-flag reference (shared by `bindery repair` and "
+        "`bindery library`)",
+        "",
+        "The always-on core pass is exactly five well-formedness fixes, the NCX",
+        "pipeline, and the mimetype fix. Everything below is opt-in, and every",
+        "repair is epubcheck-gated: applied only when the measured result improved",
+        "(lossy strips: only when it did not get worse). Library mode is dry-run",
+        "by default; `--all` enables every flag below at once. The README and",
+        "spec.md carry the full rationale for each repair.",
+    ]
+    for title, rows in _REPAIR_FLAG_TABLE.items():
+        lines.append("")
+        lines.append(heading + title + reset)
+        lines.append("")
+        for dest, _short, long_help in rows:
+            lines.append("  " + option + "--" + dest.replace("_", "-") + reset)
+            for para in long_help.split("\n"):
+                lines.extend(
+                    textwrap.wrap(
+                        para,
+                        width=88,
+                        initial_indent="      ",
+                        subsequent_indent="      ",
+                    )
+                    or ["     "]
+                )
+    return "\n".join(lines)
+
+
 class _HelpRepairsAction(argparse.Action):
     """The second help level: print the full repair-flag reference and exit.
 
@@ -1665,35 +1743,7 @@ class _HelpRepairsAction(argparse.Action):
         )
 
     def __call__(self, parser, namespace, values, option_string=None):
-        lines = [
-            "bindery repair-flag reference (shared by `bindery repair` and "
-            "`bindery library`)",
-            "",
-            "The always-on core pass is exactly five well-formedness fixes, the NCX",
-            "pipeline, and the mimetype fix. Everything below is opt-in, and every",
-            "repair is epubcheck-gated: applied only when the measured result improved",
-            "(lossy strips: only when it did not get worse). Library mode is dry-run",
-            "by default; `--all` enables every flag below at once. The README and",
-            "spec.md carry the full rationale for each repair.",
-        ]
-        for title, rows in _REPAIR_FLAG_TABLE.items():
-            lines.append("")
-            lines.append(title)
-            lines.append("")
-            for dest, _short, long_help in rows:
-                option = "--" + dest.replace("_", "-")
-                lines.append(f"  {option}")
-                for para in long_help.split("\n"):
-                    lines.extend(
-                        textwrap.wrap(
-                            para,
-                            width=88,
-                            initial_indent="      ",
-                            subsequent_indent="      ",
-                        )
-                        or ["     "]
-                    )
-        print("\n".join(lines))
+        print(_repair_flag_reference())
         parser.exit(0)
 
 

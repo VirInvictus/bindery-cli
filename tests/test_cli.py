@@ -1866,6 +1866,54 @@ class TestHelpLayout(unittest.TestCase):
             self.assertIn("XML NameChar set", text, verb)
             self.assertIn("no-worse", text, verb)
 
+    def test_help_repairs_theme_codes_when_colored(self):
+        from bindery import cli
+
+        text = cli._repair_flag_reference(color=True)
+        # the exact CPython 3.14 argparse theme: heading blue, prog magenta,
+        # long-option cyan
+        self.assertIn("\x1b[1;34m", text)
+        self.assertIn("\x1b[35mbindery\x1b[0m", text)
+        self.assertIn("\x1b[1;36m--fix-ids\x1b[0m", text)
+        self.assertIn("\x1b[1;34mlossy strips", text)
+
+    def test_help_repairs_strip_invariant(self):
+        # colored, codes stripped == plain, byte for byte: one layout path
+        # serves both faces (the lattice-music invariant)
+        import re
+
+        from bindery import cli
+
+        colored = cli._repair_flag_reference(color=True)
+        plain = cli._repair_flag_reference(color=False)
+        self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", colored), plain)
+
+    def test_help_repairs_piped_output_is_plain(self):
+        # a pipe (tests, README embedding) never carries codes
+        for verb in ("repair", "library"):
+            buf = io.StringIO()
+            with self.assertRaises(SystemExit), contextlib.redirect_stdout(buf):
+                main([verb, "--help-repairs"])
+            self.assertNotIn("\x1b[", buf.getvalue(), verb)
+
+    def test_help_gate_tracks_argparse(self):
+        # the gate IS argparse's own detection on 3.14+ (so -h and
+        # --help-repairs can never disagree); plain False below, where
+        # argparse has no colorization
+        import os
+
+        from bindery import cli
+
+        if sys.version_info < (3, 14):
+            self.assertFalse(cli._can_color_help())
+            return
+        from _colorize import can_colorize
+
+        self.assertEqual(cli._can_color_help(), can_colorize())
+        # NO_COLOR suppresses on every interpreter
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            self.assertFalse(cli._can_color_help())
+
     def test_help_repairs_is_not_a_selection_flag(self):
         # _HelpRepairsAction is deliberately not a store_true: the wiring
         # test counts store_true dests as repair selections
