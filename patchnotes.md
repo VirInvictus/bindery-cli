@@ -1,5 +1,37 @@
 # bindery-cli Patch Notes
 
+## v0.48.2 (2026-10-06)
+
+### The 12-agent docs audit: README/spec/CLAUDE tell the v0.48 truth
+
+v0.48.0/v0.48.1 truthed the help and `--help-json` but touched only
+cli.py; the four-lens documentation audit converged on that lag. This
+propagates it (docs and two docstrings only, no behavior changes):
+
+- **README's exit-contract bullet taught repair's dead contract**
+  (trouble=2, usage=1) and omitted partial-writes-at-0, audit's exit 3,
+  and the lock-class refusals: it is per-verb now, mirroring
+  `--help-json`'s exit_contract block.
+- **The enforced closed-Calibre gate is stated where trust is earned**:
+  README's tagging section (advice became enforcement) and the
+  install-to-calibre story name the three doors and exit 1; spec's
+  Library replacement, Native installation, and audit sections name
+  their refusals; CLAUDE.md carries the v0.48 pair
+  (`_require_closed_calibre`, `--help-json`) plus the per-verb exit
+  truth.
+- spec's audit exit vocabulary gains the exit-3 class and the repair
+  carve-out is named where the inverse shape is attributed; the
+  partial-repair rule gets repair's writes-the-output exception;
+  spec's plugin config list gains `max_log_mb`.
+- README: Repairing a book / Sweeping a library section headers (the
+  usage docs were buried headerless inside the tagging subsection),
+  cover/tocdrift audit examples, `--help-json` in the help paragraph.
+- Two stale code docstrings the audit flagged: `__init__` (four lossy
+  strips, eight analyzers) and validate.py's `no_worse` (stub strips
+  and the rename half included).
+- One pin added (640 total): the newest patchnotes heading must carry
+VERSION.
+
 ## v0.48.1 (2026-10-06)
 
 ### The 12-agent audit: the exit contracts tell the truth
