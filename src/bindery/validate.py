@@ -2,7 +2,8 @@
 
 epubcheck is the external oracle. The `gate` demands measured improvement
 (fewer fatals, or fewer errors on a clean book) and `no_worse` accepts the
-lossy strips and cover repairs when nothing regressed. There is no degrade
+lossy strips (including stub-document strips), the cover wiring repairs, and
+the space-entry renames when nothing regressed. There is no degrade
 path: if epubcheck is not installed, callers refuse (exit 1, "epubcheck not
 found") unless the user explicitly passes --no-validate, which skips the gate
 and trusts the RepairReport alone.

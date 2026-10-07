@@ -111,3 +111,14 @@ class TestSyntaxFloor(unittest.TestCase):
         # the tree has dozens of modules; a broken path glob must not
         # let the guard pass vacuously
         self.assertGreaterEqual(checked, 20)
+
+    def test_patchnotes_newest_heading_matches(self):
+        # the docs-audit lesson: the release log's newest heading is a
+        # version carrier like any other
+        patchnotes = (
+            Path(__file__).resolve().parent.parent / "patchnotes.md"
+        ).read_text()
+        heading = next(
+            line.strip() for line in patchnotes.splitlines() if line.startswith("## v")
+        )
+        self.assertIn(CODE_VERSION, heading)

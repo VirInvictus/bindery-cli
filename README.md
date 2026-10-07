@@ -179,7 +179,9 @@ The sections below take each in turn.
 Help is two-level: `bindery repair --help` (or `library --help`) lists the
 shared repair flags grouped with one-line descriptions, and
 `bindery repair --help-repairs` prints the full reference carrying every
-flag's long rationale. On a terminal both are ANSI-colored with the same
+flag's long rationale, and `bindery --help-json` dumps the complete
+surface (every subcommand and flag, the repair reference, the per-verb
+exit contract, the Calibre gates) as machine-readable JSON. On a terminal both are ANSI-colored with the same
 theme Python 3.14's argparse uses; piped output stays plain, and `NO_COLOR`,
 `FORCE_COLOR`, and `TERM=dumb` are honored exactly as `python --help` honors
 them.
@@ -209,7 +211,11 @@ bindery audit monolithic ~/docs/Calibre\ Library
 # Spot-check completeness: prose coverage, first/middle/last excerpts, trailing ToC
 bindery audit completeness ~/docs/Calibre\ Library
 
-# Run all audits and generate a comprehensive CSV
+# Cover-art quality and ToC-drift audits (advisory; never move the exit code)
+bindery audit cover ~/docs/Calibre\ Library
+bindery audit tocdrift ~/docs/Calibre\ Library
+
+# Run all audits and report to the console (--json FILE for machine output)
 cd ~/docs/Calibre\ Library && bindery audit all
 ```
 
@@ -238,7 +244,7 @@ With `--id`, `--json` accepts exactly one book id (each single-book run writes t
 
 **Archive integrity:** every audit fully reads each archive entry (CRC + decompression), so a damaged download is reported CORRUPT, with the first broken entry named, instead of being mislabeled EMPTY by `emptytext`. `library --sweep` splits its `unreadable` bucket into `not_a_zip` / `truncated` / `encrypted` / `corrupt_entry`, so the right disease is visible without leaving the sweep.
 
-### Tagging flagged books (opt-in)
+### Tagging flagged books (opt-in; the write is refused while Calibre runs)
 
 By default an audit writes nothing. With `--tag TAG` (library mode only), every book the audit
 flags is tagged in `metadata.db` through cquarry's trigger-safe write module, useful for piping
@@ -249,11 +255,13 @@ cd ~/docs/Calibre\ Library && bindery audit content --tag "Audit Flagged"
 ```
 
 The audit itself stays read-only; only the final tagging pass writes, it skips books that already
-carry the tag, and THIN emptytext advisories are never tagged. Close Calibre first so the write
-does not fight its lock. Tagged books are recorded in Calibre's `metadata_dirtied` queue, so the
+carry the tag, and THIN emptytext advisories are never tagged. The write is REFUSED with exit 1
+while Calibre is running (a fail-closed pgrep guard: close Calibre and re-run). Tagged books are recorded in Calibre's `metadata_dirtied` queue, so the
 desktop app regenerates their sidecar `.opf`s (and re-pushes metadata to wireless readers) on its
 next startup: no manual resync needed.
 
+
+## Repairing a book
 
 Repair one book to a new file (gated; writes only if it is an improvement):
 
@@ -269,6 +277,8 @@ bindery repair broken.epub fixed.epub --json report.json  # machine-readable rec
 vocabulary (`status`, `applied`, `before`/`after` counts, the fix `summary`),
 on every processing outcome including nochange and reject: a calling agent
 gets the same facts the console lines carry.
+
+## Sweeping a library
 
 Scan a Calibre library and see what would be fixed, writing nothing:
 
@@ -301,7 +311,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - `--all` automatically turns on all opt-in non-fatal fixes and lossy strips (pagination, watermarks, bad attributes, unknown entities, image alt tags, etc.) in a single run.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
 - A per-book progress line goes to stderr (stdout stays a clean report); `--quiet` suppresses it. A corrupt or unreadable book is reported and skipped, never aborting the sweep.
-- Exit codes for `repair`, `library`, and `run`: 0 for a clean sweep, 1 for a usage error, 2 when any book was rejected, unreadable, or failed epubcheck (for scripts and cron). Note that argparse-level misuse (an unknown flag or a malformed argument) exits with 2 before any validation runs; the tool's own usage validations exit 1. The `audit` verb runs its own contract, the inverse shape: 0 clean, 1 when any book was flagged (a flag is the audit's trouble), 2 for its own usage errors (a path that is not a directory, a directory with no EPUBs, an unknown book id).
+- Exit codes, per verb (for scripts and cron; `--help-json`'s `exit_contract` carries this machine-side): `repair` exits 0 when clean OR written (a PARTIAL repair writes its best output and exits 0; the `--json` record's status says so) and 1 on trouble (gate-rejected, epubcheck failure, unreadable input) or invocation problems (bad args, an existing output without `--force`) — it never exits 2. `library`, `run phase1`, and `run phase3` use the unified contract: 0 clean, 2 when any book was flagged, rejected, unreadable, errored, or partial, 1 for invocation problems. `audit` runs the inverse contract: 0 clean, 1 when any book was flagged (a flag is the audit's trouble), 2 for its own usage errors, 3 when findings coexist with a failed `--json`/`--tag` write. `audit --tag` and `library --apply --install-to-calibre` are lock-class doors: they are REFUSED with exit 1 while Calibre is running. Argparse-level misuse exits 2 everywhere before any validation runs.
 - A `partial` book (improved but still unable to open) is reported for manual follow-up and fails the run with exit 2, in `library`, `run phase1`, and `run phase3` alike: a book that still needs a human is trouble.
 - `repair` refuses to overwrite an existing output file unless `--force` is given.
 

@@ -433,32 +433,7 @@ book can never be auto-applied through the lossy path.
 
 For a Calibre library (`Author/Title (id)/Title - Author.epub`):
 
-- Work is done on a temporary copy; the original is read-only until the gate accepts.
-- Replacement is **atomic**: the repaired bytes are written to a temp file in the same
-  directory, fsynced, then `os.replace()`d over the original. The filename and path
-  Calibre expects never change; no partial file is ever visible.
-- The original file mode is preserved. Only the `.epub` is touched; `metadata.opf`,
-  `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync.
-- Writing requires `--apply` (default is a dry run). A backup is taken first when
-  `--backup DIR` or `--backup-inplace` is given.
-- A book that cannot be read at all (not a zip, truncated, encrypted entries) is
-  reported and counted as `unreadable`; it never aborts the rest of the sweep.
-- The `library` exit code is 0 for a clean sweep, 1 for a usage error, and 2 when any
-  book was rejected, unreadable, or failed epubcheck, so scripts can detect trouble.
-  Argparse-level misuse (unknown flag, malformed argument) exits 2 before the tool's
-  own validation runs; the tool's own usage validations exit 1. A `partial` book
-  (improved but still fatal) is reported for manual follow-up and counts as trouble:
-  `library`, `run phase1`, and `run phase3` all exit 2 on it (unified 2026-09-10).
-  The `audit` verb is the deliberate exception, its own contract in the inverse
-  shape: 0 clean, 1 when any book was flagged (a flag is the audit's trouble, so it
-  takes the trouble slot), 2 for its own usage errors (a path that is not a
-  directory, a directory with no EPUBs, an unknown book id) and for tagging-setup
-  failure.
-- With `--sweep`, `--workers N` runs the candidate-selection epubcheck pass through N
-  concurrent workers (default 1: serial, unchanged). Books are checked in windows of N
-  consumed in input order, so the candidate set and the before-measurements are identical
-  to the serial sweep; the repair phase is never parallel (the shared workdir and the
-  atomic-replacement contract live there).
+`--apply` is a filesystem write door and the install door is a metadata.db write door: `--apply --install-to-calibre` is REFUSED with exit 1 while Calibre is running (a fail-closed pgrep guard). `--backup-keep N` (minimum 2) caps the ring of same-named per-book backups.
 
 ### Native format installation (`--install-to-calibre`)
 Optionally, bindery-cli installs the repaired EPUB as the book's format through cquarry's write module (`WritableCalibreDB`): the file is placed atomically (an in-place replace over the catalogued file when one exists, same path and `data.name`; a fresh placement under the repaired file's stem otherwise) and the `data` row follows through `set_format` (cquarry 1.17's sanctioned remove+add in one transaction), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. The external `calibredb` CLI is no longer used (the v0.23.1 `--replace` crash class is gone with it). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
@@ -471,6 +446,8 @@ repair is saved in place and the row is left untouched (updating the row from a 
 wrote the stray's size over the catalogued entry, the 2026-09-08 stray-size incident),
 and a stale `(N)` directory whose book no longer exists saves in place instead of
 crashing the sweep.
+
+This door is lock-class: `--install-to-calibre` is REFUSED with exit 1 while Calibre is running (a fail-closed pgrep guard; close Calibre and re-run).
 
 ## Audit subcommand (read-only)
 
@@ -518,7 +495,7 @@ storage-layout logic is not duplicated here. The scan itself still writes nothin
 separate trigger-safe write module (it registers Calibre's `title_sort`/`uuid4` SQL functions,
 bumps `books.last_modified`, and cleans link tables before tag deletion). THIN emptytext
 advisories stay untagged; already-tagged books are skipped; a missing file is a scan error, not a
-silent skip.
+silent skip. The tag write is lock-class: REFUSED with exit 1 while Calibre is running.
 
 `--json FILE` (v0.29.0) writes the same verdicts machine-readably, in the `library --json`
 shape: one record per file with a `status` (`clean`, `problem`, or `error`) and per-analyzer
@@ -630,6 +607,7 @@ Behavior contract:
   the user's epubcheck binary under the `no_worse` bar and refused on a
   regression; an unanswered measurement never refuses. The mode is off by
   default (the latency ruling stands; the default pass is safe ungated).
+- **`max_log_mb`** (default 2): the plugin log's size cap in megabytes, one `.old` generation kept on rotation; `0` disables logging.
 
 ## Out of scope (non-goals)
 
