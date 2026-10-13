@@ -263,11 +263,15 @@ next startup: no manual resync needed.
 
 ## Repairing a book
 
-Repair one book to a new file (gated; writes only if it is an improvement):
+Repair one book to a new file (gated; writes only if it is an improvement). Without an
+output path the verb is a probe: the gate runs and the report says what would change,
+and nothing is written anywhere, so probing a file can never litter the directory
+under vetting:
 
 ```sh
-bindery repair broken.epub                 # -> "broken (repaired).epub"
-bindery repair broken.epub fixed.epub
+bindery repair broken.epub                 # probe: report only, nothing written
+bindery repair broken.epub --all --json report.json   # probe with a machine-readable record
+bindery repair broken.epub fixed.epub      # rescue form: write the repaired file
 bindery repair scanned.epub --strip-pagination   # also remove baked-in page numbers
 bindery repair stubs.epub --strip-stub-docs      # drop repeated placeholder chapters
 bindery repair broken.epub fixed.epub --json report.json  # machine-readable record
@@ -276,7 +280,9 @@ bindery repair broken.epub fixed.epub --json report.json  # machine-readable rec
 `repair --json FILE` writes one record in the `library --json` per-book
 vocabulary (`status`, `applied`, `before`/`after` counts, the fix `summary`),
 on every processing outcome including nochange and reject: a calling agent
-gets the same facts the console lines carry.
+gets the same facts the console lines carry. On a probe the record's
+`output` is null and `applied` stays false; the counts and the fix
+breakdown still describe the gate-accepted projection.
 
 ## Sweeping a library
 
@@ -311,7 +317,7 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - `--all` automatically turns on all opt-in non-fatal fixes and lossy strips (pagination, watermarks, bad attributes, unknown entities, image alt tags, etc.) in a single run.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
 - A per-book progress line goes to stderr (stdout stays a clean report); `--quiet` suppresses it. A corrupt or unreadable book is reported and skipped, never aborting the sweep.
-- Exit codes, per verb (for scripts and cron; `--help-json`'s `exit_contract` carries this machine-side): `repair` exits 0 when clean OR written (a PARTIAL repair writes its best output and exits 0; the `--json` record's status says so) and 1 on trouble (gate-rejected, epubcheck failure, unreadable input) or invocation problems (bad args, an existing output without `--force`) — it never exits 2. `library`, `run phase1`, and `run phase3` use the unified contract: 0 clean, 2 when any book was flagged, rejected, unreadable, errored, or partial, 1 for invocation problems. `audit` runs the inverse contract: 0 clean, 1 when any book was flagged (a flag is the audit's trouble), 2 for its own usage errors, 3 when findings coexist with a failed `--json`/`--tag` write. `audit --tag` and `library --apply --install-to-calibre` are lock-class doors: they are REFUSED with exit 1 while Calibre is running. Argparse-level misuse exits 2 everywhere before any validation runs.
+- Exit codes, per verb (for scripts and cron; `--help-json`'s `exit_contract` carries this machine-side): `repair` exits 0 when clean, probed, OR written (a probe writes nothing and exits 0; a PARTIAL repair writes its best output and exits 0; the `--json` record's status says so) and 1 on trouble (gate-rejected, epubcheck failure, unreadable input) or invocation problems (bad args, an existing output without `--force`); it never exits 2. `library`, `run phase1`, and `run phase3` use the unified contract: 0 clean, 2 when any book was flagged, rejected, unreadable, errored, or partial, 1 for invocation problems. `audit` runs the inverse contract: 0 clean, 1 when any book was flagged (a flag is the audit's trouble), 2 for its own usage errors, 3 when findings coexist with a failed `--json`/`--tag` write. `audit --tag` and `library --apply --install-to-calibre` are lock-class doors: they are REFUSED with exit 1 while Calibre is running. Argparse-level misuse exits 2 everywhere before any validation runs.
 - A `partial` book (improved but still unable to open) is reported for manual follow-up and fails the run with exit 2, in `library`, `run phase1`, and `run phase3` alike: a book that still needs a human is trouble.
 - `repair` refuses to overwrite an existing output file unless `--force` is given.
 

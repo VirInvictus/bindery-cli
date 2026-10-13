@@ -559,6 +559,16 @@ half of the same information: consumers narrow lossy consent by fix class
 as data, never by substring-matching the rendered summary (v0.45.0; the
 phase1 payload inherits them through its per-book repair records).
 
+DST is optional, and the two forms have different write contracts. With a
+DST the verb is the rescue form: the gate-accepted bytes are written there
+(the input is never overwritten; an existing DST needs `--force`). Without
+a DST the verb is a probe: the gate runs and the record carries the
+projection (`output` null, `applied` false), and nothing is written
+anywhere, so probing a file in a vetted tree cannot litter it with a
+`(repaired).epub` sibling (the v0.48.2-and-before default, retired in
+v0.49.0; a probe that would be partial still exits 0 with `status`
+carrying the verdict).
+
 ## The Calibre plugin (Bindery Repair)
 
 Each release vendors the repair core into a Calibre plugin zip,

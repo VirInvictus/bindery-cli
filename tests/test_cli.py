@@ -184,6 +184,79 @@ class TestRepairRefusesOverwrite(unittest.TestCase):
             self.assertNotEqual(dst.read_bytes(), b"precious")
 
 
+class TestRepairProbeForm(unittest.TestCase):
+    """repair without an output path is a probe (issue #7): the gate runs,
+    the record carries the projection, and nothing is written anywhere; the
+    old implicit "(repaired).epub" sibling was import litter in a vetted
+    tree."""
+
+    def test_accept_probe_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            build(src)
+            jout = Path(td) / "probe.json"
+            results = [CheckResult(1, 0, 0), CheckResult(0, 0, 0)]
+            out = io.StringIO()
+            with (
+                mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                redirect_stdout(out),
+            ):
+                rc = main(["repair", str(src), "--json", str(jout)])
+            data = json.loads(jout.read_text())
+            leftovers = sorted(p.name for p in Path(td).iterdir())
+        self.assertEqual(rc, 0)
+        self.assertEqual(leftovers, ["in.epub", "probe.json"])
+        self.assertEqual(data["status"], "accept")
+        self.assertFalse(data["applied"])
+        self.assertIsNone(data["output"])
+        self.assertEqual(data["after"]["fatals"], 0)
+        self.assertIn("accept:", out.getvalue())
+        self.assertIn("probe: nothing written", out.getvalue())
+
+    def test_equal_probe_reports_the_noop_and_writes_nothing(self):
+        # 'equal' is the gate's noop verdict (accepted, no measurable gain);
+        # the probe must carry that status, not dress it up as repairable.
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            build(src)
+            report = RepairReport(fixes={"fix_named_entities": 1})
+            out = io.StringIO()
+            with (
+                mock.patch("bindery.cli.repair_epub", return_value=report),
+                mock.patch(
+                    "bindery.cli.run_epubcheck",
+                    side_effect=[CheckResult(0, 0, 0), CheckResult(0, 0, 0)],
+                ),
+                redirect_stdout(out),
+            ):
+                rc = main(["repair", str(src)])
+            leftovers = sorted(p.name for p in Path(td).iterdir())
+        self.assertEqual(rc, 0)
+        self.assertEqual(leftovers, ["in.epub"])
+        self.assertIn("equal:", out.getvalue())
+        self.assertIn("probe: nothing written", out.getvalue())
+
+    def test_partial_probe_reports_and_writes_nothing(self):
+        # A probe that would be partial is still exit 0 (the verb's own
+        # contract: partial is the record's status, not a failure); the
+        # point here is that the "best output" is NOT written.
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            build(src)
+            results = [CheckResult(3, 0, 0), CheckResult(1, 0, 0)]
+            out = io.StringIO()
+            with (
+                mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                redirect_stdout(out),
+            ):
+                rc = main(["repair", str(src)])
+            leftovers = sorted(p.name for p in Path(td).iterdir())
+        self.assertEqual(rc, 0)
+        self.assertEqual(leftovers, ["in.epub"])
+        self.assertIn("PARTIAL", out.getvalue())
+        self.assertIn("probe: nothing written", out.getvalue())
+
+
 class TestRepairWritesGatedBytes(unittest.TestCase):
     @unittest.skipUnless(HAVE_HTML5LIB, "html5lib not installed")
     def test_opt_in_flags_reach_the_output_file(self):

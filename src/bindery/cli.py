@@ -420,7 +420,7 @@ class _HelpJsonAction(argparse.Action):
             "tool": "bindery",
             "version": __version__,
             "exit_contract": {
-                "0": "clean (repair: also written, including partial)",
+                "0": "clean (repair: also probed or written, including partial)",
                 "1": "library/run slices: trouble found; repair: trouble "
                 "(refused/failed/unreadable) or invocation problem; audit: "
                 "FINDINGS (the inverse contract, per spec.md); "
@@ -432,7 +432,8 @@ class _HelpJsonAction(argparse.Action):
                 "3": "audit: findings PLUS a failed --json/--tag write",
                 "130": "interrupted",
                 "per_verb": {
-                    "repair": "0 clean/written (partial writes, exit 0); "
+                    "repair": "0 clean/probed/written (a probe writes "
+                    "nothing, not even the sibling; partial writes, exit 0); "
                     "1 trouble or invocation problem; never 2",
                     "audit": "0 clean; 1 findings; 2 usage/environment; "
                     "3 findings + failed report write",
@@ -938,20 +939,21 @@ def run_repair(args) -> int:
     if not src.is_file():
         print(f"error: no such file: {src}", file=sys.stderr)
         return 1
-    dst = (
-        Path(args.output).expanduser()
-        if args.output
-        else src.with_name(f"{src.stem} (repaired).epub")
-    )
-    if dst.resolve() == src.resolve():
-        print("error: refusing to overwrite the input in place", file=sys.stderr)
-        return 1
-    if dst.exists() and not args.force:
-        print(
-            f"error: output exists: {dst} (pass --force to overwrite)",
-            file=sys.stderr,
-        )
-        return 1
+    # No output path is the probe form (issue #7): the gate runs and the
+    # report carries the projection, but nothing is written; the old
+    # implicit "(repaired).epub" sibling was import litter in a vetted tree.
+    # Writing needs an explicit destination.
+    dst = Path(args.output).expanduser() if args.output else None
+    if dst is not None:
+        if dst.resolve() == src.resolve():
+            print("error: refusing to overwrite the input in place", file=sys.stderr)
+            return 1
+        if dst.exists() and not args.force:
+            print(
+                f"error: output exists: {dst} (pass --force to overwrite)",
+                file=sys.stderr,
+            )
+            return 1
 
     def emit(record: dict) -> None:
         if getattr(args, "json_path", None):
@@ -974,7 +976,7 @@ def run_repair(args) -> int:
                 {
                     "mode": "repair",
                     "path": str(src),
-                    "output": str(dst),
+                    "output": str(dst) if dst else None,
                     "status": "error",
                     "applied": False,
                     "before": None,
@@ -990,7 +992,7 @@ def run_repair(args) -> int:
         base_record = {
             "mode": "repair",
             "path": str(src),
-            "output": str(dst),
+            "output": str(dst) if dst else None,
             "status": o.status,
             "applied": False,
             "before": _counts_dict(o.before),
@@ -1017,13 +1019,28 @@ def run_repair(args) -> int:
             )
             emit(base_record)
             return 1
+        ba = f"{o.before} -> {o.after}  " if o.before else ""
+        if dst is None:
+            # Probe: the accepted bytes stay in the scratch workdir; the JSON
+            # record and these console lines are the whole deliverable. The
+            # verdict word is the record's own status vocabulary.
+            verdict = (
+                "PARTIAL (still has fatals; needs manual work)"
+                if o.status == "partial"
+                else o.status
+            )
+            print(
+                f"{verdict}: {ba}{o.summary}\n"
+                "probe: nothing written (pass an output path to write the repaired file)"
+            )
+            emit(base_record)
+            return 0
         # Copy the exact bytes the gate accepted. Re-repairing src here would silently
         # drop the opt-in flags (--fix-ids, --reserialize, --strip-bad-attrs) and write
         # a file that differs from the one epubcheck validated.
         shutil.copyfile(work / "repaired.epub", dst)
         base_record["applied"] = True
         emit(base_record)
-        ba = f"{o.before} -> {o.after}  " if o.before else ""
         if o.status == "partial":
             # The file is a real improvement and worth writing, but calling it
             # "repaired" would read as fixed; it still will not open.
@@ -2078,13 +2095,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser(
         "repair",
-        help="repair a single EPUB to a new file",
+        help="repair a single EPUB (a probe when no output path is given)",
         usage="bindery repair [options] path [output]",
-        description="Repair one EPUB into a new file with the epubcheck-gated "
-        "core pass: the five well-formedness fixes, the NCX pipeline, and the "
-        "mimetype fix run always; every other repair is opt-in (grouped "
-        "below) and applied only when epubcheck confirms the result improved. "
-        "Never prompts. Exit codes: 0 clean or written (a PARTIAL repair "
+        description="Repair one EPUB with the epubcheck-gated core pass: the "
+        "five well-formedness fixes, the NCX pipeline, and the mimetype fix "
+        "run always; every other repair is opt-in (grouped below) and "
+        "applied only when epubcheck confirms the result improved. Without "
+        "an output path the verb is a probe: the gate runs and the report "
+        "says what would change, and nothing is written anywhere. Never "
+        "prompts. Exit codes: 0 clean, probed, or written (a PARTIAL repair "
         "writes its best output and exits 0; the --json record's status "
         "says so), 1 trouble (repair refused by the gate, epubcheck "
         "failure, or unreadable input) or invocation problem (bad args, "
@@ -2093,12 +2112,19 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="examples:\n"
         "  bindery repair book.epub out.epub\n"
         "  bindery repair book.epub out.epub --all\n"
+        "  bindery repair book.epub --all --json report.json   "
+        "# probe: report only, nothing written\n"
         "  bindery repair book.epub out.epub --fix-svg-dup-ids "
         "--fix-cdata-terminator\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     r.add_argument("path")
-    r.add_argument("output", nargs="?")
+    r.add_argument(
+        "output",
+        nargs="?",
+        help="destination for the repaired file; omit it to probe "
+        "(report only, nothing written)",
+    )
     rc = r.add_argument_group("run control")
     rc.add_argument(
         "--force",
