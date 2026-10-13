@@ -1,5 +1,42 @@
 # bindery-cli Patch Notes
 
+## v0.49.0 (2026-10-13)
+
+### The single-file repair probe writes nothing (issue #7)
+
+Found live in a phase-1 vetting run: `bindery repair <file> --all --json
+report.json`, the acquisition pipeline's documented single-candidate
+probe, wrote its full repaired output as an 11MB `...(repaired).epub`
+sibling inside the vetted tree, where anything beside the files gets
+inventoried: import litter by the pipeline's own rule, carrying a name
+only the `(repaired)` suffix apart from the original, so a later driver
+pointed at the pre-probe filename list either missed it or
+double-handled it.
+
+- **No output path is now a probe**: the epubcheck gate runs, the
+  console lines and the `--json` record carry the full projection
+  (status, before/after counts, the structured fix breakdown), and
+  nothing is written anywhere; the repaired bytes stay in the scratch
+  workdir and vanish. On a probe the record's `output` is null and
+  `applied` stays false.
+- **Writing needs an explicit destination** (`bindery repair book.epub
+  out.epub`), and that rescue form is byte-for-byte what it was: same
+  gate, same copy-the-accepted-bytes rule, same `--force` and
+  refuse-to-overwrite-the-input guards.
+- The probe's console verdict is the record's own status vocabulary
+  (`accept:`/`equal:`/`unvalidated:`; partial keeps its established
+  PARTIAL phrasing), followed by an explicit "probe: nothing written"
+  line; a probe that would be partial still exits 0 with the record's
+  status carrying the verdict.
+- The repair `--help` text (new probe example, the output positional's
+  no-write meaning) and `--help-json`'s exit contract tell the new
+  truth; README and spec.md document both forms. The exit contract
+  itself is unchanged: 0 clean/probed/written including partial, 1
+  trouble, never 2.
+- Three pins added (643 total): the probe writes nothing on the accept
+  and partial paths, and the `equal` noop verdict is carried honestly
+  rather than dressed up as repairable.
+
 ## v0.48.2 (2026-10-06)
 
 ### The 12-agent docs audit: README/spec/CLAUDE tell the v0.48 truth
