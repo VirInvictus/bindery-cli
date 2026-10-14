@@ -451,8 +451,8 @@ This door is lock-class: `--install-to-calibre` is REFUSED with exit 1 while Cal
 
 ## Audit subcommand (read-only)
 
-`bindery audit {content,pagenumbers,emptytext,ocr,monolithic,completeness,cover,tocdrift,all} [PATH] [--max-doc-chars N]
-[--tag TAG] [--id IDs]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0, `--max-doc-chars N`; `--id` since v0.19.0, comma-lists in v0.23.0; `completeness` since v0.36.0; `cover` and `tocdrift` since v0.44.0) inspects
+`bindery audit {content,pagenumbers,emptytext,ocr,monolithic,completeness,cover,tocdrift,contamination,all} [PATH] [--max-doc-chars N]
+[--tag TAG] [--id IDs]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0, `--max-doc-chars N`; `--id` since v0.19.0, comma-lists in v0.23.0; `completeness` since v0.36.0; `cover` and `tocdrift` since v0.44.0; `contamination` since v0.50.0) inspects
 EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in page-number
 layers (sliding-window density heuristics), empty or thin books, systemic OCR damage, and
 single oversized content documents (one spine doc at or above 300k characters: readers refuse
@@ -476,6 +476,28 @@ an EPUB 3 book may carry (the NCX navMap against the nav document), reporting
 entries each side is missing and labels that disagree; it feeds decisions, never a
 rewrite (ToC synthesis is out of the repair charter permanently). Both never flag a
 book and never move the exit code.
+
+The contamination analyzer (v0.50.0, issue #8) is advisory by the same contract:
+fan-bundle cosmetics are the judge-and-import class, so it never flags a book and
+never moves an exit code. Three sweeps run over the archive's content documents
+(the spine plus the non-spine html the loader retains on `Book.extra_docs`,
+archive order, 64 MiB retention cap): *foreign titles* name a title or series that
+matches none of the package's own metadata (dc:title, creator, publisher, series),
+flagged either by a volume/book marker with named words in front of it or by a
+head `<title>` repeated across the book (a part label whose marker leads, "BOOK
+ONE: ...", never flags; the comparison also runs on the volume-marker-stripped
+form so a book's own running headers stay clean); *ad signatures* (jnovels,
+kokoro connect, zerobooks, a generic light-novel download plug) are searched in
+visible body text, with a signature that matches the book's own metadata
+skipped outright (a legitimate Kokoro Connect volume names its own series on
+every doc); *review paste* (helpful counts, review-helpful prompts,
+"out of 5 stars", verified purchase, with reviewer bylines and star rows as
+corroborating-only weak fingerprints) is scoped to the first five content docs.
+The archive-wide corpus exists because fan-bundle junk is package furniture a
+broken manifest can leave entirely off the spine (Hothouse: 52 of 53 content
+docs in no manifest item, a resolved spine of one). On a shell book (no package
+metadata) the analyzer reports nothing: there is no "own" to judge foreignness
+against.
 
 The completeness analyzer is the phase-1 spot-check and is advisory by contract: it never
 flags a book and never moves the exit code. Per book it reports the spine doc count, the

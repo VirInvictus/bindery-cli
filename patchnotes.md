@@ -1,5 +1,64 @@
 # bindery-cli Patch Notes
 
+## v0.50.0 (2026-10-14)
+
+### The contamination analyzer: fan-bundle cosmetics get reported (issue #8)
+
+Three fixtures from the 2026-10-14 phase-1 wave slipped past the content
+analyzer's ad-notice detection (the importknig class): two Grandmaster of
+Demonic Cultivation volumes packaged by a sloppy fan bundle, carrying
+"Full Metal Panic! Volume 5" in every content document's head `<title>` (the
+bundle template's original book) plus a whole Jnovels/Zerobooks ad page whose
+own head title names a third series; and Hothouse, whose front matter is
+pasted Amazon review text ("3 of 4 people found the following review
+helpful"). All three were approved for import regardless, so the new
+detection is advisory by contract, like completeness/cover/tocdrift: it
+never flags a book and never moves an exit code. The disposition for this
+class is judge-and-import.
+
+- **`bindery audit contamination`** (new analyzer, ninth; rides in `all`)
+  runs three sweeps over the archive's content documents:
+  - *foreign titles*: a title or series named where the book's own identity
+    belongs, judged against the package's own metadata (dc:title, creator,
+    publisher, series). Two triggers, both tuned on the fixtures: a
+    volume/book marker with named words in front of it ("Full Metal Panic!
+    Volume 5"; a part label whose marker leads, "BOOK ONE: THE RING SETS
+    OUT", never flags), or a head `<title>` repeated across the book. The
+    head-`<title>` channel matters because the MDZS stamps are invisible to
+    rendered text; a marker-stripped own-name comparison keeps a book's own
+    running headers clean when the metadata spells the volume differently.
+  - *ad signatures*: jnovels, kokoro connect, zerobooks, and a generic
+    light-novel download plug, in visible body text.
+  - *review paste*: review-site fingerprints (helpful counts, "was this
+    review helpful", "out of 5 stars", verified purchase) in the first five
+    content docs; a strong fingerprint flags a doc alone, weak ones
+    (reviewer bylines, star rows) need corroboration.
+- **The corpus is the archive's content documents, not just the spine.**
+  Hothouse's manifest is broken: 52 of its 53 content docs sit in no
+  manifest item, the spine resolves to one document, and a spine-only sweep
+  would have read the book clean. The loader now retains the archive's
+  non-spine html on `Book.extra_docs` (archive order, 64 MiB retention cap;
+  a pathological archive stops feeding the corpus there and stays the
+  corruption/completeness verdicts' business), and the contamination sweeps
+  run over spine plus extras.
+- **Directory and single-book mode actually run cover and tocdrift now.**
+  `run_directory`/`run_single` dispatched analyzers through an if/elif chain
+  whose terminal `else` ran the ocr analyzer, so since v0.44.0 an
+  `audit all` over a directory (or `audit all --id`) reported ocr verdicts
+  under the cover and tocdrift keys and never analyzed cover wiring or ToC
+  drift. Library mode was unaffected. Both modes now share a dispatch map
+  keyed on the analyzer names (`_dir_dispatch`), a missing key is a loud
+  KeyError instead of a mislabeled verdict, and `tests/test_contamination.py`
+  pins the map's key set to the analyzer list. Advisory analyzers never
+  answer problem, so `audit all` and multi-analyzer runs cannot change their
+  verdicts; the one behavioral corner is a single-key `audit cover DIR` (or
+  `--id`) run, which at HEAD actually executed the ocr analyzer and could
+  exit 1 on an ocr-damaged book under the cover key, and now runs cover
+  wiring and exits on cover's own (always-advisory) verdict.
+- CalibreQuarry-style `--json` consumers see the new analyzer's verdicts as
+  an additive `contamination` key (problem always false); nothing else in
+  the audit record shape moved.
+
 ## v0.49.0 (2026-10-13)
 
 ### The single-file repair probe writes nothing (issue #7)

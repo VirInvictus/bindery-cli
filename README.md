@@ -215,11 +215,16 @@ bindery audit completeness ~/docs/Calibre\ Library
 bindery audit cover ~/docs/Calibre\ Library
 bindery audit tocdrift ~/docs/Calibre\ Library
 
+# Fan-bundle contamination: foreign-title template stamps, ad pages, review paste
+bindery audit contamination ~/docs/Calibre\ Library
+
 # Run all audits and report to the console (--json FILE for machine output)
 cd ~/docs/Calibre\ Library && bindery audit all
 ```
 
 **Completeness spot-check:** the `completeness` audit answers the pre-import question "does this book reach its end?" It reports, per book: the prose-document count against the spine (docs with 400+ visible characters), the opening and closing text of the first/middle/last prose doc, a trailing-ToC classification of the final spine doc (a link-dense chapter list after the real back matter), and the fraction of unreadable docs. A trailing ToC is reported as an advisory, never a failure: the closing excerpt always comes from the real back matter, so a human can confirm the book ends where the author ended it.
+
+**Contamination scan:** the `contamination` audit is advisory too: fan-bundle cosmetics are the judge-and-import class. Three sweeps over the archive's content documents (spine plus the non-spine html a broken manifest can strand): another series' name where the book's own identity belongs, judged against the package's own metadata (the head-`<title>` template stamps a sloppy fan bundle leaves on every doc, a volume marker with named words in front of it, a repeated foreign running header); known fan-bundle ad signatures (jnovels, kokoro connect, zerobooks, light-novel download plugs); and pasted review-site text in the first few content docs (helpful counts, "was this review helpful", "out of 5 stars", verified purchase). Every finding is a report a human judges, never a failure.
 
 Audits can also be run on a directory of loose `.epub` files by passing the path as the second argument:
 ```sh

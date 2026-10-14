@@ -43,6 +43,7 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
 | 0.47 | The intake-wave batch (five open issues): the stub classifier's body-pool + image-carrier exemption, the NCName-complete `--fix-ids`, and `--fix-svg-dup-ids`, `--fix-cdata-terminator`, `--fix-misnested-inline`, `--fix-stray-close`, `--fix-unterminated-attr` | v0.47.0 |
 | 0.48 | The AI-probe batch: the enforced closed-Calibre gate on both metadata.db doors (`audit --tag`, `library --apply --install-to-calibre`), the stated contracts (exit codes, no-prompt, NCX-001, --id scoping, json envelope keys), and `--help-json` | v0.48.0 |
 | 0.49 | The probe form (issue #7): single-file repair without an output path runs the gate and writes nothing; writing needs an explicit DST | v0.49.0 |
+| 0.50 | The contamination analyzer (issue #8): foreign-title template stamps, fan-bundle ad signatures, review-paste front matter; advisory by contract, archive-wide corpus (`Book.extra_docs`, capped), and the `_dir_dispatch` map that fixes the v0.44.0 cover/tocdrift ocr misroute in directory/single mode | v0.50.0 |
 
 ## Open work
 

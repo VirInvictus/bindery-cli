@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 bindery audit: read the actual text of every EPUB and flag content problems that
-metadata and structural validators cannot see. Six analyzers, one tool:
+metadata and structural validators cannot see. Nine analyzers, one tool:
 
   content      non-English bodies (wrong-language editions) and injected
                foreign-language ad-notices (declared lang=eng, body Portuguese
@@ -27,13 +27,23 @@ metadata and structural validators cannot see. Six analyzers, one tool:
                trailing-ToC classification of the final doc, and the fraction
                of unreadable docs (advisory: it reports the shape a human
                judges, it never flags the book)
-  all          run all six in a SINGLE decompression pass per book
+  cover        the package's own cover wiring: EPUB2 meta, EPUB3
+               properties declaration, and whether the named file exists
+               (advisory)
+  tocdrift     the NCX navMap vs EPUB3 nav toc structural diff (advisory)
+  contamination fan-bundle cosmetics: another series' name stamped on the
+               content docs (head <title> template reuse, headings, running
+               text), known ad-page signatures (jnovels, zerobooks), and
+               pasted review-site text in the first few spine docs
+               (advisory: the phase-1 disposition is judge-and-import, it
+               never flags the book)
+  all          run everything in a SINGLE decompression pass per book
 
-The first three analyzers began as standalone scripts (audit_epub_content.py /
+The body-text analyzers began as standalone scripts (audit_epub_content.py /
 audit_epub_pagenumbers.py / audit_epub_emptytext.py), merged here because they
 shared the same spine resolution, library/directory dual-mode, and exit codes,
 differing only in the per-book verdict. `all` opens each EPUB once and feeds
-the decoded spine to all six analyzers (the expensive part is decompression,
+the decoded spine to all nine analyzers (the expensive part is decompression,
 so this is a real win at library scale).
 
 Sister surface, not sibling file: the catalogue audit lives in cquarry (and
@@ -155,6 +165,7 @@ class Book:
         "docs",
         "dup_entries",
         "encrypted",
+        "extra_docs",
         "lang",
         "names",
         "nav",
@@ -187,6 +198,7 @@ class Book:
         opf=None,
         ncx=None,
         nav_html="",
+        extra_docs=None,
     ):
         self.spine = spine  # resolved, in-order, in-archive spine doc paths
         self.nav = nav  # the nav document path, or None
@@ -226,6 +238,11 @@ class Book:
         self.opf = opf
         self.ncx = ncx
         self.nav_html = nav_html
+        # Non-spine content documents (v0.50.0): archive html the spine never
+        # reaches. Fan-bundle junk (ad pages, pasted reviews) is package
+        # furniture, and a broken manifest can leave it all off the spine
+        # (the Hothouse case: 53 content docs, a resolved spine of one).
+        self.extra_docs = extra_docs if extra_docs is not None else {}
         self._visible: list[str] | None = None
 
     def visible_texts(self) -> list[str]:
@@ -246,6 +263,14 @@ class Book:
 # metadata XML parser refuses DOCTYPE/ENTITY declarations, which is
 # defusedxml's entity protection without the dependency.
 _MAX_ENTRY_BYTES = 32 * 1024 * 1024
+
+# Retention cap for non-spine content documents (v0.50.0): the contamination
+# analyzer sweeps the whole archive's html, but a pathological archive stops
+# feeding the corpus here -- the corruption/completeness verdicts own it.
+_MAX_EXTRA_HTML_BYTES = 64 * 1024 * 1024
+
+# Archive suffixes that count as content documents for that corpus.
+CONTENT_EXTS = (".xhtml", ".html", ".htm")
 
 # a stand-in root for a refused metadata parse: iter() over it is empty
 _ET_EMPTY = ET.Element("empty")
@@ -496,6 +521,23 @@ def load_book(path: Path) -> Book:
             blob = raw.get(doc)
             docs[doc] = blob.decode("utf-8", "replace") if blob is not None else ""
 
+        # Non-spine content documents (v0.50.0), in archive order, retention
+        # capped: the contamination analyzer sweeps them (package junk can
+        # sit entirely off the spine), nothing else reads them.
+        extra_docs: dict[str, str] = {}
+        extra_bytes = 0
+        spine_set = set(spine)
+        for name in names:
+            if name in spine_set or not name.lower().endswith(CONTENT_EXTS):
+                continue
+            blob = raw.get(name)
+            if blob is None:
+                continue
+            extra_bytes += len(blob)
+            if extra_bytes > _MAX_EXTRA_HTML_BYTES:
+                break
+            extra_docs[name] = blob.decode("utf-8", "replace")
+
         # Readable obfuscation-declared entries are benign publisher
         # embedding: their own advisory, never the DRM verdict. (Unreadable
         # declared entries land in `encrypted` via _read and are split by
@@ -572,6 +614,7 @@ def load_book(path: Path) -> Book:
         opf=opf,
         ncx=ncx_text,
         nav_html=nav_html or "",
+        extra_docs=extra_docs,
     )
 
 
@@ -2153,6 +2196,362 @@ def scan_ocr(path: Path) -> dict:
 
 
 # ----------------------------------------------------------------------------
+# Analyzer: contamination (fan-bundle ads, foreign-title template reuse,
+# review-paste front matter; advisory, the judge-and-import class)
+# ----------------------------------------------------------------------------
+
+# Tuned on the 2026-10-14 phase-1 wave (issue #8): the Grandmaster of Demonic
+# Cultivation fan bundles stamp another series' name ("Full Metal Panic!
+# Volume 5") into every content doc's head <title> — invisible to the
+# rendered text — and ship a whole Jnovels/Zerobooks ad page whose own head
+# title names a third series ("Kokoro Connect Volume 4"); Hothouse's front
+# matter is pasted Amazon review text ("3 of 4 people found the following
+# review helpful"). All three books were approved for import regardless (the
+# junk is cosmetic inside otherwise sound files), so this analyzer is
+# ADVISORY by contract, like completeness/cover/tocdrift: it never flags a
+# book and never moves an exit code. The disposition for this class is
+# judge-and-import.
+
+CONTAM_TITLE_REPEAT = 3  # identical head titles before template reuse reads
+CONTAM_RUNHEAD_REPEAT = 3  # identical visible short blocks before a foreign
+# running header reads
+CONTAM_TITLE_MAX = 100  # a title-ish block is short
+CONTAM_MARKER_PREFIX = 4  # alpha chars required before a volume marker: the
+# named title in front of it ("Full Metal Panic! Volume 5"), absent from a
+# part label ("BOOK ONE: THE RING SETS OUT") whose marker leads
+CONTAM_REVIEW_DOCS = 5  # review paste hides in the first few spine docs
+
+# Sweep (a): a volume/book marker. The marker alone never flags -- the named
+# words in front of it are what names a foreign title.
+_MARKER_RE = re.compile(
+    r"\b(?:vol(?:ume)?s?|book)s?\.?,?\s*(?:no\.?\s*)?(?:\d+|[ivxlcdm]{1,7})\b",
+    re.IGNORECASE,
+)
+_HEAD_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_HEAD_STRIP_RE = re.compile(r"<head\b.*?</head>", re.IGNORECASE | re.DOTALL)
+_HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+
+# A repeated head title made only of these words is navigation junk, not a
+# foreign title.
+_FURNITURE_WORDS = frozenset(
+    "contents table cover title page copyright toc chapter index glossary "
+    "about navigation colophon dedication part book volume section appendix "
+    "notes footnotes introduction foreword afterword the of and a illustration".split()
+)
+
+# Sweep (b): known fan-bundle site/ad signatures. Extensible: add a name +
+# regex when a new bundle surfaces (the issue's "and kin"). Zerobooks rides
+# along because the observed Jnovels ad page plugs it in the same breath.
+_AD_SIGNATURES: list[tuple[str, re.Pattern[str]]] = [
+    ("jnovels", re.compile(r"\bjnovels\b", re.IGNORECASE)),
+    ("kokoro connect", re.compile(r"\bkokoro\s+connect\b", re.IGNORECASE)),
+    ("zerobooks", re.compile(r"\bzerobooks\b", re.IGNORECASE)),
+    (
+        "light-novel plug",
+        re.compile(
+            r"\bdownload\s+(?:all\s+)?(?:your\s+)?favou?rite\s+"
+            r"(?:light\s+)?novels\b",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+# Sweep (c): review-paste fingerprints, scoped to the first CONTAM_REVIEW_DOCS
+# spine docs. Strong fingerprints flag a doc alone (review-site UI text has no
+# place in a book); weak ones need corroboration -- a second weak pattern in
+# the same doc -- because a lone "Reviewer:" can be legitimate attribution and
+# a critic star row can be a real praise page.
+_REVIEW_STRONG: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "helpful count",
+        re.compile(
+            r"\b\d+\s+of\s+\d+\s+people\s+found\s+"
+            r"(?:this|the following(?:\s+review)?)\s+helpful\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("helpful prompt", re.compile(r"\bwas this review helpful\b", re.IGNORECASE)),
+    ("star rating", re.compile(r"\bout of\s+5\s+stars\b", re.IGNORECASE)),
+    ("verified purchase", re.compile(r"\bverified purchase\b", re.IGNORECASE)),
+]
+_REVIEW_WEAK: list[tuple[str, re.Pattern[str]]] = [
+    ("reviewer byline", re.compile(r"\breviewer\s*:", re.IGNORECASE)),
+    ("reviews header", re.compile(r"\b(?:top\s+|customer\s+)reviews\b", re.IGNORECASE)),
+    ("star row", re.compile(r"[★☆]{3}")),
+]
+
+
+def _norm_key(s: str) -> str:
+    """Normalization for title comparison: casefold, punctuation to spaces."""
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+
+def _own_names(book: Book) -> set[str]:
+    """Normalized title-ish strings that belong to the book itself: titles,
+    creator, publisher, and series metadata. A shell book has none."""
+    if book.opf is None:
+        return set()
+    names: set[str] = set()
+    for el in book.opf.iter():
+        local = el.tag.split("}")[-1]
+        if local in ("title", "creator", "publisher") and el.text:
+            names.add(_norm_key(el.text))
+        elif local == "meta":
+            name = (el.get("name") or "").lower()
+            prop = (el.get("property") or "").lower()
+            if name == "calibre:series" and el.get("content"):
+                names.add(_norm_key(el.get("content")))
+            elif prop == "belongs-to-collection" and el.text:
+                names.add(_norm_key(el.text))
+    return names
+
+
+def _is_foreign(text: str, own: set[str]) -> bool:
+    """Title-looking, short, and matching none of the book's own names
+    (containment either way catches 'Series Name' vs 'Series Name Vol. 2';
+    the volume-marker-stripped form as well, so a running header reading
+    'Series Volume 3' stays the book's own when the metadata spells it
+    'Series 3')."""
+    t = text.strip()
+    if not 3 <= len(t) <= CONTAM_TITLE_MAX:
+        return False
+    norm = _norm_key(t)
+    if not norm:
+        return False
+    stripped = _norm_key(_MARKER_RE.sub(" ", t))
+    for o in own:
+        if len(o) < 4:
+            continue
+        if o in norm or norm in o:
+            return False
+        if stripped and (o in stripped or stripped in o):
+            return False
+    return True
+
+
+def _is_own_phrase(norm: str, own: set[str]) -> bool:
+    """Containment either way against the book's own names, for short
+    phrases (an ad signature that is itself a series title)."""
+    return any(len(o) >= 4 and (o in norm or norm in o) for o in own)
+
+
+def _marked_foreign_title(text: str, own: set[str]) -> bool:
+    """A foreign title carrying its own volume/book marker with named words
+    in front of it: the Full Metal Panic shape. A part label whose marker
+    leads ("BOOK II: THE RING SETS OUT"; the spelled-out "BOOK ONE" never
+    matches the marker grammar at all) has nothing before the marker and
+    never flags."""
+    if not _is_foreign(text, own):
+        return False
+    m = _MARKER_RE.search(text)
+    if m is None:
+        return False
+    return sum(c.isalpha() for c in text[: m.start()]) >= CONTAM_MARKER_PREFIX
+
+
+def _repeated_title_worthy(norm: str) -> bool:
+    """A repeated head title worth judging: some real words in it, not a
+    furniture phrase ('contents' stamped on every shell page)."""
+    words = set(norm.split())
+    if words and words <= _FURNITURE_WORDS:
+        return False
+    return sum(c.isalpha() for c in norm) >= 4
+
+
+def analyze_contamination(book: Book) -> dict:
+    """Fan-bundle contamination over the archive's content documents, three
+    sweeps:
+
+    foreign_titles  another title/series named where the book's own identity
+                    belongs -- head <title> template reuse (the MDZS stamps)
+                    or visible headings / repeated running text
+    ads             known fan-bundle ad signatures in visible body text
+    reviews         review-paste front matter in the first few content docs
+
+    The corpus is the spine PLUS the archive's non-spine html (Book.extra_docs):
+    fan-bundle junk is package furniture, and a broken manifest can leave it
+    all off the spine (Hothouse: 53 content docs, a resolved spine of one).
+    Advisory by contract (issue #8): every verdict answers problem=False.
+    Skipped wholesale on a shell book: with no package metadata there is no
+    'own' to judge foreignness against.
+    """
+    out: dict = {"foreign_titles": [], "ads": [], "reviews": []}
+    if book.opf is None:
+        return out
+    own = _own_names(book)
+    # spine first in reading order, then the archive's extras in namelist
+    # order: the review-paste window ("first few docs") lands on real front
+    # matter for a healthy book and on the archive head for a broken one
+    corpus = list(book.spine) + list(book.extra_docs)
+    src: dict[str, str] = {**book.docs, **book.extra_docs}
+    texts = book.visible_texts() + [
+        _visible_text(book.extra_docs[d]) for d in book.extra_docs
+    ]
+
+    # Sweep (a), head <title>s: the template-reuse stamp sits in every
+    # content doc's head, invisible to the rendered text.
+    head_counts: Counter = Counter()
+    head_first_text: dict[str, str] = {}
+    head_first_doc: dict[str, str] = {}
+    for doc in corpus:
+        m = _HEAD_TITLE_RE.search(src.get(doc, ""))
+        if m is None:
+            continue
+        t = _visible_text(m.group(1))
+        norm = _norm_key(t)
+        if not norm or not 3 <= len(t) <= CONTAM_TITLE_MAX:
+            continue
+        head_counts[norm] += 1
+        head_first_text.setdefault(norm, t)
+        head_first_doc.setdefault(norm, doc)
+
+    foreign: dict[str, dict] = {}
+
+    def _add_foreign(norm: str, text: str, doc: str, count: int) -> None:
+        cur = foreign.get(norm)
+        if cur is None:
+            foreign[norm] = {"title": text.strip(), "count": count, "where": doc}
+        else:
+            cur["count"] += count
+
+    for norm, n in head_counts.items():
+        t0 = head_first_text[norm]
+        marked = _marked_foreign_title(t0, own)
+        repeated = (
+            n >= CONTAM_TITLE_REPEAT
+            and _repeated_title_worthy(norm)
+            and _is_foreign(t0, own)
+        )
+        if marked or repeated:
+            _add_foreign(norm, t0, head_first_doc[norm], n)
+
+    # Sweep (a), visible blocks: headings (a pasted foreign title page) and
+    # repeated short blocks (running text), the same marker rule. The head
+    # region is stripped first: html.parser reads <title> text as data, and
+    # the head-title sweep above already owns that content (feeding the head
+    # here double-counted every template stamp).
+    block_counts: Counter = Counter()
+    block_first_text: dict[str, str] = {}
+    block_first_doc: dict[str, str] = {}
+    for doc in corpus:
+        html_src = _HEAD_STRIP_RE.sub(" ", src.get(doc, ""))
+        parser = _Blocks()
+        try:
+            parser.feed(html_src)
+        except Exception:
+            continue
+        for btag, btext in parser.blocks:
+            if len(btext) > CONTAM_TITLE_MAX:
+                continue
+            if btag in _HEADING_TAGS:
+                if _marked_foreign_title(btext, own):
+                    _add_foreign(_norm_key(btext), btext, doc, 1)
+                continue
+            norm = _norm_key(btext)
+            if not norm:
+                continue
+            block_counts[norm] += 1
+            block_first_text.setdefault(norm, btext)
+            block_first_doc.setdefault(norm, doc)
+    for norm, n in block_counts.items():
+        if n >= CONTAM_RUNHEAD_REPEAT and _marked_foreign_title(
+            block_first_text[norm], own
+        ):
+            _add_foreign(norm, block_first_text[norm], block_first_doc[norm], n)
+
+    out["foreign_titles"] = sorted(foreign.values(), key=lambda f: -f["count"])
+
+    # Sweep (b): one line per signature, first hit as the sample. A
+    # signature that IS one of the book's own names is skipped outright:
+    # "kokoro connect" is a series name, and a legitimate volume of that
+    # series mentions it in body prose on every doc (site-name signatures
+    # like jnovels can never be an own title, so nothing is lost).
+    ad_hits: dict[str, list[tuple[str, re.Match]]] = {}
+    for name, rx in _AD_SIGNATURES:
+        if _is_own_phrase(_norm_key(name), own):
+            continue
+        for doc, text in zip(corpus, texts, strict=True):
+            m = rx.search(text)
+            if m:
+                ad_hits.setdefault(name, []).append((doc, m))
+    for name, hits in sorted(ad_hits.items()):
+        doc0, m0 = hits[0]
+        text0 = next(t for d, t in zip(corpus, texts, strict=True) if d == doc0)
+        out["ads"].append(
+            {
+                "sig": name,
+                "n": len(hits),
+                "where": doc0,
+                "snippet": f"...{text0[max(0, m0.start() - 30) : m0.end() + 50]}...",
+            }
+        )
+
+    # Sweep (c): the first few content docs; a doc flags on one strong
+    # fingerprint or two weak ones.
+    for doc, text in list(zip(corpus, texts, strict=True))[:CONTAM_REVIEW_DOCS]:
+        strong = [(n, m) for n, rx in _REVIEW_STRONG if (m := rx.search(text))]
+        weak = [(n, m) for n, rx in _REVIEW_WEAK if (m := rx.search(text))]
+        if not strong and len(weak) < 2:
+            continue
+        for name, m in (strong + weak)[:3]:
+            out["reviews"].append(
+                {
+                    "sig": name,
+                    "where": doc,
+                    "snippet": f"...{text[max(0, m.start() - 30) : m.end() + 50]}...",
+                }
+            )
+    return out
+
+
+def _contamination_dir(r: dict) -> tuple[bool, str, list[str]]:
+    lines: list[str] = []
+    for f in r["foreign_titles"][:3]:
+        lines.append(
+            f"foreign title in head/heading text ({f['count']} doc(s), "
+            f"e.g. {f['where']}): {f['title']!r}"
+        )
+    if len(r["foreign_titles"]) > 3:
+        lines.append(f"(+{len(r['foreign_titles']) - 3} more foreign titles)")
+    for a in r["ads"][:3]:
+        lines.append(
+            f"fan-bundle ad signature {a['sig']!r} on {a['n']} doc(s) "
+            f"(e.g. {a['where']}): {a['snippet']}"
+        )
+    if len(r["ads"]) > 3:
+        lines.append(f"(+{len(r['ads']) - 3} more ad signatures)")
+    for rv in r["reviews"][:3]:
+        lines.append(
+            f"review-paste fingerprint {rv['sig']!r} on {rv['where']}: {rv['snippet']}"
+        )
+    return (False, "ADVISORY" if lines else "OK", lines)
+
+
+def _contamination_sections(advisory) -> int:
+    """Print the contamination advisories; the analyzer never fails a run."""
+    if advisory:
+        print(
+            f"{YELLOW}{BOLD}FAN-BUNDLE CONTAMINATION ({len(advisory)} to eyeball;"
+            f" reported, not flagged){RESET}"
+        )
+        for book_id, title, tag, r in sorted(advisory):
+            print(f"  {YELLOW}#{book_id}{RESET} [{tag}] {title}")
+            _p, _s, lines = _contamination_dir(r)
+            for ln in lines:
+                print(f"    {ln}")
+        print()
+        print(
+            f"{YELLOW}{BOLD}contamination DONE{RESET}: fan-bundle cosmetics;"
+            f" judge-and-import, never a failure."
+        )
+        return 0
+    print(
+        f"{GREEN}{BOLD}contamination CLEAN{RESET}: no fan-bundle contamination found."
+    )
+    return 0
+
+
+# ----------------------------------------------------------------------------
 # Per-analyzer reporting (library mode)
 # ----------------------------------------------------------------------------
 
@@ -2374,7 +2773,40 @@ ALL: tuple[str, ...] = (
     "completeness",
     "cover",
     "tocdrift",
+    "contamination",
 )
+
+
+def _dir_dispatch(
+    min_chars: int, thin_chars: int, max_doc_chars: int
+) -> dict[str, object]:
+    """The per-key verdict dispatch shared by run_directory and run_single.
+
+    Every ALL key must appear here exactly once. run_directory's old if/elif
+    chain fell through to the ocr analyzer on any key it did not name, which
+    silently reported ocr verdicts under the cover and tocdrift keys in
+    directory/single mode ever since v0.44.0 shipped those analyzers; the
+    map form makes a missed key a KeyError (loud) instead of a mislabeled
+    verdict (silent), and test_contamination pins the key set to ALL.
+    """
+
+    def _empty(b: Book):
+        return _empty_dir(analyze_emptytext(b), min_chars, thin_chars)
+
+    def _mono(b: Book):
+        return _monolithic_dir(analyze_monolithic(b), max_doc_chars)
+
+    return {
+        "content": lambda b: _content_dir(analyze_content(b)),
+        "pagenumbers": lambda b: _pagenum_dir(analyze_pagenumbers(b)),
+        "emptytext": _empty,
+        "ocr": lambda b: _ocr_dir(analyze_ocr(b)),
+        "monolithic": _mono,
+        "completeness": lambda b: _completeness_dir(analyze_completeness(b)),
+        "cover": lambda b: _cover_dir(analyze_cover(b)),
+        "tocdrift": lambda b: _tocdrift_dir(analyze_tocdrift(b)),
+        "contamination": lambda b: _contamination_dir(analyze_contamination(b)),
+    }
 
 
 def _record_verdict(
@@ -2504,6 +2936,7 @@ def run_library(
     completeness_advisory: list[tuple] = []
     cover_advisory: list[tuple] = []
     tocdrift_advisory: list[tuple] = []
+    contamination_advisory: list[tuple] = []
     corrupt_hits: list[tuple] = []
     obfuscated_hits: list[tuple] = []
     spine_hits: list[tuple] = []
@@ -2626,6 +3059,15 @@ def run_library(
                 tocdrift_advisory.append((book_id, title, tag, r))
             _record_verdict(record, "tocdrift", (False, status, lines))
 
+        if "contamination" in selected:
+            r = analyze_contamination(book)
+            _p, status, lines = _contamination_dir(r)
+            if status != "OK":
+                contamination_advisory.append((book_id, title, tag, r))
+            # advisory by contract, like completeness: judge-and-import,
+            # never a failure
+            _record_verdict(record, "contamination", (False, status, lines))
+
     print(f"Scanned {scanned} EPUBs in {library_root}\n")
     rc = 0
     multi = len(selected) > 1
@@ -2648,6 +3090,8 @@ def run_library(
             rc |= _cover_sections(cover_advisory)
         elif key == "tocdrift":
             rc |= _tocdrift_sections(tocdrift_advisory)
+        elif key == "contamination":
+            rc |= _contamination_sections(contamination_advisory)
         else:
             rc |= _ocr_sections(ocr_found)
         if multi:
@@ -2809,6 +3253,7 @@ def run_directory(
 
     print(f"Auditing {len(epubs)} EPUB(s) in {directory}\n")
     multi = len(selected) > 1
+    dispatch = _dir_dispatch(min_chars, thin_chars, max_doc_chars)
     problems = 0
     errors = 0
     json_records: list[dict] = []
@@ -2835,22 +3280,7 @@ def run_directory(
                 continue
             if key in ("emptytext", "completeness") and _archive_owns_body(corrupt_r):
                 continue  # the archive verdict owns this book's body-text story
-            if key == "content":
-                problem, status, lines = _content_dir(analyze_content(book))
-            elif key == "pagenumbers":
-                problem, status, lines = _pagenum_dir(analyze_pagenumbers(book))
-            elif key == "emptytext":
-                problem, status, lines = _empty_dir(
-                    analyze_emptytext(book), min_chars, thin_chars
-                )
-            elif key == "monolithic":
-                problem, status, lines = _monolithic_dir(
-                    analyze_monolithic(book), max_doc_chars
-                )
-            elif key == "completeness":
-                problem, status, lines = _completeness_dir(analyze_completeness(book))
-            else:
-                problem, status, lines = _ocr_dir(analyze_ocr(book))
+            problem, status, lines = dispatch[key](book)
             if problem:
                 book_problems = True
             verdicts.append((key, problem, status, lines))
@@ -2998,6 +3428,7 @@ def run_single(
     print(f"Auditing #{book_id} [{tag_display}] {title}\n  {path}\n")
     problems = 0
     multi = len(selected) > 1
+    dispatch = _dir_dispatch(min_chars, thin_chars, max_doc_chars)
     verdicts = []
     corrupt_r = analyze_corrupt(book)
     for key in ALL:
@@ -3007,22 +3438,7 @@ def run_single(
             # Corruption or DRM owns the body-text story for this book;
             # reporting EMPTY here would be the wrong disease.
             continue
-        if key == "content":
-            problem, status, lines = _content_dir(analyze_content(book))
-        elif key == "pagenumbers":
-            problem, status, lines = _pagenum_dir(analyze_pagenumbers(book))
-        elif key == "emptytext":
-            problem, status, lines = _empty_dir(
-                analyze_emptytext(book), min_chars, thin_chars
-            )
-        elif key == "monolithic":
-            problem, status, lines = _monolithic_dir(
-                analyze_monolithic(book), max_doc_chars
-            )
-        elif key == "completeness":
-            problem, status, lines = _completeness_dir(analyze_completeness(book))
-        else:
-            problem, status, lines = _ocr_dir(analyze_ocr(book))
+        problem, status, lines = dispatch[key](book)
         if problem:
             problems += 1
         verdicts.append((key, problem, status, lines))

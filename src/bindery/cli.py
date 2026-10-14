@@ -2156,10 +2156,11 @@ def build_parser() -> argparse.ArgumentParser:
     audit = sub.add_parser(
         "audit",
         help="audit EPUB body text to detect non-schema content flaws (OCR damage, hardcoded page numbers, empty books, non-English text)",
-        description="Read-only content audit (eight analyzers: monolithic "
-        "scans, completeness, cover wiring, toc drift, and the body-text "
-        "battery over OCR damage, hardcoded page numbers, empty/thin "
-        "books, and non-English text). Library mode resolves the Calibre "
+        description="Read-only content audit (nine analyzers: monolithic "
+        "scans, completeness, cover wiring, toc drift, fan-bundle "
+        "contamination, and the body-text battery over OCR damage, "
+        "hardcoded page numbers, empty/thin books, and non-English text). "
+        "Library mode resolves the Calibre "
         "library from the CURRENT DIRECTORY's metadata.db, or pass a "
         "directory, or --id for specific books (--id plus --json takes "
         "exactly one id). Exit codes are the audit inverse: 0 clean, "
@@ -2177,6 +2178,7 @@ def build_parser() -> argparse.ArgumentParser:
             "completeness",
             "cover",
             "tocdrift",
+            "contamination",
             "all",
         ),
         help="which audit to run",
