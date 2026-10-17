@@ -26,8 +26,7 @@ fix refused with the OPF half.
   that genuinely cover a use satisfy it without an edit and clean documents
   are byte-identical. OPF only: content documents already have the
   invalid-attribute drop (`--strip-bad-attrs`) for this defect class. Normal
-  `gate` (clearing the
-  fatal is the measurable gain). On the fixture:
+  `gate` (clearing the fatal is the measurable gain). On the fixture:
   `1f/1e/0w -> 0f/0e/0w`, epubcheck fully clean.
 - **The masked ncx gain** (the issue's second half) stops lying in reports:
   when the gate answers noop but the NCX uid sync actually fired on a book
@@ -38,7 +37,7 @@ fix refused with the OPF half.
   verb still writes it under the honest PARTIAL label when given an explicit
   destination.
 
-Twenty-four tests joined the suite (688 total): the transform unit tests
+Twenty-seven tests joined the suite (691 total): the transform unit tests
 (scope, evidence, refusal, idempotence), the archive-level e2e, the masked-gain
 verdict rules, tokenizer spin guards beside the other matchers, and the argv
 wiring rows.
