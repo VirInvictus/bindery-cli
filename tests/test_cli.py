@@ -1868,6 +1868,48 @@ class TestStripStubDocsGate(unittest.TestCase):
         self.assertEqual(o.status, "reject")
 
 
+class TestMaskedNcxUidGain(unittest.TestCase):
+    """Issue #9, the gate's masked axis: a fatal package halts the metadata
+    checks, so epubcheck never compares dtb:uid to the unique-identifier and
+    a real NCX uid sync measures as no gain. A noop verdict that carries a
+    sync on a book that started with fatals is reclassified partial: real
+    work the oracle could not see, still-fatal rules intact."""
+
+    def _verdict(self, before, after, report):
+        with (
+            mock.patch("bindery.cli.repair_epub", return_value=report),
+            mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
+        ):
+            return process_book(Path("x.epub"), Path("."), validate=True)
+
+    def test_masked_sync_is_partial_not_equal(self):
+        report = RepairReport(ncx_uid_synced=True)
+        o = self._verdict(CheckResult(2, 1, 0), CheckResult(2, 1, 0), report)
+        self.assertEqual(o.status, "partial")
+        self.assertNotIn("no measurable gain", o.summary)
+        self.assertIn("ncx_uid_synced", o.summary)
+
+    def test_sync_without_fatals_stays_gate_measured(self):
+        # A parseable package lets epubcheck see the NCX axis; a noop there
+        # means the sync bought nothing epubcheck measures.
+        report = RepairReport(ncx_uid_synced=True)
+        o = self._verdict(CheckResult(0, 0, 0), CheckResult(0, 0, 0), report)
+        self.assertEqual(o.status, "equal")
+        self.assertIn("no measurable gain", o.summary)
+
+    def test_masked_sync_fatals_reduced_stays_partial(self):
+        # The gate itself answers partial when fatals merely dropped; the
+        # reclassification must not downgrade a better verdict.
+        report = RepairReport(ncx_uid_synced=True)
+        o = self._verdict(CheckResult(2, 1, 0), CheckResult(1, 1, 0), report)
+        self.assertEqual(o.status, "partial")
+
+    def test_reject_never_reclassified(self):
+        report = RepairReport(ncx_uid_synced=True)
+        o = self._verdict(CheckResult(1, 0, 0), CheckResult(2, 0, 0), report)
+        self.assertEqual(o.status, "reject")
+
+
 class TestHelpLayout(unittest.TestCase):
     """The two-level help contract (the 2026-10-06 restructure): the compact
     --help is grouped with one-line flags and a short usage line, and

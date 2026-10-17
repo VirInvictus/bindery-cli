@@ -1970,3 +1970,66 @@ class TestStripStubDocs(unittest.TestCase):
             dst = Path(td) / "out.epub"
             report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
         self.assertNotIn("stub_docs_dropped", report.fixes)
+
+
+SCARRED_OPF = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="ID1" '
+    'version="2.0">'
+    '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+    "<dc:title>Century Rain</dc:title>"
+    '<dc:creator xmlns:ns0="http://www.idpf.org/2007/opf" ns0:role="aut">'
+    "Alastair Reynolds</dc:creator>"
+    '<dc:identifier id="ID1" ns0:scheme="calibre">'
+    "fccddb12-6dd3-4896-ab23-c676558ca98b</dc:identifier>"
+    "</metadata>"
+    '<manifest><item id="c1" href="c1.xhtml" '
+    'media-type="application/xhtml+xml"/><item id="ncx" href="toc.ncx" '
+    'media-type="application/x-dtbncx+xml"/></manifest>'
+    '<spine toc="ncx"><itemref idref="c1"/></spine></package>'
+)
+
+
+class TestUnboundPrefix(unittest.TestCase):
+    """Issue #9: the Calibre embed scar. One dc: element carries an
+    ns0:-prefixed attribute whose declaration sits on a sibling, out of XML
+    scope: two RSC-016 fatals plus OPF-030 on the unique-identifier, and the
+    NCX uid sync measures as no gain while the package is unparseable."""
+
+    def _build(self, td: str) -> tuple[Path, Path]:
+        src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/c1.xhtml", CONTENT)
+            z.writestr("OEBPS/toc.ncx", NCX_BAD)
+            z.writestr("OEBPS/content.opf", SCARRED_OPF)
+        return src, dst
+
+    def test_off_by_default(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = self._build(td)
+            report = repair_epub(src, dst)
+        self.assertNotIn("unbound_prefixes_bound", report.fixes)
+
+    def test_scarred_opf_bound_and_ncx_synced(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = self._build(td)
+            self.assertTrue(ncx_uid_mismatch(src))
+            report = repair_epub(src, dst, RepairFlags(unbound_prefix=True))
+            self.assertEqual(report.fixes.get("unbound_prefixes_bound"), 1)
+            self.assertTrue(report.ncx_uid_synced)
+            with zipfile.ZipFile(dst) as z:
+                opf = z.read("OEBPS/content.opf").decode()
+            self.assertIn(
+                '<dc:identifier xmlns:ns0="http://www.idpf.org/2007/opf" '
+                'id="ID1" ns0:scheme="calibre">',
+                opf,
+            )
+            # the healthy sibling is untouched
+            self.assertIn(
+                '<dc:creator xmlns:ns0="http://www.idpf.org/2007/opf" ns0:role="aut">',
+                opf,
+            )
+            # the bound package parses and its unique-identifier resolves
+            ET.fromstring(opf)
+            self.assertFalse(ncx_uid_mismatch(dst))

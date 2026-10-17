@@ -13,14 +13,14 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-one
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-two
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
 `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
 `--fix-container`, `--fix-media-types`, `--fix-cover`, `--fix-comment-double-hyphen`,
 `--fix-svg-dup-ids`, `--fix-cdata-terminator`, `--fix-misnested-inline`,
-`--fix-stray-close`, `--fix-unterminated-attr`) alter
+`--fix-stray-close`, `--fix-unterminated-attr`, `--fix-unbound-prefix`) alter
 markup structure or fabricate minimal content; the four
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
 `--strip-stub-docs`) remove
@@ -280,8 +280,22 @@ use, with the `partial` rule intact.
   quote before the next `<` (a real multi-line value closes quote-first), and only
   double-quoted values are judged. It runs before the other tag-shape readers, which an
   open value otherwise lies to.
+- **`--fix-unbound-prefix`**: bind an attribute prefix the OPF never declares inline on
+  the element that uses it (the Calibre embed scar, issue #9: one dc: element carries
+  `ns0:scheme` while the `xmlns:ns0` declaration sits on a sibling, out of XML scope;
+  the RSC-016 "prefix is not bound" fatals make the whole package unparseable, which
+  also costs OPF-030 on the unique-identifier and masks the NCX-001 comparison). The
+  declaration is inserted on the user, the shape the file's own healthy siblings
+  already use. The URI is evidence-based, never guessed: the same prefix declared
+  elsewhere in the document with every declaration agreeing, or the OPF namespace for
+  a Dublin Core element under an OPF-namespaced package (the canonical EPUB 2
+  `opf:scheme` shape); anything else refuses the document untouched. Scope is tracked
+  with a lenient element stack over a comment/CDATA-aware tokenizer, so declarations
+  that genuinely cover a use satisfy it without an edit and clean documents are
+  byte-identical. Runs on the OPF only: content documents have the
+  invalid-attribute drop (`--strip-bad-attrs`) for the same defect class.
 
-Nineteen of the twenty-one are evaluated by the normal `gate`: unlike the lossy strips,
+Twenty of the twenty-two are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. The two exceptions are `--fix-cover` and
 `--encode-url-spaces`, whose gains sit on axes epubcheck does not measure (cover

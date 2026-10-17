@@ -24,6 +24,7 @@ from bindery.transforms import (
     fix_ncx_src_fragments,
     fix_stray_close,
     fix_svg_dup_ids,
+    fix_unbound_prefixes,
     fix_unterminated_attr,
     self_close_void,
     strip_broken_tags,
@@ -831,6 +832,189 @@ class TestFixUnterminatedAttr(unittest.TestCase):
         doc = '<p class="footnote>\ntext</p>'
         once, _ = fix_unterminated_attr(doc)
         twice, n2 = fix_unterminated_attr(once)
+        self.assertEqual((twice, n2), (once, 0))
+
+
+def _scarred_opf(scar: str, healthy: str = "") -> str:
+    """The Century Rain shape (issue #9): an EPUB2 package whose OPF
+    namespace is the DEFAULT namespace, a healthy sibling declaring ns0
+    inline, and one scarred element."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="ID1" '
+        'version="2.0">\n'
+        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
+        f"    {healthy}\n"
+        f"    {scar}\n"
+        "  </metadata>\n"
+        "</package>"
+    )
+
+
+class TestFixUnboundPrefixes(unittest.TestCase):
+    SCAR = '<dc:identifier id="ID1" ns0:scheme="calibre">uuid-x</dc:identifier>'
+    HEALTHY = (
+        '<dc:creator xmlns:ns0="http://www.idpf.org/2007/opf" '
+        'ns0:role="aut">A</dc:creator>'
+    )
+
+    def test_sibling_declaration_bound_inline(self):
+        # The fixture shape: ns0 is declared on the sibling creator, out of
+        # scope for the identifier; the fix declares it on the user.
+        doc = _scarred_opf(self.SCAR, self.HEALTHY)
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertIn(
+            '<dc:identifier xmlns:ns0="http://www.idpf.org/2007/opf" id="ID1" '
+            'ns0:scheme="calibre">',
+            out,
+        )
+        ET.fromstring(out)
+
+    def test_clean_document_byte_identical(self):
+        doc = _scarred_opf(
+            '<dc:identifier id="ID1">uuid-x</dc:identifier>',
+            self.HEALTHY,
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_own_declaration_satisfies(self):
+        # An element declaring and using the prefix on itself is legal XML.
+        doc = _scarred_opf(
+            '<dc:identifier id="ID1" xmlns:ns0="http://www.idpf.org/2007/opf" '
+            'ns0:scheme="calibre">u</dc:identifier>',
+            self.HEALTHY,
+        )
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_ancestor_declaration_satisfies(self):
+        doc = _scarred_opf(
+            '<dc:identifier id="ID1" opf:scheme="calibre">u</dc:identifier>'
+        ).replace(
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">',
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" '
+            'xmlns:opf="http://www.idpf.org/2007/opf">',
+        )
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_child_of_declarator_in_scope(self):
+        doc = _scarred_opf(
+            '<wrapper xmlns:ns7="http://www.idpf.org/2007/opf">'
+            '<dc:identifier id="ID1" ns7:scheme="calibre">u</dc:identifier>'
+            "</wrapper>"
+        )
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_commented_declaration_is_not_evidence(self):
+        # A commented-out xmlns spelling must never become binding evidence
+        # (the code-reviewer bug): with the only ns0 inside a comment, the
+        # prefix is declared nowhere, so rule 2 binds the OPF namespace on
+        # this DC element, not the junk URI from the comment.
+        doc = _scarred_opf(
+            self.SCAR,
+            '<!-- <dc:creator xmlns:ns0="http://comment.example/ns">X</dc:creator> -->',
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertIn(
+            '<dc:identifier xmlns:ns0="http://www.idpf.org/2007/opf" id="ID1"',
+            out,
+        )
+        # the comment itself is untouched
+        self.assertIn("comment.example", out)
+
+    def test_comment_conflict_does_not_poison_agreement(self):
+        # The inverse: a comment's conflicting URI must not flip the
+        # agreement check into refusing a fixable document.
+        doc = _scarred_opf(
+            self.SCAR,
+            self.HEALTHY
+            + '<!-- <dc:publisher xmlns:ns0="http://other.example/ns">P</dc:publisher> -->',
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('xmlns:ns0="http://www.idpf.org/2007/opf"', out)
+
+    def test_foreign_dc_binding_refuses_rule2_fallback(self):
+        # The literal dc: fallback fires only when the dc prefix is itself
+        # unbound; a dc bound to a foreign namespace is not Dublin Core, and
+        # the document is refused untouched.
+        doc = _scarred_opf(
+            '<dc:identifier id="ID1" ns0:scheme="calibre">u</dc:identifier>'
+        ).replace(
+            'xmlns:dc="http://purl.org/dc/elements/1.1/"',
+            'xmlns:dc="http://foreign.example/not-dc"',
+        )
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_ambiguous_prefix_refuses_whole_document(self):
+        doc = _scarred_opf(
+            '<dc:identifier id="ID1" ns0:scheme="calibre">u</dc:identifier>',
+            '<dc:creator xmlns:ns0="http://www.idpf.org/2007/opf">A</dc:creator>'
+            '<dc:publisher xmlns:ns0="http://other.example/ns">P</dc:publisher>',
+        )
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_no_evidence_not_dc_refuses(self):
+        # An unbound prefix on a non-DC element with no document evidence:
+        # no deterministic URI, so the document is refused untouched.
+        doc = _scarred_opf('<meta ns9:thing="x" name="cover" content="c"/>')
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_never_declared_dc_element_gets_opf_ns(self):
+        # Rule 2: the scar with no surviving declaration at all; a Dublin
+        # Core element under an OPF-namespaced package binds the OPF
+        # namespace, the canonical EPUB 2 opf:scheme shape.
+        doc = _scarred_opf(
+            '<dc:identifier id="ID1" ns0:scheme="calibre">u</dc:identifier>'
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('<dc:identifier xmlns:ns0="http://www.idpf.org/2007/opf"', out)
+        ET.fromstring(out)
+
+    def test_never_declared_without_opf_package_refuses(self):
+        # Rule 2 needs the package itself to carry the OPF namespace.
+        doc = _scarred_opf(
+            '<dc:identifier id="ID1" ns0:scheme="calibre">u</dc:identifier>'
+        ).replace('xmlns="http://www.idpf.org/2007/opf" ', "")
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_xml_prefix_never_flagged(self):
+        doc = _scarred_opf('<dc:identifier id="ID1" xml:lang="en">u</dc:identifier>')
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_self_closing_element_bound(self):
+        doc = _scarred_opf(f'<dc:rights ns0:r="x"/>{self.SCAR}', self.HEALTHY)
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 2)
+        self.assertIn('xmlns:ns0="http://www.idpf.org/2007/opf"', out)
+        ET.fromstring(out)
+
+    def test_comment_markup_never_touched(self):
+        doc = _scarred_opf(
+            f"{self.SCAR}",
+            self.HEALTHY + '<!-- <dc:x ns1:scheme="nope"></dc:x> -->',
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertNotIn('xmlns:ns1="http://www.idpf.org/2007/opf" ', out)
+        ET.fromstring(out)
+
+    def test_single_quoted_evidence(self):
+        doc = _scarred_opf(
+            self.SCAR,
+            "<dc:creator xmlns:ns0='http://www.idpf.org/2007/opf'>A</dc:creator>",
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        ET.fromstring(out)
+
+    def test_idempotent(self):
+        doc = _scarred_opf(self.SCAR, self.HEALTHY)
+        once, _ = fix_unbound_prefixes(doc)
+        twice, n2 = fix_unbound_prefixes(once)
         self.assertEqual((twice, n2), (once, 0))
 
 

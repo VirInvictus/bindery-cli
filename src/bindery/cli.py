@@ -102,6 +102,7 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         misnested_inline=args.fix_misnested_inline or all_,
         stray_close=args.fix_stray_close or all_,
         unterminated_attr=args.fix_unterminated_attr or all_,
+        unbound_prefix=args.fix_unbound_prefix or all_,
     )
 
 
@@ -159,6 +160,16 @@ def process_book(
             watermark_refusals=report.watermark_refusals,
         )
     verdict = gate(before, after)
+    if verdict == "noop" and report.ncx_uid_synced and before.fatals > 0:
+        # The NCX-001 axis was masked in both measurements (issue #9): a fatal
+        # in the package halts the metadata checks, so epubcheck never compared
+        # dtb:uid to the unique-identifier, and the sync that really fixed it
+        # measures as no gain. The sync is semantics-preserving by construction
+        # (it writes only a differing dtb:uid content value), so the verdict
+        # stops calling real work gainless: partial, with the still-fatal rule
+        # intact (the library sweep still refuses to apply it; the single-file
+        # verb still writes it under the PARTIAL label when given a DST).
+        verdict = "partial"
     if (
         report.fixes.get("stripped_pagination")
         or report.fixes.get("stripped_broken_tags")
@@ -1136,7 +1147,9 @@ def _phase1_decisions(books: list[dict], apply: bool) -> list[dict]:
                         f"{len(pending)} book(s) have gate-accepted repairs "
                         f"pending ({len(watermarked)} watermarked); this run "
                         "was read-only. Re-run with --apply-lossy to record "
-                        "the lossy-strip consent and apply."
+                        "the lossy-strip consent and apply. A book still "
+                        "carrying fatals stays unapplied until its fatal is "
+                        "fixed: the sweep never applies a still-fatal book."
                     ),
                     "books": sorted(set(pending + watermarked)),
                 }
@@ -1776,6 +1789,21 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "opens in lenient readers but never passes epubcheck). The edit "
             "stays inside the comment bodies: text nodes and CDATA sections are "
             "never touched, and each comment's terminator is left intact.",
+        ),
+        (
+            "fix_unbound_prefix",
+            "bind an undeclared attribute prefix inline (Calibre embed scar)",
+            "bind an attribute prefix the OPF never declares inline on the "
+            "element that uses it (RSC-016 'prefix is not bound'): calibre's "
+            "embed_metadata writer can leave one dc: element carrying "
+            "ns0:scheme while the xmlns declaration sits on a sibling, out of "
+            "XML scope, which fatals the whole package (plus OPF-030 on the "
+            "unique-identifier). The URI is evidence-based, never guessed: "
+            "the same prefix declared elsewhere in the document, or the OPF "
+            "namespace for a Dublin Core element under an OPF-namespaced "
+            "package; anything else refuses the document untouched. Content "
+            "documents are not touched (their unbound prefixes have the "
+            "--strip-bad-attrs drop).",
         ),
     ],
     "lossy strips (these delete converter-injected content; accepted on a no-worse bar)": [

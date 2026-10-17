@@ -30,7 +30,7 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   `xmlns`, bare `&`, named entities, void self-closing), the NCX pipeline, and the
   mimetype fix (added/normalized/first-stored, epub.py's archive rewrite); every core
   fix must render identically to the author's intent: never add, remove, or reorder
-  visible content. The canonical opt-in inventory lives in spec.md: twenty-one structural
+  visible content. The canonical opt-in inventory lives in spec.md: twenty-two structural
   repairs, four lossy strips, four safe opt-ins, plus `--reserialize`.
   * **Structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
     `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
@@ -38,7 +38,8 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
     `--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
     `--fix-container`, `--fix-media-types`, `--fix-cover`,
     `--fix-comment-double-hyphen`, `--fix-svg-dup-ids`, `--fix-cdata-terminator`,
-    `--fix-misnested-inline`, `--fix-stray-close`, `--fix-unterminated-attr`;
+    `--fix-misnested-inline`, `--fix-stray-close`, `--fix-unterminated-attr`,
+    `--fix-unbound-prefix`;
     transforms.py, threaded through epub.py). The v0.47.0 five (the 2026-10-06
     issue batch): `--fix-svg-dup-ids` renames duplicate glyph ids inside
     standalone `.svg` entries (first keeps its name, references resolve to the
@@ -60,7 +61,15 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
     never percent-encoding (epubcheck decodes references before entry lookup,
     verified against 5.3), ambiguous renames refused per entry (`space_rename_map`),
     accepted under `no_worse` because PKG-010 sits on the warning axis the gate
-    does not measure.
+    does not measure. `--fix-unbound-prefix` (v0.51.0, issue #9, the Calibre
+    embed scar) binds an attribute prefix the OPF never declares inline on the
+    element that uses it (`<dc:identifier id="ID1" ns0:scheme="calibre">`
+    whose `xmlns:ns0` sits on a sibling, out of XML scope; two RSC-016 fatals
+    plus OPF-030): URI evidence is the same prefix declared elsewhere in the
+    document (all declarations must agree) or the OPF namespace for a DC
+    element under an OPF-namespaced package, anything else refuses the whole
+    document; scope-tracked over a comment/CDATA-aware tokenizer, OPF only
+    (content docs have the `--strip-bad-attrs` drop); normal `gate`.
     They alter markup structure or fabricate minimal content. v0.14–v0.16 ran these unconditionally, which broke this rule;
     v0.17.0 restored it. `--unwrap-illegal-tags` additionally protects any illegal-tag
     name that an EPUB stylesheet styles as an element selector (`css_protected_tags`,
@@ -101,7 +110,12 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   gain IS visible, so a run with no measurable improvement is a noop and nothing is
   applied) except the two whose gains sit on axes epubcheck does not measure:
   `--fix-cover` and `--encode-url-spaces`, accepted under the same `no_worse` bar with
-  the partial rule intact. Changing either bar means re-running the library dry run.
+  the partial rule intact. One masked-axis rule (v0.51.0, issue #9): when the gate
+  answers noop but `report.ncx_uid_synced` fired on a book that started with fatals,
+  `process_book` reclassifies the verdict to `partial` (a fatal package halts the
+  metadata checks, so the dtb:uid comparison never ran in either measurement and the
+  real sync measures as no gain); application behavior is unchanged, since still-fatal
+  books are never applied. Changing either bar means re-running the library dry run.
 - **Library writes are sacred.** Replacement must stay atomic (temp in same dir, then
   `os.replace`), touch only the `.epub`, preserve mode, and be dry-run by default.
   Calibre format installation goes through cquarry's write module (`--install-to-calibre`;

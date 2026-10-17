@@ -1,5 +1,48 @@
 # bindery-cli Patch Notes
 
+## v0.51.0 (2026-10-17)
+
+### The unbound-prefix repair: the Calibre embed scar comes off the OPF (issue #9)
+
+Century Rain (library book #11104) carried an OPF that repeated
+`calibredb embed_metadata` rounds had scarred: one `dc:identifier`, the package
+unique-identifier itself, carried an `ns0:scheme` attribute whose `xmlns:ns0`
+declaration sat on a sibling element, out of XML scope. epubcheck answered with
+two RSC-016 fatals (unbound prefix) plus OPF-030 (unique-identifier not found),
+and because a fatal package halts the metadata checks, the stale NCX `dtb:uid`
+was invisible to the oracle on both sides of the gate. The old probe report said
+it all: `1f/1e/0w -> 1f/1e/0w, ncx_uid_synced (no measurable gain)`, the ncx
+fix refused with the OPF half.
+
+- **`--fix-unbound-prefix`** (new structural repair, twenty-second) binds an
+  attribute prefix the OPF never declares inline on the element that uses it,
+  the exact shape the file's own healthy siblings already use. The URI is
+  evidence-based, never guessed: the same prefix declared elsewhere in the
+  document (every declaration must agree, or the document is refused), or the
+  OPF namespace for a Dublin Core element under an OPF-namespaced package (the
+  canonical EPUB 2 `opf:scheme` shape); anything else refuses the whole
+  document untouched. Scope tracking walks the document with a
+  comment/CDATA-aware tokenizer over a lenient element stack, so declarations
+  that genuinely cover a use satisfy it without an edit and clean documents
+  are byte-identical. OPF only: content documents already have the
+  invalid-attribute drop (`--strip-bad-attrs`) for this defect class. Normal
+  `gate` (clearing the
+  fatal is the measurable gain). On the fixture:
+  `1f/1e/0w -> 0f/0e/0w`, epubcheck fully clean.
+- **The masked ncx gain** (the issue's second half) stops lying in reports:
+  when the gate answers noop but the NCX uid sync actually fired on a book
+  that started with fatals, `process_book` reclassifies the verdict to
+  `partial` instead of `equal`/`no measurable gain`. The sync is real,
+  deterministic work the oracle could not see; the still-fatal rule is intact,
+  so the library sweep still refuses to apply such a book and the single-file
+  verb still writes it under the honest PARTIAL label when given an explicit
+  destination.
+
+Twenty-four tests joined the suite (688 total): the transform unit tests
+(scope, evidence, refusal, idempotence), the archive-level e2e, the masked-gain
+verdict rules, tokenizer spin guards beside the other matchers, and the argv
+wiring rows.
+
 ## v0.50.0 (2026-10-14)
 
 ### The contamination analyzer: fan-bundle cosmetics get reported (issue #8)

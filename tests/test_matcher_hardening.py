@@ -120,6 +120,63 @@ class OpfTagMatchersSpin(unittest.TestCase):
         self.assertLess(elapsed, 5.0)
 
 
+class UnboundPrefixTokenizerSpin(unittest.TestCase):
+    """fix_unbound_prefixes' tokenizer (issue #9) walks every OPF it runs
+    on: a scarred document that ends inside an unterminated tag or comment
+    must fail linearly, and its success shapes must carve at real tag
+    boundaries."""
+
+    def test_unterminated_tag_spin_shape(self):
+        from bindery.transforms import fix_unbound_prefixes
+
+        opf = "<package><metadata><dc:identifier ns0:scheme='" + _apostrophe_run(500)
+        signal.alarm(20)
+        try:
+            t0 = time.perf_counter()
+            fix_unbound_prefixes(opf)
+            elapsed = time.perf_counter() - t0
+        finally:
+            signal.alarm(0)
+        self.assertLess(elapsed, 5.0)
+
+    def test_unterminated_comment_spin_shape(self):
+        from bindery.transforms import fix_unbound_prefixes
+
+        opf = "<package><metadata><!-- " + _apostrophe_run(500)
+        signal.alarm(20)
+        try:
+            t0 = time.perf_counter()
+            fix_unbound_prefixes(opf)
+            elapsed = time.perf_counter() - t0
+        finally:
+            signal.alarm(0)
+        self.assertLess(elapsed, 5.0)
+
+    def test_tokenizer_success_shapes(self):
+        tok = transforms._OPF_TOKEN_RE
+        m = tok.search('<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">')
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(3), "metadata")
+        # a bare attribute-less tag keeps its full name (a mandatory-one-char
+        # body loop would steal the final name character and orphan the
+        # end-tag match)
+        m = tok.search("<metadata>")
+        self.assertEqual((m.group(3), m.group(4)), ("metadata", ""))
+        m = tok.search("</dc:identifier>")
+        self.assertEqual(m.group(1), "dc:identifier")
+        # a `>` inside a quoted attribute stays attribute content; the
+        # self-closing slash lands in the body (the catch-all is disjoint
+        # from `>` but not from `/`), where the transform reads it
+        m = tok.search('<item href="a>b.xhtml"/>')
+        self.assertIsNotNone(m)
+        self.assertTrue(m.group(4).rstrip().endswith("/"))
+        # comments and CDATA are opaque tokens with no tag groups
+        m = tok.search("<!-- <dc:x ns1:y='z'></dc:x> -->")
+        self.assertIsNotNone(m)
+        self.assertIsNone(m.group(1))
+        self.assertIsNone(m.group(3))
+
+
 class LazyMatcherDisjointBranch(unittest.TestCase):
     """The lazy matchers (_VOID_RE, the img/link/a tag matchers) now use a
     disjoint branch 3 ([^>"']): an unterminated quote inside a tag can no

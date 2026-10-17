@@ -991,6 +991,166 @@ def fix_unterminated_attr(s: str) -> tuple[str, int]:
     return _UNTERMINATED_ATTR_RE.sub(repl, s), count
 
 
+# --fix-unbound-prefix (issue #9). One tokenizer walks the whole document so
+# prefix scope can be tracked: comments, CDATA sections, PIs, and doctypes are
+# consumed as opaque tokens (markup-looking text inside them must never touch
+# the element stack), end tags and start tags carry their names. The
+# quote-aware loops are possessive per the house convention: the three
+# branches are mutually exclusive, so a failing candidate fails linearly.
+_OPF_TOKEN_RE = re.compile(
+    r"""<!--(?:(?!-->).)*+-->"""
+    r"""|<!\[CDATA\[(?:(?!\]\]>).)*+\]\]>"""
+    r"""|<\?(?:(?!\?>).)*+\?>"""
+    r"""|<![^>]*+>"""
+    r"""|</([A-Za-z_][\w.:-]*)((?:"[^"]*+"|'[^']*+'|[^>"'])*+)>"""
+    r"""|<([A-Za-z_][\w.:-]*)((?:"[^"]*+"|'[^']*+'|[^>"'])*+)>"""
+)
+# Any quoted attribute (declarations and uses alike); group 3 is the value
+# exactly as spelled in the document, re-emitted verbatim when binding.
+_OPF_ATTR_RE = re.compile(r"""([A-Za-z_][\w.:-]*)\s*=\s*(["'])((?:(?!\2).)*+)\2""")
+_OPF_NS = "http://www.idpf.org/2007/opf"
+_DC_NS = "http://purl.org/dc/elements/1.1/"
+# Pre-bound in every XML document; never candidates for binding.
+_PREBOUND_PREFIXES = frozenset({"xml", "xmlns"})
+
+
+def _unescape_attr(v: str) -> str:
+    """The five predefined XML entities, the only escapes a namespace URI
+    could legitimately carry."""
+    for ent, ch in (("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&apos;", "'")):
+        v = v.replace(ent, ch)
+    return v.replace("&amp;", "&")
+
+
+def fix_unbound_prefixes(opf: str) -> tuple[str, int]:
+    """Bind an undeclared namespace prefix inline on each element that uses it.
+
+    Calibre's embed_metadata writer has been observed to leave one dc: element
+    carrying an attribute prefix (``ns0:scheme``) whose xmlns declaration never
+    made it into the document: the declaration sits on a sibling, and XML scope
+    ends at the sibling's end tag. The unparseable package costs every
+    downstream check (two RSC-016 fatals plus OPF-030 on the
+    unique-identifier). The repair is the shape the file's own healthy
+    siblings already use: declare the prefix on the element that uses it.
+
+    The URI is evidence-based, never guessed: (1) the same prefix declared
+    elsewhere in the document, every declaration agreeing on one URI; (2) the
+    prefix declared nowhere, but the carrying element is Dublin Core (its
+    element prefix resolves to the DC namespace, or the literal ``dc:``
+    spelling when that is itself unbound) and the package element declares the
+    OPF namespace, the canonical EPUB 2 ``opf:scheme``/``opf:role`` shape
+    calibre's writer emits; (3) anything else refuses the whole document (an
+    invented URI would be a guess, and a half-bound package is still fatal, so
+    a partial fix would buy nothing). Declarations scoped to an ancestor (or
+    to the element itself) satisfy the check without an edit, so clean
+    documents are byte-identical.
+
+    Opt-in (--fix-unbound-prefix). Runs on the OPF only: content documents
+    have the invalid-attribute drop (--strip-bad-attrs) for the same defect
+    class.
+    """
+    # Document-wide declaration evidence, prefix -> the URIs it is bound to.
+    # Scanned over start-tag tokens only: a raw scan would also read
+    # commented-out or prose-mentioned xmlns spellings, and a junk URI that
+    # exists only inside a comment must never become binding evidence (nor
+    # poison the agreement check against a real declaration).
+    decl_uris: dict[str, set[str]] = {}
+    for m in _OPF_TOKEN_RE.finditer(opf):
+        if m.group(3) is None:
+            continue
+        for am in _OPF_ATTR_RE.finditer(m.group(4)):
+            name = am.group(1)
+            if name.startswith("xmlns:"):
+                decl_uris.setdefault(name[len("xmlns:") :], set()).add(am.group(3))
+
+    scope: list[tuple[str, dict[str, str]]] = []
+    edits: list[tuple[int, str]] = []
+    count = 0
+    pkg_ns = False
+    pkg_seen = False
+
+    for m in _OPF_TOKEN_RE.finditer(opf):
+        if m.group(3) is None:
+            if m.group(1) is None:
+                continue  # comment / CDATA / PI / doctype: opaque
+            # End tag: pop to the matching start; a stray end tag with no
+            # open element pops nothing. Mismatched nesting pops through
+            # intermediate levels, which can only ever cause a redundant
+            # inline re-declaration of a prefix that was still in scope,
+            # never a semantic change: the evidence URI is document-wide,
+            # so it equals whatever the dropped scope held.
+            ename = m.group(1)
+            for i in range(len(scope) - 1, -1, -1):
+                if scope[i][0] == ename:
+                    del scope[i:]
+                    break
+            continue
+
+        name, body = m.group(3), m.group(4)
+        # The possessive body loop always swallows a self-closing slash (the
+        # [^>"'] catch-all is disjoint from `>` but not from `/`), so
+        # self-closing is read off the body, never a group.
+        slash = body.rstrip().endswith("/")
+        decls: dict[str, str] = {}
+        attr_names: list[str] = []
+        default_uri = None
+        for am in _OPF_ATTR_RE.finditer(body):
+            aname = am.group(1)
+            if aname == "xmlns":
+                default_uri = am.group(3)
+            elif aname.startswith("xmlns:"):
+                decls[aname[len("xmlns:") :]] = am.group(3)
+            else:
+                attr_names.append(aname)
+        if not pkg_seen and name.split(":")[-1] == "package":
+            pkg_seen = True
+            pkg_ns = any(
+                u == _OPF_NS or _unescape_attr(u) == _OPF_NS
+                for u in (default_uri, *decls.values())
+                if u
+            )
+        # Push before the attribute check: the element's own declarations
+        # apply to its own attributes.
+        scope.append((name, decls))
+        binds: list[str] = []
+        for aname in attr_names:
+            prefix, sep, _ = aname.partition(":")
+            if not sep or prefix in _PREBOUND_PREFIXES:
+                continue
+            if any(prefix in d for _, d in scope):
+                continue
+            uris = decl_uris.get(prefix)
+            if uris is not None:
+                if len(uris) != 1:
+                    return opf, 0  # one prefix, two URIs: intent unreadable
+                uri = next(iter(uris))
+            else:
+                elem_prefix, _, _ = name.partition(":")
+                elem_ns = None
+                for _, d in reversed(scope):
+                    if elem_prefix in d:
+                        elem_ns = d[elem_prefix]
+                        break
+                if pkg_ns and (
+                    elem_ns == _DC_NS or (elem_ns is None and elem_prefix == "dc")
+                ):
+                    uri = _OPF_NS
+                else:
+                    return opf, 0  # no evidence: refuse the whole document
+            binds.append(f' xmlns:{prefix}="{uri}"')
+        if binds:
+            # Insert directly after the element name, the position the
+            # file's own healthy inline declarations occupy.
+            edits.append((m.start(4), "".join(binds)))
+            count += len(binds)
+        if slash:
+            scope.pop()
+
+    for at, text in reversed(edits):
+        opf = opf[:at] + text + opf[at:]
+    return opf, count
+
+
 # The always-on core for full (X)HTML content documents, in order: prolog and
 # root-tag fixes first, then ampersand/entity normalization, then void
 # self-closing. Exactly the five semantics-preserving well-formedness fixes the

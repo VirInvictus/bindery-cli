@@ -44,6 +44,7 @@ from .transforms import (
     fix_ncx_src_fragments,
     fix_stray_close,
     fix_svg_dup_ids,
+    fix_unbound_prefixes,
     fix_unterminated_attr,
     outside_protected_map,
     strip_attrs_in_start_tags,
@@ -284,6 +285,7 @@ class RepairFlags:
     misnested_inline: bool = False
     stray_close: bool = False
     unterminated_attr: bool = False
+    unbound_prefix: bool = False
 
 
 @dataclass
@@ -1478,6 +1480,15 @@ def repair_epub(
     own `>` (`<p class="footnote>` -> `<p class="footnote">`; the RSC-016
     'must not contain the < character' fatal). It runs before the tag-shape
     readers, which an open value otherwise lies to.
+    With `unbound_prefix`, bind an attribute prefix the OPF never declares
+    inline on the element that uses it (the Calibre embed scar: one dc:
+    element carries `ns0:scheme` while the xmlns declaration sits on a
+    sibling, out of scope; two RSC-016 fatals plus OPF-030 on the
+    unique-identifier). The URI is evidence-based: the same prefix declared
+    elsewhere in the document, or the OPF namespace for a Dublin Core element
+    under an OPF-namespaced package; anything else refuses the whole
+    document. Content documents are not touched (their unbound prefixes have
+    the --strip-bad-attrs drop).
     With `strip_stub_docs` (lossy, the no_worse bar), drop spine documents whose
     entire visible text is one identical short placeholder repeated across the
     spine (the Bookmate/DRM-sample export whose chapters are all the same
@@ -1835,8 +1846,17 @@ def repair_epub(
                 or flags.fix_cover
                 or flags.comment_double_hyphens
                 or flags.strip_stub_docs
+                or flags.unbound_prefix
             ):
                 opf_changed = False
+                if flags.unbound_prefix:
+                    # First in the branch: the unbound prefix makes the whole
+                    # package unparseable, so the parseability scar comes off
+                    # before the readers that match against the text.
+                    text, n = fix_unbound_prefixes(text)
+                    if n:
+                        report.add({"unbound_prefixes_bound": n})
+                        opf_changed = True
                 if flags.fix_ids:
                     text, n = fix_manifest_ids(text)
                     if n:

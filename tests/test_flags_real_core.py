@@ -378,6 +378,23 @@ def _fixtures() -> dict:
             },
             "fix_unterminated_attr",
         ),
+        "--fix-unbound-prefix": (
+            {
+                "OEBPS/content.opf": _opf(
+                    [c1],
+                    [r1],
+                    # The Calibre embed scar: ns0 declared on the sibling
+                    # creator only, so the identifier's ns0:scheme is unbound.
+                    meta=(
+                        '<dc:creator xmlns:ns0="http://www.idpf.org/2007/opf" '
+                        'ns0:role="aut">A</dc:creator>'
+                        '<dc:identifier id="id" ns0:scheme="calibre">uuid-x</dc:identifier>'
+                    ),
+                ),
+                "OEBPS/c1.xhtml": plain,
+            },
+            "unbound_prefixes_bound",
+        ),
     }
 
 
@@ -556,6 +573,11 @@ class FlagEndToEndTests(unittest.TestCase):
     def test_fix_unterminated_attr(self):
         self.assertGreaterEqual(
             self._fixes_for("--fix-unterminated-attr")["fix_unterminated_attr"], 1
+        )
+
+    def test_fix_unbound_prefix(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-unbound-prefix")["unbound_prefixes_bound"], 1
         )
 
 
