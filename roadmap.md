@@ -49,6 +49,14 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
 
 ## Open work
 
+- [ ] **Percent-encode illegal URL characters in references**: the RSC-020 class
+      beyond spaces. Opened by issue #10's My Enemy My Ally fixture: once
+      `--encode-url-spaces` clears the spaces, the fan conversion's brackets and
+      commas re-report as 28 individual RSC-020s (previously folded into one
+      aggregated RSC-005), so the candidate measures as a regression and the
+      gate refuses a book that is otherwise repaired. Needs the same
+      entry-and-reference coordination as the space renames, with the
+      decode-before-lookup epubcheck rule verified per character class.
 - [ ] **Obfuscation-aware encryption.xml repair**: prune stale obfuscation entries
       when font magic bytes prove the fonts are decrypted in place; drop
       encryption.xml when only obfuscation entries remain and fonts verify. NEVER
