@@ -178,7 +178,16 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   (the anchor and its text stay), absent `<img>` sources (replaced by their escaped
   alt text when they carry one, dropped otherwise), and orphaned non-spine OPF manifest
   `<item>` declarations. Spine documents are never pruned: a missing spine document is
-  a damaged fragment for the audit's spine-integrity check, never a silent drop.
+  a damaged fragment for the audit's spine-integrity check, never a silent drop. The
+  manifest existence check resolves the href the way the resolver does (unquoted,
+  normalized) and compares it against the layout the OPF text is written in: when
+  `--encode-url-spaces` is renaming entries, the prune runs ahead of the reference
+  rewrite and reads pre-rename hrefs, so it checks against the pre-rename archive
+  (a raw-space href judged against renamed spellings is how live spine documents came
+  to be pruned, issue #10). The spine protection is derived from the very text the
+  prune reads, never snapshotted earlier: `--fix-manifest-ids` may have renamed item
+  ids and spine idrefs ahead of it in the OPF pipeline, and a guard describing the old
+  spelling protects nothing.
 - **`--strip-broken-anchors`**: strip `href` attributes that cannot resolve, keeping
   the anchor text byte-for-byte. A `#fragment` the target document does not define
   (RSC-020 "fragment identifier not defined", RSC-012 "points to the wrong element") is
@@ -377,6 +386,20 @@ follow-up and never auto-applied (the book still does not open). If epubcheck ca
 be run or its output cannot be parsed during a validated run, the book is an `error`:
 the gate has not accepted anything, so nothing is applied or written. With
 `--no-validate`, the gate is skipped and repairs are trusted on the RepairReport alone.
+
+One structural veto rides above the count gate: the spine-resolution check. The
+message count is not spine-aware, so a repair that orphans live itemrefs (manifest
+items pruned whose files the archive still carries, idrefs rewritten to forms that
+match nothing) removes the broken documents' errors from the measurement and a
+destroyed book can read as an error reduction (issue #10: a raw-space fan
+conversion's eight spine items pruned as "missing", gate accepted
+`0f/17e/8w -> 0f/10e/0w`). `process_book` therefore probes both packages with
+`spine_dangles` (itemref -> manifest item -> archive entry, resolved through the
+same helper the repair's existence checks use) and vetoes any candidate whose
+dangle count rises: `reject`, regardless of the counts and regardless of which
+bar a fix class promotes under. The probe needs evidence on both sides — a
+package it cannot read (unreadable archive, no locatable OPF) vetoes nothing —
+and `--no-validate` skips it with the rest of the gate.
 
 The oracle itself runs two ways: the `epubcheck --json -` subprocess, or a persistent
 daemon (`_EpubcheckDaemon`, a bounded pool sized by `--workers`) that writes

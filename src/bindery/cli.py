@@ -31,7 +31,7 @@ from .audit import (
 from .audit import (
     run_library as run_audit_library,
 )
-from .epub import RepairFlags, ncx_uid_mismatch, repair_epub
+from .epub import RepairFlags, ncx_uid_mismatch, repair_epub, spine_dangles
 from .library import (
     CalibreIdResolver,
     atomic_replace,
@@ -214,10 +214,31 @@ def process_book(
             verdict = "partial"
         else:
             verdict = "accept"
+    # The spine-resolution veto (issue #10). The epubcheck count is not
+    # spine-aware: a repair that orphans live itemrefs (manifest items pruned
+    # whose files the archive still carries, idrefs rewritten to forms that
+    # match nothing) removes the broken documents' errors from the
+    # measurement, so a destroyed book can read as an error reduction. A
+    # spine that resolved before the repair and dangles after it is a
+    # regression no message count can buy back: reject, regardless of the
+    # counts or the bar any fix class promotes under. The probe runs on both
+    # real files; a probe failure (unreadable package, no locatable OPF)
+    # carries no evidence and vetoes nothing.
+    dangles_before = spine_dangles(epub)
+    dangles_after = spine_dangles(repaired)
+    spine_collapse = (
+        dangles_before is not None
+        and dangles_after is not None
+        and dangles_after > dangles_before
+    )
+    if spine_collapse:
+        verdict = "reject"
     if verdict == "reject":
         summary += " (REGRESSION)"
     elif verdict == "noop":
         summary += " (no measurable gain)"
+    if spine_collapse:
+        summary += " (spine collapse)"
     status = "equal" if verdict == "noop" else verdict
     return Outcome(
         epub,

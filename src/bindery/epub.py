@@ -873,7 +873,7 @@ _NCX_CONTENT_SRC_RE = re.compile(
 
 
 def prune_missing_manifest_items(
-    opf_text: str, opf_dir: str, present: frozenset[str], spine_ids: set[str]
+    opf_text: str, opf_dir: str, present: frozenset[str]
 ) -> tuple[str, int, set[str]]:
     """Drop `<item>` manifest declarations whose file is absent from the
     archive — unless the item is a spine document.
@@ -884,9 +884,16 @@ def prune_missing_manifest_items(
     dead-declaration removal instead of a stub file. The pruned ids come back
     so the caller can rewrite the edges that pointed at them
     (prune_dangling_edges) instead of leaving dangling idrefs.
+
+    The spine guard is derived from the very text this pass reads, never
+    passed in: the OPF pipeline may have renamed ids (fix_manifest_ids rewrites
+    item ids and spine idrefs together) before the prune runs, and a snapshot
+    taken from an earlier spelling misses every renamed idref — which is how
+    spine documents came to be pruned on the raw-space books (issue #10).
     """
     count = 0
     pruned: set[str] = set()
+    spine_ids = {m.group(3) for m in _IDREF_ATTR_RE.finditer(opf_text)}
 
     def repl(m: re.Match) -> str:
         nonlocal count
@@ -1373,6 +1380,48 @@ def sync_ncx_uid(ncx_text: str, uid: str) -> tuple[str, bool]:
     return new, True
 
 
+def spine_dangles(src: Path) -> int | None:
+    """Count spine itemrefs that cannot walk itemref -> manifest item ->
+    archive entry: the spine-resolution axis the epubcheck count cannot see
+    (issue #10). A repair that orphans live itemrefs can measure as an error
+    reduction, so process_book vetoes any candidate whose count rises.
+
+    The last hop resolves through the same helper the repair's own
+    existence checks use (_resolve_href + _norm_path: unquoted, normalized),
+    so both sides of the comparison read the package the same way. None
+    means the package could not be probed (unreadable archive, no locatable
+    OPF): the veto needs evidence and never fires on a probe failure.
+    """
+    try:
+        with zipfile.ZipFile(src) as z:
+            opf = _locate_opf(z)
+            if not opf:
+                return None
+            text = z.read(opf).decode("utf-8", "replace")
+            opf_dir = posixpath.dirname(opf)
+            present = frozenset(_norm_path(n) for n in z.namelist())
+            items: dict[str, str] = {}
+            for m in _ITEM_TAG_RE.finditer(text):
+                tag = m.group(0)
+                im = _XML_ID_RE.search(tag)
+                hm = _HREF_ATTR_RE.search(tag)
+                if not im or not hm:
+                    continue
+                resolved = _resolve_href(opf_dir, hm.group(2))
+                if resolved is not None:
+                    items[im.group(3)] = resolved
+            dangles = 0
+            for m in _SPINE_ITEM_RE.finditer(text):
+                rm = _IDREF_ATTR_RE.search(m.group(0))
+                if rm is None or items.get(rm.group(3)) not in present:
+                    dangles += 1
+            return dangles
+    except (zipfile.BadZipFile, OSError, RuntimeError):
+        # RuntimeError covers zip-encrypted entries, which raise out of
+        # z.read: like ncx_uid_mismatch, a DRM'd book is not a crash.
+        return None
+
+
 def ncx_uid_mismatch(src: Path) -> bool:
     """Cheaply detect NCX-001 (toc.ncx dtb:uid != OPF unique-identifier) without epubcheck."""
     try:
@@ -1571,7 +1620,6 @@ def repair_epub(
         # opens by its decoded spelling)
         norm_to_raw: dict[str, str] = {}
         ids_by_doc: dict[str, frozenset[str]] = {}
-        spine_ids: set[str] = set()
         opf_dir = posixpath.dirname(opf) if opf else ""
 
         # --encode-url-spaces's rename half, decided up front: every
@@ -1602,8 +1650,9 @@ def repair_epub(
             if space_renames
             else {}
         )
-        # the one pre-pass that still reads the ORIGINAL references (the
-        # id snapshot's prune runs against the pre-rename layout)
+        # the pre-rename layout, for the passes that read the ORIGINAL
+        # references (the content-doc prune in the id snapshot above, and the
+        # manifest prune, which runs ahead of rewrite_space_renames)
         present_src: frozenset[str] = frozenset()
         if flags.prune_missing or flags.strip_anchors or flags.fix_media_types:
             for n in zin.namelist():
@@ -1651,8 +1700,6 @@ def repair_epub(
                     ids_by_doc[
                         _norm_path(space_renames.get(i.filename, i.filename))
                     ] = frozenset(m.group(3) for m in _XML_ID_RE.finditer(t))
-        if flags.prune_missing and opf_text is not None:
-            spine_ids = {m.group(3) for m in _IDREF_ATTR_RE.finditer(opf_text)}
 
         # The mimetype content is an OCF constant, so adding a missing entry and
         # normalizing wrong or whitespace-padded content is deterministic and
@@ -1873,8 +1920,15 @@ def repair_epub(
                         report.add({"epub3_attrs_stripped": n})
                         opf_changed = True
                 if flags.prune_missing:
+                    # The manifest prune runs before rewrite_space_renames, so
+                    # the hrefs it reads are still in the SOURCE spelling: the
+                    # existence set must describe the same layout. `present`
+                    # carries the renamed spellings, and every raw-space href
+                    # resolved against it reads as missing — the issue #10
+                    # collapse (present_src mirrors the content-doc prune
+                    # above for exactly this reason).
                     text, n, pruned_ids = prune_missing_manifest_items(
-                        text, opf_dir, present, spine_ids
+                        text, opf_dir, present_src if space_renames else present
                     )
                     if n:
                         report.add({"manifest_items_pruned": n})

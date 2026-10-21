@@ -1,5 +1,68 @@
 # bindery-cli Patch Notes
 
+## v0.52.0 (2026-10-21)
+
+### The repairer's own prune could destroy the book it was repairing (issue #10)
+
+The 2026-10-21 re-source wave caught it live: six fan conversions (the Rihannsu
+rips: My Enemy My Ally, three Ascendance rips, two The Final Reflection rips)
+whose content filenames carry raw spaces (`DUANE, Diane - [Star Trek - TOS -
+Rihannsu 1] - My Enemy, My Ally_split_000.htm`) and whose manifest ids carry
+commas and brackets, which are invalid XML name characters. The gated sweep
+accepted `0f/17e/8w -> 0f/10e/0w` and applied `manifest_items_pruned:8`: the
+repair deleted every spine document's manifest item while the archive entry sat
+right there under its new underscore spelling, and left a book whose spine
+resolved to the title page. The gate measured fewer messages because the
+destroyed documents' errors had left the measurement entirely.
+
+Two stacked defects, both fixed:
+
+- **The prune's existence check read the wrong layout.** With
+  `--encode-url-spaces` active, `prune_missing_manifest_items` ran ahead of the
+  reference rewrite on hrefs still carrying raw spaces, but checked them
+  against the archive's post-rename spellings; every raw-space href read as
+  missing. The check now uses the layout the OPF text is actually written in
+  (`present_src`, exactly what the content-document prune already did), so an
+  href is judged against the archive as the text sees it and the rename half
+  handles both sides together.
+- **The spine guard described an earlier spelling of the ids.** The guard that
+  keeps spine documents out of the prune was snapshotted from the OPF before
+  `--fix-manifest-ids` renamed the item ids and spine idrefs, so by the time
+  the prune ran it recognized nothing. The prune now derives its spine set
+  from the very text it reads; the snapshot parameter is gone, and the guard
+  can never drift from the text again.
+
+And the class is guarded, not just this instance: `process_book` now probes
+source and candidate with `epub.spine_dangles` (itemref to manifest item to
+archive entry, resolved through the same helper the repair's own existence
+checks use) and vetoes any candidate whose spine dangles more than the
+source's: `reject` with `(spine collapse)` in the summary, riding above the
+message counts and above every fix-class promotion. A probe that cannot read a
+package vetoes nothing (the veto needs evidence on both sides), and
+`--no-validate` skips it with the rest of the gate.
+
+On the issue's fixtures: The Final Reflection now repairs clean and gates
+accept (`0f/30e/22w -> 0f/3e/0w`, twenty-two entries renamed, zero prunes,
+spine fully resolved). My Enemy My Ally still refuses, now for an honest
+reason: the fan conversion's brackets and commas are illegal URL characters
+too, and once the spaces clear, epubcheck re-reports each affected link as its
+own RSC-020 (`17 -> 32` aggregated), so the candidate measures as a regression
+and nothing is applied. That book waits for a manual pass, or a future repair
+class that percent-encodes the remaining illegal characters; refusing is the
+correct outcome for a repair that cannot be made deterministically safe.
+
+Eleven tests joined the suite (702 total): the `spine_dangles` probe unit
+tests (healthy spine, the orphaned-itemref shape, the absent-file shape, and
+probe-failure-is-None), the prune guard's renamed-id regression and its
+non-spine prune, the end-to-end raw-space book (renames land, nothing is
+pruned, every itemref walks to a file), the veto wiring in `process_book`
+(collapse rejects improving counts, intact spine keeps the normal verdict,
+unreadable candidate vetoes nothing), and a fixture-backed regression on the
+real My Enemy My Ally pre-repair bytes (skipped where the local fixture is
+absent). The stack-free module joined CI's 3.12/3.13 leg, and the full-corpus
+dry run over the library (6,774 books, repaired candidates measured against
+their sources) confirmed zero veto fires.
+
 ## v0.51.0 (2026-10-17)
 
 ### The unbound-prefix repair: the Calibre embed scar comes off the OPF (issue #9)
