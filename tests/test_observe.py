@@ -242,6 +242,13 @@ class TestRunObserve(unittest.TestCase):
         self.assertEqual(art["preview"]["books"][0]["path"], "a.epub")
         self.assertEqual(art["codes"]["occurrences"]["RSC-005"], 1)
         self.assertNotIn("trend", art)
+        # the per-book census rows: every book lands here, clean or not
+        rows = {b["path"]: b for b in art["books"]}
+        self.assertEqual(set(rows), {"a.epub", "b.epub"})
+        self.assertEqual(rows["a.epub"]["errors"], 2)
+        self.assertEqual(rows["a.epub"]["codes"], ["RSC-005"])
+        self.assertEqual(rows["b.epub"]["codes"], [])
+        self.assertFalse(rows["b.epub"]["unreadable"])
 
     def test_no_preview_omits_the_block(self):
         rc = self._run(no_preview=True)

@@ -480,6 +480,19 @@ def run_observe(args) -> int:
         "root": str(root),
         "census_seconds": round(census_s, 1),
         **tab,
+        # The per-book census rows: the artifact answers later questions
+        # without re-validating, so every book lands here, clean or not.
+        "books": [
+            {
+                "path": os.path.relpath(r.path, root),
+                "fatals": r.fatals,
+                "errors": r.errors,
+                "warnings": r.warnings,
+                "codes": list(r.codes),
+                "unreadable": r.unreadable,
+            }
+            for r in records
+        ],
     }
 
     if not getattr(args, "no_preview", False):

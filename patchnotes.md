@@ -1,5 +1,18 @@
 # bindery-cli Patch Notes
 
+## v0.53.1 (2026-10-24)
+
+### The .observe artifact now carries its per-book census rows
+
+v0.53.0's spec, README, and patchnotes promised per-book census rows in the
+artifact ("any later question can be answered without re-validating"), and
+the first real run proved the promise hollow: the writer composed every
+aggregate but never the `books` array. The rows are written now, one record
+per book, clean ones included: path relative to the root, counts, the
+error-code list, and the unreadable flag. The schema is unchanged
+(`bindery-observe-v1`: the field set grew; no existing consumer reads the
+array), and the test pins the rows.
+
 ## v0.53.0 (2026-10-24)
 
 ### `bindery observe`: the whole-library census, one artifact per run
