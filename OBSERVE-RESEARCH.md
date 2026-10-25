@@ -539,3 +539,139 @@ Evidence: specimens and probe records under
 pkg010/), census artifacts under `~/docs/Calibre Library.backups/observe/`,
 the dry-run JSON under the library's `.claude/`. All measurement was
 read-only; the library was never written during this research.
+
+## The un-researched top-ten lanes (2026-10-25 session, issues #16/#17)
+
+Each lane: a message-family census off the baseline artifact's books array, a
+mechanism verdict from live epubcheck 5.3.0 runs and zip reads, and a
+disposition. All measurement read-only; specimen gates ran on /tmp copies.
+
+### RSC-001 and RSC-008: the prune's coverage boundary (issue #16)
+
+epubcheck 5.3.0 wordings, from real runs: RSC-001 `File "<name>" could not
+be found.` (package-level, no line); RSC-008 `Referenced resource "<name>"
+is not declared in the OPF manifest.` (at the referencing element).
+
+- **RSC-001 (39 books / 1,546 entries)**: every sampled finding is rooted in
+  an OPF `<item href>`; the flag's outcome splits exactly on the spine
+  guard. Non-spine absent-file items (stray images, unspined docs) are
+  cleared by the existing prune (25/25 sampled long-tail findings). Spine
+  documents with absent files survive by design, and they ARE the census:
+  738+736 of the 1,546 entries (95.3%) are the two Wandering Inn books
+  (plus the facility's Light at the End, 8/8 spine), where the missing
+  "file" exists under a different spelling (raw spaces vs underscores) --
+  `--encode-url-spaces` territory, not prune territory. The itemref-with-no-
+  `<item>` shape contributed 0 findings in 14 runs. A second finding rides
+  along: both Wandering Inn OPFs are prefix-namespaced (`<opf:item>`), a
+  shape `_ITEM_TAG_RE` never matches, so the prune could not see them even
+  without the spine guard; every finding there is spine-protected anyway.
+  **Disposition: coverage boundary documented; no code change.**
+- **RSC-008 (55 books / 545 entries)**: zero coverage before v0.55.0,
+  structurally: the prune's predicate is target-absent, and an undeclared
+  resource is by definition present. Sample tally (452 findings across 7
+  books): 441 content `<img src>` to present-but-undeclared files, 8
+  content `<link href>` stylesheets (the one-corpse Calibre split-CSS
+  shape), 2 inline `<style>` `@font-face url()` fonts, 1 OPF guide
+  `<reference>` to an undeclared cover doc. The most dangerous shape (a
+  spine doc missing from the manifest) does not occur.
+  **Disposition: new `--declare-missing-items` flag (v0.55.0)**, the
+  inverse move: add the manifest item (sorted `bindery-dN` ids, blessed
+  extension-map media types, no itemref ever written). Live gate on the
+  facility specimen: 3 items declared (the three split CSS files), 16e ->
+  13e, RSC-008 fully cleared, accept; the RSC-001 carrier control
+  correctly fired nothing; second run declares nothing.
+
+### RSC-012: already covered except the OPF guide (issue #17 lane)
+
+Verbatim (5.3.0): `Fragment identifier is not defined.` (ERROR) -- not the
+"wrong element" wording strip_broken_anchors_doc's docstring guessed at;
+the docstring is corrected in code separately if it ever matters. Census:
+188 books, exactly 1 aggregated message each. Full-lane live sweep (all 188
+carriers re-probed): 1,210 locations -- 934 content-doc `<a href>` (Mobipocket
+filepos anchors, URL-encoded junk fragments), 234 NCX `<content src>`, 42
+OPF guide `<reference href>` in 33 books. Every location resolved to a
+target document that exists and lacks the fragment -- exactly the
+strip-broken-anchors precondition (a missing target file is a different
+code). **Disposition: existing flag.** `--strip-broken-anchors` clears the
+content + NCX halves in principle (96.5% of locations; 155 books fully);
+the 42 OPF-guide locations survive (no repair touches `<guide><reference>`
+except fix_cover_meta's cover meta, and the guide ref is furniture). Live
+probe on the facility's cold-days specimen (its one finding IS the guide
+shape): the anchor flag correctly fires nothing.
+
+### OPF-029: one family, mostly one flag (issue #17 lane)
+
+Verbatim: `The file "<path>" does not appear to match the media type
+<declared>, as specified in the OPF file.` (ERROR). Census: 17 books, 280
+entries, all classified by declared type vs magic bytes: 216 locations are
+jpg-stamped-image/png with JPEG bytes at offset 0 (`--fix-media-types`'
+exact documented case; 13 books led by Tress 75 and Sunlit Man 68); 64
+survive -- 56 .gif-declared-image/gif with JPEG bytes (Gateway 53,
+Revelation 3: the magic check refuses, and renaming to .jpg is a
+content-name change out of scope), 5 .png-declared-png with JPEG bytes,
+3 jpg-declared-jpeg with PNG bytes (the nevernight case: the declaration
+is honest; the fix deliberately keeps it). **Disposition: existing flag
+for the 216; the 64 are leave-measured.** Live gate on the Tress copy:
+75e -> 0e (fully clean), accept.
+
+### OPF-030: the unique-identifier wiring scar (issue #17 lane)
+
+Verbatim: `The unique-identifier "<id>" was not found.` (ERROR,
+package-level). Census: 27 books, 1 entry each, all fatals=0 except one.
+Families: 23 dangling-ref -- the package names an id (`bookid`, `uuid_id`,
+`uid`, ISBN shapes) but NO dc:identifier carries any id attribute at all
+(a converter dropped the id attributes wholesale); 2 attr-empty
+(`unique-identifier=""`, rendered by epubcheck as "null"); 2 multi-OPF
+merge leftovers (Either/Or, Book of Debugging: the defect sits in a stale
+non-rootfile OPF the merge left behind). None is the v0.51 ns0 embed-scar.
+**Disposition: leave measured.** The 23 are deterministically fixable in
+principle (add the named id to the first dc:identifier; values untouched,
+gate-visible), but the mass is 27 books at 1 error each with zero reader
+impact, and the honest recipe would need the empty-attr and stray-OPF
+refusals designed around it. The recipe is recorded here for a future
+pass; boxed, not silently declined.
+
+### CSS-007: unblessed font media types (issue #17 lane)
+
+Verbatim (INFO severity, not an error): `Font-face reference "<url>"
+refers to non-standard font type "<declared>".` Census: 114 books, 509
+entries, population reconciled exactly against unblessed font-ext manifest
+items + data-URI srcs. Mechanism (bytecode-extracted whitelists): epubcheck
+checks the OPF-declared media type of every @font-face src against a
+version-specific blessed set (EPUB2: `font/*`, `application/font*`,
+`application/x-font*`, `application/vnd.ms-opentype`; EPUB3: an exact
+eight-entry list). Sampled families: `text/plain` fonts (Huxley 8,
+Cialdini 12), `application/xfont+otf` (Gottman 38), `application/octet-stream` woff2 + correct-typed EOT (Nakov 32 -- the EOT half is
+unfixable at the manifest layer, its type is CORRECT), the
+`application/application/x-font-ttf` typo (4), `.dat` fonts, `.ttc`
+collections, `data:font/truetype` base64 srcs. bindery's
+`--fix-media-types` is image-only by charter and touches 0/114 carriers.
+**Disposition: candidate extension (a font half with version-aware
+blessed targets and font magic bytes: TTF `00 00 01 00`/`true`, OTTO,
+wOFF, wOF2, ttc), left measured this batch**: INFO mass, gate-invisible
+(nWarning unaffected), version-dependent target types, and a quarter of
+the family unfixable at the manifest layer. Boxed, revisitable.
+
+### RSC-004: font obfuscation, not DRM (issue #17 lane)
+
+Verbatim (INFO): `File "<path>" is encrypted, its content will not be
+checked.` Census: 84 books, 427 entries == 427 EncryptedData blocks across
+all 84 carriers (per-book counts match 84/84). Algorithms: 424 Adobe
+`ns.adobe.com/pdf/enc#RC` + 3 IDPF `idpf.org/2008/embedding` (one book);
+ZERO other algorithms -- no DRM anywhere in the lane. Encrypted entries
+are fonts only (266 .otf, 137 .ttf, 23 .dat, 1 .ttc), all readable bytes
+(obfuscation, not zip encryption): every sampled book is the audit
+archive verdict's benign OBFUSCATED side, and `audit.py`'s
+OBFUSCATION_ALGOS already covers both URIs. **Disposition: leave
+measured**, cross-referenced: the repair inventory has nothing honest to
+offer (de-obfuscating fonts to satisfy an INFO finding would break the
+embedding rules the obfuscation exists for), and the observatory tracks
+it.
+
+### Lane addendum: what the runs changed in the code
+
+Issue #11's gate question resolved by census: epubcheck's attribute
+rejection is package-profile-driven, not DOCTYPE-driven (7 EPUB3 packages
+carrying XHTML 1.1 doctypes: zero attribute findings; every role/
+aria-hidden carrier is version="2.0"), so `package_version()` gating is
+correct as built and only the set grew (`role`, `aria-hidden`).

@@ -21,7 +21,7 @@ from unittest import mock
 from bindery import cli
 from bindery.cli import _load_audit, _phase1_decisions, build_parser, main, process_book
 from bindery.epub import RepairFlags, RepairReport
-from bindery.validate import CheckResult
+from bindery.validate import CheckResult, OracleTimeout
 
 try:
     import html5lib  # noqa: F401
@@ -53,6 +53,20 @@ class TestEpubcheckFailureIsError(unittest.TestCase):
             with mock.patch("bindery.cli.run_epubcheck", return_value=None):
                 o = process_book(src, Path(td), validate=True)
         self.assertEqual(o.status, "error")
+
+    def test_epubcheck_timeout_is_named_in_the_summary(self):
+        # Issue #15: a double timeout raises the distinct exception; the
+        # summary must separate the timing flake from real oracle failures.
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            build(src)
+            with mock.patch(
+                "bindery.cli.run_epubcheck", side_effect=OracleTimeout("slow")
+            ):
+                o = process_book(src, Path(td), validate=True)
+        self.assertEqual(o.status, "error")
+        self.assertIn("(epubcheck timeout)", o.summary)
+        self.assertNotIn("epubcheck failed", o.summary)
 
 
 class TestStripPaginationGate(unittest.TestCase):

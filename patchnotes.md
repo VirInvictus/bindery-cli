@@ -1,5 +1,97 @@
 # bindery-cli Patch Notes
 
+## v0.55.0 (2026-10-25)
+
+### The issue batch: the 2026-10-24 surgery's follow-ups, #11 through #16
+
+The error-code surgery left six open issues; this release works all of
+them, each on its own evidence (the census lanes and live gate runs are
+recorded in `OBSERVE-RESEARCH.md`, specimens in the gitignored testing
+facility).
+
+**`--strip-epub3-attrs` covers `role` and `aria-hidden` (issue #11).** The
+resample had found EPUB3 semantics on legacy packages the dominant RSC-005
+family (`role` 6,645 sampled occurrences, `aria-hidden` 239) while the
+flag's fixed set carried only three attributes. The population census
+settled both design questions with data: every role/aria-hidden carrier in
+the sample is an EPUB2-declared package (the values are DPUB-ARIA
+`doc-*` roles and `aria-hidden="true"`, no visual default either way), and
+the DOCTYPE-gate concern is falsified (seven EPUB3 packages carrying
+XHTML 1.1 doctypes show zero attribute findings; epubcheck keys on the
+package profile, so the existing package-version gate is correct as
+built). The set grew; the gate stayed. `hidden` deliberately stays out:
+stripping it would reveal content the author hid.
+
+**`--fix-duplicate-ids` (issue #14).** The 20-book sample caught duplicate
+ids in HTML content documents (the Calcutta Chromosome `heading_id_2`)
+that no flag addressed. The SVG fix's first-keeps-name rule extends
+cleanly: the first occurrence keeps its name, later duplicates gain
+`_2`/`_3`, and no reference is rewritten because `#fragment` anchors, CSS
+`#id` selectors, and NCX fragment references all resolve to the first
+definition exactly as readers resolved them before. Live gate on the
+specimen: accept, net error decrease alongside the default pass.
+
+**`--declare-missing-items` (issue #16).** The coverage study answered the
+question both ways. RSC-001 is already covered where it can be: 95.3% of
+its mass is spine documents whose files exist under a different spelling
+(the Wandering Inn pair alone is 1,474 of 1,546 entries), which the spine
+guard refuses by design and `--encode-url-spaces` owns; the long tail is
+cleared by the existing prune; the boundary is documented, not widened.
+RSC-008 had zero coverage, structurally: the prune's predicate is
+target-absent and an undeclared resource is by definition present. The new
+flag is the inverse move: it adds the manifest `<item>` declarations the
+OPF never wrote for files the book references and the archive carries
+(content `img`/`link`, CSS `url()` resources, OPF guide references), with
+sorted deterministic `bindery-dN` ids, blessed extension-map media types
+only, and no `<itemref>` ever written (the spine is untouched; an itemref
+with no manifest item stays unrepaired, since which file it meant is
+underdetermined). Live gate on the facility specimen: 3 items declared
+(the three Calibre split-CSS files), RSC-008 fully cleared, accept, and a
+second run declares nothing.
+
+**The epubcheck timeout stops lying (issue #15).** The Summa Theologica
+timed out at the fixed 300s in one whole-library run and passed the
+identical gate in another. The default oracle budget is now size-scaled
+(300s at or under 10 MB, plus a minute per started 10 MB above, capped at
+30 minutes), one subprocess retry follows a timed-out attempt, and only a
+double timeout raises the new `OracleTimeout`, which the gate reports as
+`(epubcheck timeout)` instead of filing the flake under
+`(epubcheck failed)` with crashes and unparsable output. Sweep selection
+catches it and keeps the book a candidate; a timed-out book is still never
+applied.
+
+**Observe schema v2 (issue #13).** The census counted aggregated epubcheck
+JSON message entries and labeled them `occurrences`; the Feynman specimen
+measured the gap at 20,307 text sites vs 7,030 entries (up to ~600x on
+other books). `codes.occurrences` is renamed `codes.messages` (the gate's
+scale), a true `codes.occurrences` now sums each message's `locations`
+(the per-site scale), a `counting` block in the artifact states both
+scales, the census harness reads the JSON with Jackson (already on
+epubcheck's classpath; the legacy code scan stays as the fallback), and
+`--against` accepts v1 artifacts: the trend keys exist in both.
+
+**The content-model ruling (issue #12).** The span-in-body, incomplete
+blockquote, and bare-body-text families (well-formed but schema-invalid
+under XHTML 1.1) are ruled measured-not-repaired in `spec.md`: they render
+everywhere, the only mechanizable repair (wrapping the loose content in
+the implied element) changes layout, and a repair that cannot be made
+deterministically rendering-preserving does not belong in the inventory.
+`--reserialize` stays deliberately inert here (its trigger is XML
+ParseError; these documents parse). The spec's out-of-scope list carries
+the ruling with the Dark Star falsification cited.
+
+**The census lanes (issue #17).** RSC-012 is `--strip-broken-anchors`'
+class (96.5% of 1,210 live locations across 188 books; the 42 OPF-guide
+locations are furniture no repair touches). OPF-029 is `--fix-media-types`
+for 216 of 280 locations (the Tress probe went 75 errors to zero, fully
+clean); the 64 survivors are honest-or-refused declarations the flag
+correctly leaves. OPF-030 (27 books), CSS-007 (114 books, INFO), and
+RSC-004 (84 books, all font obfuscation, zero DRM, the audit's benign
+OBFUSCATED verdict) are recorded leave-measured with their mechanisms and,
+where one exists, the recipe for a future pass. The full census, wordings,
+and per-book tables live in `OBSERVE-RESEARCH.md`.
+
+
 ## v0.54.0 (2026-10-24)
 
 ### The error-code surgery fixes: the core pass stopped breaking valid books

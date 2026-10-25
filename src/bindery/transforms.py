@@ -887,21 +887,12 @@ _SVG_TAG_RE = re.compile(r"""<[a-zA-Z][\w:.-]*(?:"[^"]*"|'[^']*'|[^>])*+>""")
 _SVG_ID_ATTR_RE = re.compile(r"""(\bid\s*=\s*)(["'])((?:(?!\2).)*+)(\2)""")
 
 
-def fix_svg_dup_ids(s: str) -> tuple[str, int]:
-    """Rename duplicate `id` values within one SVG document, keeping the
-    FIRST occurrence (the RSC-005 'Duplicate "glNNNN"' class from old
-    calibre SVG page renders).
-
-    Opt-in (--fix-svg-dup-ids). The first occurrence keeps its name, every
+def _rename_duplicate_ids(s: str) -> tuple[str, int]:
+    """The shared duplicate-id rename: first occurrence keeps its name, every
     later one gains `_2`, `_3`, ... (prefixed with `_` until free), in
-    document order; internal `xlink:href="#x"` / `url(#x)` references are
-    never rewritten because they already resolve to the first definition
-    under every reader's first-match lookup, so first-keeps-id preserves
-    exactly what was rendered. Runs on standalone `.svg` entries only:
-    content-document ids are styled by CSS selectors and targeted by
-    anchors, and renaming those needs a reference graph this repair
-    deliberately does not build.
-    """
+    document order. Internal references are never rewritten because they
+    already resolve to the first definition under every reader's first-match
+    lookup, so first-keeps-id preserves exactly what was rendered."""
     values = [
         m.group(3)
         for tag in _SVG_TAG_RE.finditer(s)
@@ -932,6 +923,40 @@ def fix_svg_dup_ids(s: str) -> tuple[str, int]:
         return tag.group(0)[: m.start(3)] + new + tag.group(0)[m.end(3) :]
 
     return _SVG_TAG_RE.sub(fix_tag, s), count
+
+
+def fix_svg_dup_ids(s: str) -> tuple[str, int]:
+    """Rename duplicate `id` values within one SVG document, keeping the
+    FIRST occurrence (the RSC-005 'Duplicate "glNNNN"' class from old
+    calibre SVG page renders).
+
+    Opt-in (--fix-svg-dup-ids). The first occurrence keeps its name, every
+    later one gains `_2`, `_3`, ... (prefixed with `_` until free), in
+    document order; internal `xlink:href="#x"` / `url(#x)` references are
+    never rewritten because they already resolve to the first definition
+    under every reader's first-match lookup, so first-keeps-id preserves
+    exactly what was rendered. Runs on standalone `.svg` entries only:
+    content-document duplicates are the separate --fix-duplicate-ids flag.
+    """
+    return _rename_duplicate_ids(s)
+
+
+def fix_duplicate_ids(s: str) -> tuple[str, int]:
+    """Rename duplicate `id` values within one content document, keeping the
+    FIRST occurrence (the RSC-005 'Duplicate id' class on .xhtml/.html
+    carriers; the Calcutta Chromosome `heading_id_2` shape).
+
+    Opt-in (--fix-duplicate-ids). The first occurrence keeps its name, so
+    every reference that points at the name — internal `href="#x"` anchors,
+    CSS `#x` selectors, cross-document and NCX fragment references — still
+    resolves exactly as before, to the first definition: under a duplicate
+    id the target was ambiguous anyway, and first-match is what readers
+    actually did (the rule proven by the SVG fix). The later duplicates
+    gain `_2`, `_3`, ... and lose whatever invalid double-styling the
+    second definition carried; the book keeps the styling it could render
+    deterministically.
+    """
+    return _rename_duplicate_ids(s)
 
 
 # The mis-nested inline pair (the Mobipocket drop-cap shape `<i><b>S</i></b>`):

@@ -23,6 +23,7 @@ from unittest import mock
 
 from bindery.validate import (
     CheckResult,
+    OracleTimeout,
     _counts_from_json,
     _DaemonPool,
     _english_locale_env,
@@ -30,6 +31,7 @@ from bindery.validate import (
     _readline_timeout,
     gate,
     no_worse,
+    oracle_timeout_for,
     run_epubcheck,
     set_daemon_pool_size,
 )
@@ -175,12 +177,66 @@ class FailureModes(unittest.TestCase):
         ):
             self.assertIsNone(run_epubcheck(_BOOK))
 
-    def test_timeout_is_none(self) -> None:
+    def test_timeout_retries_once_then_raises(self) -> None:
+        # Issue #15: one timeout is retried before the failure is final, and
+        # only a double timeout raises the distinct exception (a bare None
+        # would bury the flake under the crash/unparsable bucket).
         with mock.patch(
             "bindery.validate.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd="epubcheck", timeout=1),
+        ) as run:
+            with self.assertRaises(OracleTimeout):
+                run_epubcheck(_BOOK)
+        self.assertEqual(run.call_count, 2)
+
+    def test_timeout_retry_succeeds(self) -> None:
+        # The dry-run flake shape (issue #15): first attempt exceeds the
+        # budget, the identical second attempt passes.
+        with mock.patch(
+            "bindery.validate.subprocess.run",
+            side_effect=[
+                subprocess.TimeoutExpired(cmd="epubcheck", timeout=1),
+                _completed(stdout=_json_output(0, 1, 0)),
+            ],
         ):
-            self.assertIsNone(run_epubcheck(_BOOK))
+            self.assertEqual(run_epubcheck(_BOOK), CheckResult(0, 1, 0))
+
+    def test_explicit_timeout_is_used_verbatim(self) -> None:
+        with mock.patch(
+            "bindery.validate.subprocess.run",
+            return_value=_completed(stdout=_json_output(0, 0, 0)),
+        ) as run:
+            run_epubcheck(_BOOK, timeout=42)
+        self.assertEqual(run.call_args.kwargs["timeout"], 42)
+
+
+class ScaledTimeout(unittest.TestCase):
+    """The size-scaled default budget (issue #15): the Summa Theologica
+    (10.4 MB) flaked at the fixed 300s; books over 10 MB get a minute per
+    started 10 MB, capped at 30 minutes."""
+
+    def test_at_or_under_ten_mb_keeps_the_base(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            small = Path(td) / "small.epub"
+            small.write_bytes(b"x" * (10 * 2**20))
+            self.assertEqual(oracle_timeout_for(small), 300)
+            empty = Path(td) / "missing.epub"
+            self.assertEqual(oracle_timeout_for(empty), 300)
+
+    def test_over_ten_mb_scales_per_started_chunk(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            book = Path(td) / "summa.epub"
+            book.write_bytes(b"x" * int(10.4 * 2**20))
+            self.assertEqual(oracle_timeout_for(book), 360)
+            big = Path(td) / "big.epub"
+            big.write_bytes(b"x" * (51 * 2**20))
+            self.assertEqual(oracle_timeout_for(big), 600)
+
+    def test_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            huge = Path(td) / "huge.epub"
+            huge.write_bytes(b"x" * (500 * 2**20))
+            self.assertEqual(oracle_timeout_for(huge), 1800)
 
 
 class ReadlineTimeout(unittest.TestCase):

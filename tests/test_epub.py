@@ -11,6 +11,8 @@ from xml.etree import ElementTree as ET
 from bindery.epub import (
     RepairFlags,
     _locate_opf,
+    collect_undeclared_resources,
+    declare_missing_manifest_items,
     downgrade_epub3_tags,
     fix_manifest_ids,
     fix_ncx_ids,
@@ -310,14 +312,19 @@ class TestStripEpub3Attrs(unittest.TestCase):
 
     def test_reader_legitimate_attributes_survive(self):
         # The fixed set must never sweep up lookalikes: bare `type`, the
-        # wider aria family, and a spine's own (EPUB3-valid) direction attr
-        # name only matched in full.
-        text = (
-            '<input type="text" aria-hidden="true">'
-            '<section aria-labelledby="t">x</section>'
-        )
+        # wider aria family (aria-labelledby is not in the set; aria-hidden
+        # JOINED it in issue #11 after the census found it rejected on EPUB2
+        # packages), and a spine's own (EPUB3-valid) direction attr name
+        # only matched in full.
+        text = '<input type="text"><section aria-labelledby="t">x</section>'
         out, n = strip_epub3_attributes(text)
         self.assertEqual((out, n), (text, 0))
+
+    def test_aria_hidden_and_role_now_stripped(self):
+        # issue #11: the dominant EPUB3-semantics-on-legacy-package family
+        text = '<span role="doc-pagebreak" aria-hidden="true">x</span>'
+        out, n = strip_epub3_attributes(text)
+        self.assertEqual((out, n), ("<span>x</span>", 2))
 
     def test_prose_mentioning_the_attributes_survives(self):
         # reported 2026-09-08: the unanchored regex deleted visible prose like
@@ -1294,6 +1301,142 @@ class TestEncodeUrlSpacesEpub(unittest.TestCase):
         self._build()
         report = repair_epub(self.src, self.dst)
         self.assertNotIn("url_spaces_encoded", report.fixes)
+
+
+class TestDeclareMissingItems(unittest.TestCase):
+    """The RSC-008 repair (issue #16): declare present-but-undeclared
+    resources the book references; never touch the spine."""
+
+    OPF = (
+        '<?xml version="1.0"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+        'unique-identifier="id"><metadata/>'
+        '<manifest><item id="c1" href="c1.xhtml" '
+        'media-type="application/xhtml+xml"/></manifest>'
+        "<spine><itemref idref='c1'/></spine></package>"
+    )
+
+    def test_declare_adds_sorted_deterministic_items(self):
+        targets = frozenset({"OEBPS/images/b.png", "OEBPS/images/a.png"})
+        out, n = declare_missing_manifest_items(self.OPF, "OEBPS", targets)
+        self.assertEqual(n, 2)
+        a = out.index('id="bindery-d1" href="images/a.png"')
+        b = out.index('id="bindery-d2" href="images/b.png"')
+        self.assertLess(a, b)
+        self.assertIn('media-type="image/png"', out)
+        ET.fromstring(out)
+
+    def test_declare_skips_unknowable_media_types(self):
+        out, n = declare_missing_manifest_items(
+            self.OPF, "OEBPS", frozenset({"OEBPS/data.blob"})
+        )
+        self.assertEqual((out, n), (self.OPF, 0))
+
+    def test_declare_id_collision_gets_prefixed(self):
+        opf = self.OPF.replace(
+            "</manifest>",
+            '<item id="bindery-d1" href="x.png" media-type="image/png"/></manifest>',
+        )
+        out, n = declare_missing_manifest_items(
+            opf, "OEBPS", frozenset({"OEBPS/y.png"})
+        )
+        self.assertEqual(n, 1)
+        self.assertIn('id="_bindery-d1" href="y.png"', out)
+
+    def test_declare_without_manifest_is_a_noop(self):
+        out, n = declare_missing_manifest_items(
+            "<package/>", "OEBPS", frozenset({"OEBPS/y.png"})
+        )
+        self.assertEqual((out, n), ("<package/>", 0))
+
+    def test_collect_finds_img_link_css_and_guide_targets(self):
+        entries = {
+            "OEBPS/c1.xhtml": (
+                '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+                "<head><title>t</title>"
+                '<link rel="stylesheet" href="style.css"/>'
+                "<style>p { background: url(bg.png); }</style></head>"
+                "<body><p>x</p><img src='images/i.png'/></body></html>"
+            ),
+            "OEBPS/content.opf": self.OPF,
+            "OEBPS/style.css": "p { list-style-image: url(../OEBPS/dot.gif); }",
+            "OEBPS/images/i.png": b"\x89PNG\r\n\x1a\n",
+            "OEBPS/bg.png": b"\x89PNG\r\n\x1a\n",
+            "OEBPS/dot.gif": b"GIF89a",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                for name, data in entries.items():
+                    z.writestr(name, data)
+            with zipfile.ZipFile(src) as z:
+                opf_text = z.read("OEBPS/content.opf").decode()
+                got = collect_undeclared_resources(
+                    z, opf_text, "OEBPS", frozenset(z.namelist())
+                )
+        self.assertEqual(
+            got,
+            frozenset(
+                {
+                    "OEBPS/images/i.png",
+                    "OEBPS/bg.png",
+                    "OEBPS/style.css",
+                    "OEBPS/dot.gif",
+                }
+            ),
+        )
+
+    def test_collect_skips_schemes_fragments_spaces_and_declared(self):
+        entries = {
+            "OEBPS/c1.xhtml": (
+                '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+                "<head><title>t</title></head><body>"
+                '<a href="https://x/y.png">e</a>'
+                '<a href="c1.xhtml#frag">f</a>'
+                '<img src="has space.png"/>'
+                '<img src="c1_x.png"/>'
+                "</body></html>"
+            ),
+            "OEBPS/content.opf": self.OPF.replace(
+                'media-type="application/xhtml+xml"/>',
+                'media-type="application/xhtml+xml"/>'
+                '<item id="c1_x" href="c1_x.png" media-type="image/png"/>',
+            ),
+            "OEBPS/c1_x.png": b"\x89PNG\r\n\x1a\n",
+            "OEBPS/has space.png": b"\x89PNG\r\n\x1a\n",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                for name, data in entries.items():
+                    z.writestr(name, data)
+            with zipfile.ZipFile(src) as z:
+                opf_text = z.read("OEBPS/content.opf").decode()
+                got = collect_undeclared_resources(
+                    z, opf_text, "OEBPS", frozenset(z.namelist())
+                )
+        self.assertEqual(got, frozenset())
+
+    def test_repair_end_to_end_declares_the_image(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            dst = Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", self.OPF)
+                z.writestr(
+                    "OEBPS/c1.xhtml",
+                    '<?xml version="1.0"?><html '
+                    'xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+                    "</head><body><p>x</p><img src='images/i.png'/></body></html>",
+                )
+                z.writestr("OEBPS/images/i.png", b"\x89PNG\r\n\x1a\n")
+            report = repair_epub(src, dst, flags=RepairFlags(declare_missing=True))
+            self.assertEqual(report.fixes.get("manifest_items_declared"), 1)
+            with zipfile.ZipFile(dst) as z:
+                opf_out = z.read("OEBPS/content.opf").decode()
+            self.assertIn('href="images/i.png"', opf_out)
+            self.assertIn('media-type="image/png"', opf_out)
 
 
 if __name__ == "__main__":

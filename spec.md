@@ -13,13 +13,15 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-two
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-four
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
-`--prune-missing-resources`, `--strip-broken-anchors`, `--encode-url-spaces`,
+`--prune-missing-resources`, `--declare-missing-items`, `--strip-broken-anchors`,
+`--encode-url-spaces`,
 `--fix-container`, `--fix-media-types`, `--fix-cover`, `--fix-comment-double-hyphen`,
-`--fix-svg-dup-ids`, `--fix-cdata-terminator`, `--fix-misnested-inline`,
+`--fix-svg-dup-ids`, `--fix-duplicate-ids`, `--fix-cdata-terminator`,
+`--fix-misnested-inline`,
 `--fix-stray-close`, `--fix-unterminated-attr`, `--fix-unbound-prefix`) alter
 markup structure or fabricate minimal content; the four
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
@@ -88,7 +90,8 @@ bookkeeping.
 The OPF is located via `META-INF/container.xml` (falling back to the first `.opf`
 in the archive). The default pass leaves it untouched, to keep Calibre's embedded
 metadata pristine; the opt-in `--fix-ids`, `--strip-epub3-attrs`, `--fix-page-map`,
-`--prune-missing-resources`, and `--encode-url-spaces` each edit it when requested,
+`--prune-missing-resources`, `--declare-missing-items`, and `--encode-url-spaces`
+each edit it when requested,
 and the human-facing `dc:` metadata is never altered by any of them.
 
 ### Opt-in: escape unknown entities (`--escape-unknown-entities`)
@@ -138,7 +141,7 @@ byte-for-byte. The normal gate applies.
 
 ### Opt-in: structural repairs
 
-Twenty-one repairs go past well-formedness and therefore require their own flag; none is ever
+Twenty-four repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
@@ -161,9 +164,15 @@ part of the default pipeline:
   Anna's Archive conversions carry them). A pageList that already carries a class is
   untouched.
 - **`--strip-epub3-attrs`**: scrub the EPUB3-only attributes epubcheck rejects on an
-  EPUB2 package: `page-progression-direction`, `epub:type`, `aria-label` (a fixed,
-  documented set; extend only with a named epubcheck finding). Rendering is unchanged,
-  and reader-legitimate lookalikes (`type`, the wider aria family) survive. The edit is
+  EPUB2 package: `page-progression-direction`, `epub:type`, `aria-label`, `role`,
+  `aria-hidden` (a fixed, documented set; extend only with a named epubcheck
+  finding). `role` and `aria-hidden` joined in v0.55.0 (issue #11): the 2026-10-25
+  census found them the dominant EPUB3-semantics-on-legacy-package family (DPUB-ARIA
+  `doc-*` roles and `aria-hidden="true"` only, no visual default either way), and
+  the earlier "reader-legitimate" protection of `aria-hidden` dated from before that
+  measurement. `hidden` stays out on purpose: stripping it would REVEAL content the
+  author hid, a rendering change. Rendering is unchanged for everything in the set,
+  and lookalikes (`type`, `aria-labelledby`) survive. The edit is
   anchored to real start tags and never touches CDATA sections or comments, so prose
   that merely mentions `epub:type="chapter"` is preserved.
 - **`--downgrade-epub3-tags`**: downgrade EPUB3/HTML5 semantic elements to their EPUB2
@@ -201,6 +210,24 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   prune reads, never snapshotted earlier: `--fix-manifest-ids` may have renamed item
   ids and spine idrefs ahead of it in the OPF pipeline, and a guard describing the old
   spelling protects nothing.
+- **`--declare-missing-items`**: the RSC-008 inverse of the prune (v0.55.0, issue
+  #16): add the manifest `<item>` declarations the OPF never wrote for files the
+  archive carries and the book references: content `<img src>` and `<link href>`
+  targets, CSS `url()` resources (inline `<style>` blocks and stylesheet entries),
+  and OPF guide `<reference href>`s. The referencing elements are untouched; only
+  the OPF grows. Deterministic: targets in sorted order, ids `bindery-dN` (`_`-prefixed
+  until free), media types from a blessed extension map only (anything else is
+  skipped rather than guessed, because a wrong media type would trade RSC-008 for a
+  fresh OPF-029), and no `<itemref>` is ever written, so the spine is untouched. An
+  itemref with no matching manifest item is deliberately NOT repaired here (which
+  file that idref meant is underdetermined, and guessing could weld a foreign
+  document into the spine), nor is a referenced file that is itself absent from the
+  archive (that is the prune's class, or a re-source). The 2026-10-25 census measured
+  the prune's coverage of RSC-001/RSC-008 at the same time: RSC-001 is spine-guarded
+  by design (95.3% of its mass is spine documents whose files exist under a
+  different spelling; `--encode-url-spaces` territory) and RSC-008 had zero
+  coverage (441 of 452 sampled findings are `<img src>` to present-but-undeclared
+  files); this flag is that repair.
 - **`--strip-broken-anchors`**: strip `href` attributes that cannot resolve, keeping
   the anchor text byte-for-byte. A `#fragment` the target document does not define
   (RSC-020 "fragment identifier not defined", RSC-012 "points to the wrong element") is
@@ -264,8 +291,19 @@ use, with the `partial` rule intact.
   `xlink:href="#x"` / `url(#x)` references are deliberately never rewritten: they
   already resolve to the first definition under every reader's first-match lookup, so
   first-keeps-id preserves exactly what rendered. Scope is standalone `.svg` entries
-  only: content-document ids are styled by CSS selectors and targeted by anchors, and
-  renaming those needs a reference graph this repair does not build.
+  only; duplicate ids in the content documents themselves are the separate
+  `--fix-duplicate-ids` flag (v0.55.0).
+- **`--fix-duplicate-ids`**: the same first-keeps-name rename for duplicate `id`
+  values in the content documents (RSC-005 "Duplicate id" on `.xhtml`/`.html`
+  carriers; v0.55.0, issue #14: the Calcutta Chromosome `heading_id_2` shape the
+  20-book sample caught with no flag addressing it). The first occurrence keeps its
+  name, so every reference to the name (internal `href="#x"` anchors, CSS `#x`
+  selectors, cross-document and NCX fragment references) still resolves exactly as
+  before, to the first definition: under a duplicate id the target was ambiguous
+  anyway, and first-match is what readers actually did (the rule the SVG fix
+  proved). The later duplicates gain `_2`, `_3`, ... and lose whatever invalid
+  double-styling the second definition carried; the book keeps the styling it could
+  render deterministically.
 - **`--fix-cdata-terminator`**: complete a truncated CDATA-terminator comment in an
   inline `<style>` block: `/*]]>` becomes `/*]]>*/` (a comment-wrapped CDATA block
   whose closing `*/` the converter dropped; epubcheck's CSS parser reads the dangling
@@ -317,7 +355,7 @@ use, with the `partial` rule intact.
   byte-identical. Runs on the OPF only: content documents have the
   invalid-attribute drop (`--strip-bad-attrs`) for the same defect class.
 
-Twenty of the twenty-two are evaluated by the normal `gate`: unlike the lossy strips,
+Twenty-two of the twenty-four are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. The two exceptions are `--fix-cover` and
 `--encode-url-spaces`, whose gains sit on axes epubcheck does not measure (cover
@@ -593,7 +631,7 @@ writes one self-describing `.observe` artifact. It is the whole-library
 answering of "where are we at": the census measures every book (clean ones
 included) for epubcheck counts AND error codes together, tabulates the result
 (library totals, a severity histogram with error-mass and per-count buckets,
-the error-code profile as occurrences and distinct books, the worst offenders),
+the error-code profile as messages, occurrences, and distinct books, the worst offenders),
 and records per-book census rows so any later question can be answered from
 the artifact without re-validating.
 
@@ -602,8 +640,10 @@ javac, in-memory compile) and always answers for every input path: a book the
 JVM cannot read arrives as the `-1,-1,-1` sentinel record rather than being
 dropped, and a run that comes back short of the input count refuses to write
 a partial census (exit 2). Counting matches the subprocess oracle by
-construction: the harness scans the JSON document `generate()` serializes,
-the same document the gate is calibrated on.
+construction: the harness reads the JSON document `generate()` serializes
+(Jackson, already on the epubcheck classpath; the legacy whole-document
+code scan stays as the fallback), the same document the gate is calibrated
+on, and aggregates each message ID's entry count and `locations` length.
 
 The optional repair preview (default on; `--no-preview` skips) composes the
 shipped library runner in-process (`run phase1`'s pattern): a dry-run sweep
@@ -612,11 +652,18 @@ counts, and the fix breakdown. The preview measures what `--apply` would
 write; it never writes. `--workers N` governs the preview's sweep pass; the
 census is parallel inside its own JVM.
 
-The artifact is versioned (`schema: bindery-observe-v1`) and strictly
+The artifact is versioned (`schema: bindery-observe-v2`) and strictly
 read-only: the only file the verb writes is the artifact itself, and the
 writer refuses to land it inside the scanned root (the keep-root-clean
 rule; the default output is `observe-<timestamp>.observe` in the current
-directory). `--against FILE` loads a previous artifact of the same schema and
+directory). The two counting scales are stated in the artifact's `counting`
+block (issue #13): `codes.messages` and the per-book rows' `codes` lists
+count AGGREGATED epubcheck JSON message entries (one per distinct defect
+text; the scale the repair gate measures), while `codes.occurrences` sums
+the per-message `locations` arrays (the per-site scale the epubcheck text
+summary reports; the same book can differ by orders of magnitude between
+the two, up to ~600x measured). `--against FILE` loads a previous artifact
+of the same schema (v1 accepted: the trend reader's keys exist in both) and
 carries a `trend` block: library-total deltas, error-mass delta, and per-code
 book-count changes with `new_codes`/`resolved_codes`. A schema mismatch is a
 usage error, never a silently incomparable trend. Exit codes: 0 artifact
@@ -738,6 +785,18 @@ Behavior contract:
   RSC-005 repairs (`--strip-epub3-attrs`, `--downgrade-epub3-tags`, both gated on
   the package version) ship and stay, but an indiscriminate RSC-005 sweep remains
   out of scope.
+- The XHTML 1.1 content-model families (span directly in body, blockquote
+  lacking a block child, bare text as a body child) are MEASURED, NOT REPAIRED,
+  by explicit ruling (issue #12, 2026-10-25). They are well-formed but
+  schema-invalid; every reader renders them, and the only mechanizable repair is
+  wrapping the loose content in the implied element, which changes layout (an
+  inline run becomes a margined paragraph). A repair that cannot be made
+  deterministically rendering-preserving does not belong in the inventory; the
+  observatory tracks the family (RSC-005 families "element not allowed here" /
+  "element incomplete" / "text not allowed here"), and `--reserialize` is
+  deliberately inert here (its html5lib path triggers only on XML ParseError,
+  and these documents parse; falsified live on the Dark Star specimen,
+  2026-10-24).
 - Repairing genuinely mangled structure remains opt-in and bounded:
   `--reserialize` (the lone html5lib dependency) re-parses malformed documents
   carrying an `<html>` root and re-emits XHTML, refusing non-HTML XML sidecars;

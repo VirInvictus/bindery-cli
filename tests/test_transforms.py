@@ -15,6 +15,7 @@ from bindery.transforms import (
     escape_bare_amp,
     escape_unknown_entities,
     fix_cdata_terminator,
+    fix_duplicate_ids,
     fix_empty_body,
     fix_id_colons,
     fix_misnested_inline,
@@ -1200,6 +1201,36 @@ class TestPipeline(unittest.TestCase):
         ET.fromstring(out)
         self.assertNotIn("&nbsp;", out)
         self.assertNotIn("&eacute;", out)
+
+
+class TestFixDuplicateIds(unittest.TestCase):
+    """The content-doc half of the duplicate-id rename (issue #14): the same
+    first-keeps-name rule as the SVG fix, no reference rewritten."""
+
+    def test_content_doc_duplicate_renamed_first_kept(self):
+        doc = (
+            '<html><body><h2 id="heading_id_2">first</h2>'
+            '<h2 id="heading_id_2">second</h2>'
+            '<div id="x"/><div id="x"/></body></html>'
+        )
+        out, n = fix_duplicate_ids(doc)
+        self.assertEqual(n, 2)
+        self.assertEqual(out.count('id="heading_id_2"'), 1)
+        self.assertIn('id="heading_id_2_2"', out)
+        self.assertIn('id="x_2"', out)
+
+    def test_href_anchor_not_rewritten(self):
+        doc = (
+            '<html><body><a href="#toc">top</a><p id="toc"/><p id="toc"/></body></html>'
+        )
+        out, n = fix_duplicate_ids(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('href="#toc"', out)
+        self.assertIn('id="toc_2"', out)
+
+    def test_unique_ids_untouched(self):
+        doc = '<html><body><p id="a"/><p id="b"/></body></html>'
+        self.assertEqual(fix_duplicate_ids(doc), (doc, 0))
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ from .library import (
 from .observe import run_observe
 from .validate import (
     CheckResult,
+    OracleTimeout,
     epubcheck_available,
     gate,
     no_worse,
@@ -92,6 +93,7 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         strip_epub3_attrs=args.strip_epub3_attrs or all_,
         downgrade_epub3=args.downgrade_epub3_tags or all_,
         prune_missing=args.prune_missing_resources or all_,
+        declare_missing=args.declare_missing_items or all_,
         strip_anchors=args.strip_broken_anchors or all_,
         url_spaces=args.encode_url_spaces or all_,
         fix_container=args.fix_container or all_,
@@ -99,6 +101,7 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         fix_cover=args.fix_cover or all_,
         comment_double_hyphens=args.fix_comment_double_hyphen or all_,
         svg_dup_ids=args.fix_svg_dup_ids or all_,
+        duplicate_ids=args.fix_duplicate_ids or all_,
         cdata_terminator=args.fix_cdata_terminator or all_,
         misnested_inline=args.fix_misnested_inline or all_,
         stray_close=args.fix_stray_close or all_,
@@ -143,19 +146,31 @@ def process_book(
             watermark_refusals=report.watermark_refusals,
         )
 
+    timed_out = False
+
     if before is None:
-        before = run_epubcheck(epub)
-    after = run_epubcheck(repaired)
+        try:
+            before = run_epubcheck(epub)
+        except OracleTimeout:
+            timed_out = True
+    after = None
+    try:
+        after = run_epubcheck(repaired)
+    except OracleTimeout:
+        timed_out = True
     if before is None or after is None:
         # Validation was requested but the oracle failed (crash, timeout, unparsable
         # output). This is "error", not "unvalidated": the gate did not accept the
         # repair, so it must never be applied. Only --no-validate skips the gate.
+        # A timeout after the scaled budget and the retry says so by name (issue
+        # #15): the flake must not read as a crash.
+        reason = "epubcheck timeout" if timed_out else "epubcheck failed"
         return Outcome(
             epub,
             "error",
             before,
             after,
-            summary + " (epubcheck failed)",
+            summary + f" ({reason})",
             fixes=report.fixes,
             ncx_uid_synced=report.ncx_uid_synced,
             watermark_refusals=report.watermark_refusals,
@@ -299,7 +314,10 @@ def _sweep_select(epubs, only: str, root: Path, checks: dict, *, quiet: bool):
     for epub in epubs:
         if not quiet:
             tqdm.write(f"[sweep] {epub.relative_to(root)}", file=sys.stderr)
-        counts = run_epubcheck(epub)
+        try:
+            counts = run_epubcheck(epub)
+        except OracleTimeout:
+            counts = None
         if counts is not None:
             checks[epub] = counts
         if only == "fatals":
@@ -329,13 +347,20 @@ def _sweep_select_parallel(
     todo = list(epubs)
     if not todo:
         return
+
+    def _oracle(epub: Path) -> CheckResult | None:
+        try:
+            return run_epubcheck(epub)
+        except OracleTimeout:
+            return None
+
     with ThreadPoolExecutor(max_workers=workers) as ex:
         progress = (
             None if quiet else tqdm(total=len(todo), desc="Sweeping", unit="book")
         )
         for start in range(0, len(todo), workers):
             window = todo[start : start + workers]
-            futures = [ex.submit(run_epubcheck, epub) for epub in window]
+            futures = [ex.submit(_oracle, epub) for epub in window]
             for epub, fut in zip(window, futures, strict=True):
                 c = fut.result()
                 if not quiet:
@@ -1667,9 +1692,11 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "strip_epub3_attrs",
             "scrub EPUB3-only attributes an EPUB2 package rejects (fixed set)",
             "scrub the EPUB3-only attributes epubcheck rejects on an EPUB2 "
-            "package: page-progression-direction, epub:type, aria-label (a "
-            "fixed, documented set; rendering is unchanged). Gated on the "
-            "package version: inert on EPUB 3 books.",
+            "package: page-progression-direction, epub:type, aria-label, role, "
+            "aria-hidden (a fixed, documented set; issue #11 added the last "
+            "two after the 2026-10-25 census found them the dominant "
+            "EPUB3-semantics-on-legacy-package family). Rendering is "
+            "unchanged. Gated on the package version: inert on EPUB 3 books.",
         ),
         (
             "downgrade_epub3_tags",
@@ -1768,8 +1795,21 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             '"glNNNN"\' errors per book). The first occurrence keeps its name, '
             "later ones gain _2/_3, and internal references are deliberately "
             "untouched: they already resolve to the first definition under "
-            "every reader's first-match lookup. Content-document ids are styled "
-            "by CSS selectors and targeted by anchors; they stay out of scope.",
+            "every reader's first-match lookup. Duplicate ids in the content "
+            "documents themselves are the separate --fix-duplicate-ids flag.",
+        ),
+        (
+            "fix_duplicate_ids",
+            "rename duplicate ids in content documents (first keeps its name)",
+            "rename duplicate id values within each content document (the "
+            "RSC-005 'Duplicate id' class on .xhtml/.html carriers; issue #14, "
+            "the Calcutta Chromosome heading_id_2 shape that no flag "
+            "addressed). Same rule as the SVG fix: the first occurrence keeps "
+            "its name, later ones gain _2/_3, and no reference is rewritten "
+            "because href='#x' anchors, CSS '#x' selectors, and cross-document "
+            "fragment references all resolve to the first definition exactly "
+            "as readers resolved them before. The later duplicates lose "
+            "whatever invalid double-styling the second definition carried.",
         ),
     ],
     "structural repairs: package wiring": [
@@ -1790,6 +1830,18 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "quote-preserving; it fires only when the file's magic bytes "
             "confirm the extension, so a misnamed-but-consistent file is never "
             "made worse.",
+        ),
+        (
+            "declare_missing_items",
+            "declare referenced-but-undeclared files present in the archive (RSC-008)",
+            "add the manifest <item> declarations the OPF never wrote for files "
+            "the book references and the archive carries (RSC-008; issue #16): "
+            "content <img src> and <link href> targets, CSS url() resources, "
+            "and OPF guide references. Deterministic ids (bindery-dN), media "
+            "types from a blessed extension map only (anything else is skipped "
+            "rather than guessed), no itemref written (the spine is untouched). "
+            "An itemref with no manifest item is deliberately not repaired: "
+            "which file it meant is underdetermined.",
         ),
         (
             "fix_cover",

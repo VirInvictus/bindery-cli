@@ -193,9 +193,30 @@ def _fixtures() -> dict:
         "--strip-epub3-attrs": (
             {
                 "OEBPS/content.opf": _opf([c1], [r1]),
-                "OEBPS/c1.xhtml": _doc('<p epub:type="chapter">x</p>'),
+                "OEBPS/c1.xhtml": _doc(
+                    '<p epub:type="chapter" role="doc-chapter" aria-hidden="true">x</p>'
+                ),
             },
             "epub3_attrs_stripped",
+        ),
+        "--fix-duplicate-ids": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": _doc(
+                    '<h2 id="heading_id_2">first</h2>'
+                    '<h2 id="heading_id_2">second</h2>'
+                    '<a href="#heading_id_2">go</a>'
+                ),
+            },
+            "fix_duplicate_ids",
+        ),
+        "--declare-missing-items": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": _doc('<p>x</p><img src="images/i.png"/>'),
+                "OEBPS/images/i.png": PNG_BYTES,
+            },
+            "manifest_items_declared",
         ),
         "--downgrade-epub3-tags": (
             {
@@ -484,8 +505,18 @@ class FlagEndToEndTests(unittest.TestCase):
         )
 
     def test_strip_epub3_attrs(self):
+        # Issue #11: the fixture carries epub:type + role + aria-hidden, so
+        # the extended set must strip all three.
         self.assertGreaterEqual(
-            self._fixes_for("--strip-epub3-attrs")["epub3_attrs_stripped"], 1
+            self._fixes_for("--strip-epub3-attrs")["epub3_attrs_stripped"], 3
+        )
+
+    def test_fix_duplicate_ids(self):
+        self.assertEqual(self._fixes_for("--fix-duplicate-ids")["fix_duplicate_ids"], 1)
+
+    def test_declare_missing_items(self):
+        self.assertEqual(
+            self._fixes_for("--declare-missing-items")["manifest_items_declared"], 1
         )
 
     def test_downgrade_epub3_tags(self):

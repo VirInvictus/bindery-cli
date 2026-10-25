@@ -23,7 +23,7 @@ from bindery.observe import (
 )
 
 
-def _rec(path, f=0, e=0, w=0, codes=(), unreadable=False):
+def _rec(path, f=0, e=0, w=0, codes=(), unreadable=False, occs=()):
     return CensusRecord(
         path=path,
         fatals=f,
@@ -31,6 +31,7 @@ def _rec(path, f=0, e=0, w=0, codes=(), unreadable=False):
         warnings=w,
         codes=tuple(codes),
         unreadable=unreadable,
+        code_occurrences=tuple(occs),
     )
 
 
@@ -40,6 +41,24 @@ class TestParseCensusLine(unittest.TestCase):
         self.assertEqual((r.fatals, r.errors, r.warnings), (1, 3, 0))
         self.assertEqual(r.codes, ("RSC-005", "RSC-005", "NCX-001"))
         self.assertFalse(r.unreadable)
+
+    def test_v2_tokens_carry_both_scales(self):
+        # Schema v2 (issue #13): CODE:messages:occurrences; the codes tuple
+        # stays one entry per aggregated message for the per-book rows.
+        r = parse_census_line("0,4,0 ||| RSC-005:3:104,RSC-012:1:1 ||| /lib/a.epub")
+        self.assertEqual((r.fatals, r.errors, r.warnings), (0, 4, 0))
+        self.assertEqual(r.codes, ("RSC-005", "RSC-005", "RSC-005", "RSC-012"))
+        self.assertEqual(r.code_occurrences, (("RSC-005", 104), ("RSC-012", 1)))
+
+    def test_legacy_bare_tokens_are_one_message_each(self):
+        r = parse_census_line("0,2,0 ||| RSC-005,NCX-001 ||| /lib/a.epub")
+        self.assertEqual(r.codes, ("RSC-005", "NCX-001"))
+        self.assertEqual(r.code_occurrences, ())
+
+    def test_malformed_message_count_is_skipped(self):
+        r = parse_census_line("0,1,0 ||| RSC-005:x:1,NCX-001:1:2 ||| /lib/a.epub")
+        self.assertEqual(r.codes, ("NCX-001",))
+        self.assertEqual(r.code_occurrences, (("NCX-001", 2),))
 
     def test_clean_book_has_empty_codes(self):
         r = parse_census_line("0,0,0 |||  ||| /lib/clean.epub")
@@ -64,7 +83,12 @@ class TestTabulate(unittest.TestCase):
         records = [
             _rec("/root/a.epub"),
             _rec("/root/b.epub", e=1, codes=("NCX-001",)),
-            _rec("/root/c.epub", e=3, codes=("RSC-005", "RSC-005")),
+            _rec(
+                "/root/c.epub",
+                e=3,
+                codes=("RSC-005", "RSC-005"),
+                occs=(("RSC-005", 57),),
+            ),
             _rec("/root/d.epub", f=1, e=200, codes=("RSC-016",)),
             _rec("/root/e.epub", w=2),
             _rec("/root/f.epub", unreadable=True),
@@ -80,8 +104,10 @@ class TestTabulate(unittest.TestCase):
         self.assertEqual(sev["warnings_only"], 1)
         self.assertEqual(sev["unreadable"], 1)
         self.assertEqual(sev["error_mass"], 204)
-        # occurrences count repeats; books counts each title once
-        self.assertEqual(tab["codes"]["occurrences"]["RSC-005"], 2)
+        # schema v2 (issue #13): messages counts aggregated entries,
+        # occurrences sums the harness's per-code location counts
+        self.assertEqual(tab["codes"]["messages"]["RSC-005"], 2)
+        self.assertEqual(tab["codes"]["occurrences"]["RSC-005"], 57)
         self.assertEqual(tab["codes"]["books"]["RSC-005"], 1)
         # worst is ordered by error mass, paths relative to the root
         self.assertEqual(tab["worst"][0]["path"], "d.epub")
@@ -90,6 +116,7 @@ class TestTabulate(unittest.TestCase):
     def test_empty_census(self):
         tab = tabulate([], Path("/root"))
         self.assertEqual(tab["library"]["epubs_total"], 0)
+        self.assertEqual(tab["codes"]["messages"], {})
         self.assertEqual(tab["codes"]["occurrences"], {})
         self.assertEqual(tab["worst"], [])
 
@@ -240,7 +267,10 @@ class TestRunObserve(unittest.TestCase):
         self.assertEqual(art["library"]["epubs_total"], 2)
         self.assertEqual(art["preview"]["summary"]["accepted"], 1)
         self.assertEqual(art["preview"]["books"][0]["path"], "a.epub")
-        self.assertEqual(art["codes"]["occurrences"]["RSC-005"], 1)
+        self.assertEqual(art["codes"]["messages"]["RSC-005"], 1)
+        # the counting scales are stated in the artifact (issue #13)
+        self.assertIn("aggregated", art["counting"]["messages"])
+        self.assertIn("locations", art["counting"]["occurrences"])
         self.assertNotIn("trend", art)
         # the per-book census rows: every book lands here, clean or not
         rows = {b["path"]: b for b in art["books"]}
@@ -255,6 +285,40 @@ class TestRunObserve(unittest.TestCase):
         self.assertEqual(rc, 0)
         art = json.loads(self.out.read_text())
         self.assertNotIn("preview", art)
+
+    def test_against_accepts_a_v1_artifact(self):
+        # Issue #13: build_trend reads library/codes.books/severity, all
+        # present in both schemas, so the v0.53.1 baseline stays a valid
+        # --against target for the v2 trend.
+        v1 = Path(self.tmp.name) / "v1.observe"
+        v1.write_text(
+            json.dumps(
+                {
+                    "schema": "bindery-observe-v1",
+                    "generated": "2026-10-24T00:00:00Z",
+                    "root": str(self.root),
+                    "library": {
+                        "epubs_total": 2,
+                        "clean": 0,
+                        "with_findings": 2,
+                        "unreadable": 0,
+                    },
+                    "severity": {"error_mass": 2},
+                    "codes": {"books": {"RSC-005": 1}},
+                }
+            )
+        )
+        rc = self._run(against=str(v1), no_preview=True)
+        self.assertEqual(rc, 0)
+        art = json.loads(self.out.read_text())
+        self.assertEqual(art["trend"]["clean_delta"], 1)
+
+    def test_against_refuses_a_foreign_schema(self):
+        v0 = Path(self.tmp.name) / "v0.observe"
+        v0.write_text(json.dumps({"schema": "bindery-observe-v0", "library": {}}))
+        rc = self._run(against=str(v0), no_preview=True)
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.out.exists())
 
     def test_trend_block_composed_from_against(self):
         self._run()

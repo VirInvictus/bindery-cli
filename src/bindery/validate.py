@@ -40,6 +40,36 @@ class CheckResult:
         return f"{self.fatals}f/{self.errors}e/{self.warnings}w"
 
 
+class OracleTimeout(RuntimeError):
+    """Every oracle attempt timed out (issue #15).
+
+    Raised only after the size-scaled budget and the one retry are spent,
+    so a caller seeing it knows the book is slow, not broken: the summary
+    says "epubcheck timeout" instead of burying the flake under
+    "epubcheck failed" with crashes and unparsable output.
+    """
+
+
+def oracle_timeout_for(path: Path, base: int = 300) -> int:
+    """The epubcheck budget for one book: the base, plus a minute per
+    started 10 MB above 10 MB, capped at 30 minutes (issue #15).
+
+    The 2026-10-24 whole-library runs hit a 300s ceiling on the Summa
+    Theologica (10.4 MB, 3,795-playOrder NCX): it timed out in one run and
+    passed the identical gate in another, so the fixed budget misfiled a
+    timing flake as a repair error. Bigger books simply get more time;
+    anything at or under 10 MB keeps the exact historical 300s.
+    """
+    try:
+        size_mb = path.stat().st_size / (2**20)
+    except OSError:
+        return base
+    if size_mb <= 10:
+        return base
+    chunks = int((size_mb - 10) // 10) + 1
+    return min(base + 60 * chunks, 1800)
+
+
 def epubcheck_available() -> bool:
     return shutil.which("epubcheck") is not None
 
@@ -395,7 +425,7 @@ def set_daemon_pool_size(n: int) -> None:
     _daemon_pool.set_size(n)
 
 
-def run_epubcheck(path: Path, timeout: int = 300) -> CheckResult | None:
+def run_epubcheck(path: Path, timeout: int | None = None) -> CheckResult | None:
     """Run epubcheck and return parsed counts, or None if it could not be parsed.
 
     Counts come from `--json -` (locale-independent) first; the English summary-line
@@ -404,28 +434,47 @@ def run_epubcheck(path: Path, timeout: int = 300) -> CheckResult | None:
     available (the pool grows to the sweep's worker count, bounded by
     set_daemon_pool_size); the roundtrip itself is bounded by `timeout`, and None
     anywhere means the caller falls back to (or reports) failure.
+
+    Timeout handling (issue #15): an explicit `timeout` is used exactly as given;
+    the default budget is `oracle_timeout_for(path)`. One subprocess retry follows
+    a timed-out subprocess attempt (the daemon path already gets its subprocess
+    fallback, which is that attempt). If every attempt timed out, OracleTimeout
+    raises instead of returning None: the gate reports "epubcheck timeout" and the
+    book is never misapplied, but the summary separates the flake from real
+    oracle failures.
     """
+    if timeout is None:
+        timeout = oracle_timeout_for(path)
     res = _daemon_pool.check(path, timeout)
     if res is not None:
         return res
-    try:
-        out = subprocess.run(
-            ["epubcheck", str(path), "--json", "-"],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=_english_locale_env(),
-            check=False,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    timed_out = False
+    for _attempt in (1, 2):
+        try:
+            out = subprocess.run(
+                ["epubcheck", str(path), "--json", "-"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=_english_locale_env(),
+                check=False,
+            )
+        except FileNotFoundError:
+            return None
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            continue
+        timed_out = False
+        result = _counts_from_json(out.stdout)
+        if result is not None:
+            return result
+        m = _SUMMARY_RE.search(out.stdout + out.stderr)
+        if m:
+            return CheckResult(int(m.group(1)), int(m.group(2)), int(m.group(3)))
         return None
-    result = _counts_from_json(out.stdout)
-    if result is not None:
-        return result
-    m = _SUMMARY_RE.search(out.stdout + out.stderr)
-    if not m:
-        return None
-    return CheckResult(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    if timed_out:
+        raise OracleTimeout(f"epubcheck timed out twice at {timeout}s on {path}")
+    return None
 
 
 def gate(before: CheckResult, after: CheckResult) -> str:

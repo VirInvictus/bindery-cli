@@ -39,7 +39,8 @@ from pathlib import Path
 
 from . import __version__
 
-SCHEMA = "bindery-observe-v1"
+SCHEMA = "bindery-observe-v2"
+SCHEMA_V1 = "bindery-observe-v1"
 
 # The per-book output line: counts, then the error-code profile, then the
 # canonical path. The sentinel counts (-1,-1,-1) mark a book the JVM could
@@ -53,12 +54,16 @@ import java.io.File;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import com.adobe.epubcheck.api.EpubCheck;
 import com.adobe.epubcheck.reporting.CheckingReport;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class ObserveSweep {
     private static final Pattern CODE = Pattern.compile("([A-Z]{3}-\\\\d{3})");
@@ -81,6 +86,47 @@ public class ObserveSweep {
             i = json.indexOf(name, i + 1);
         }
         return -1;
+    }
+
+    // Schema v2 (issue #13): the code token carries both scales, per code as
+    // CODE:messages:occurrences — messages = aggregated JSON entries (one per
+    // distinct defect text; the scale the repair gate measures), occurrences
+    // = summed locations arrays (the per-site scale the epubcheck text
+    // summary reports). Primary path parses the generated document with
+    // Jackson (already on the epubcheck classpath); the legacy whole-document
+    // regex scan stays as the fallback, emitting bare codes whose
+    // occurrences are unknown.
+    static String codesToken(String json) {
+        try {
+            JsonNode msgs = new ObjectMapper().readTree(json).path("messages");
+            if (msgs.isArray()) {
+                Map<String, int[]> agg = new LinkedHashMap<>();
+                for (JsonNode m : msgs) {
+                    String id = m.path("ID").asText("");
+                    if (!id.matches("[A-Z]{3}-\\\\d{3}")) continue;
+                    int[] c = agg.computeIfAbsent(id, k -> new int[2]);
+                    c[0]++;
+                    JsonNode locs = m.get("locations");
+                    c[1] += locs == null ? 0 : locs.size();
+                }
+                StringBuilder sb = new StringBuilder();
+                for (Map.Entry<String, int[]> e : agg.entrySet()) {
+                    if (sb.length() > 0) sb.append(',');
+                    sb.append(e.getKey()).append(':').append(e.getValue()[0])
+                      .append(':').append(e.getValue()[1]);
+                }
+                return sb.toString();
+            }
+        } catch (Exception unparsable) {
+            // fall through to the regex scan
+        }
+        StringBuilder sb = new StringBuilder();
+        Matcher m = CODE.matcher(json);
+        while (m.find()) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(m.group(1));
+        }
+        return sb.toString();
     }
 
     public static void main(String[] args) throws Exception {
@@ -111,13 +157,8 @@ public class ObserveSweep {
                     if (f < 0 || e < 0 || w < 0) {
                         line = "-1,-1,-1 ||| ||| " + epub.getCanonicalPath();
                     } else {
-                        List<String> codes = new ArrayList<>();
-                        Matcher m = CODE.matcher(json);
-                        while (m.find()) {
-                            codes.add(m.group(1));
-                        }
                         line = f + "," + e + "," + w + " ||| "
-                                + String.join(",", codes) + " ||| "
+                                + codesToken(json) + " ||| "
                                 + epub.getCanonicalPath();
                     }
                 } catch (Exception ex) {
@@ -145,6 +186,9 @@ class CensusRecord:
     warnings: int
     codes: tuple[str, ...]
     unreadable: bool
+    # (code, occurrences) pairs from the v2 harness line; empty when the
+    # harness fell back to the legacy regex scan (occurrences unknown).
+    code_occurrences: tuple[tuple[str, int], ...] = ()
 
 
 def _find_epubcheck_jar() -> Path | None:
@@ -164,7 +208,9 @@ def _find_epubcheck_jar() -> Path | None:
 def parse_census_line(line: str) -> CensusRecord | None:
     """One harness output line into a record, or None on a shape it cannot own.
 
-    `f,e,w ||| CODE,CODE,... ||| path`; the sentinel counts mark unreadable.
+    `f,e,w ||| CODE:messages:occurrences,... ||| path` (schema v2); the
+    sentinel counts mark unreadable. Bare `CODE` tokens (the v1 harness
+    shape) count one aggregated message each with unknown occurrences.
     maxsplit keeps a path that itself contains the separator intact (the
     scripts/ harness carries the same assumption; here the cost of being
     wrong is a None the caller reports, not a lost book).
@@ -175,13 +221,33 @@ def parse_census_line(line: str) -> CensusRecord | None:
     counts, codes_text, path = parts
     f, e, w = (int(x) for x in counts.split(","))
     unreadable = (f, e, w) == (-1, -1, -1)
-    codes = tuple(c for c in codes_text.split(",") if c)
+    codes: list[str] = []
+    occs: list[tuple[str, int]] = []
+    for token in codes_text.split(","):
+        if not token:
+            continue
+        code, sep, rest = token.partition(":")
+        if not sep:
+            codes.append(code)
+            continue
+        msg_text, sep2, occ_text = rest.partition(":")
+        try:
+            n = int(msg_text)
+        except ValueError:
+            continue  # a malformed token must not lose the book
+        codes.extend([code] * n)
+        if sep2:
+            try:
+                occs.append((code, int(occ_text)))
+            except ValueError:
+                pass
     return CensusRecord(
         path=path,
         fatals=max(f, 0),
         errors=max(e, 0),
         warnings=max(w, 0),
-        codes=codes,
+        codes=tuple(codes),
+        code_occurrences=tuple(occs),
         unreadable=unreadable,
     )
 
@@ -294,15 +360,23 @@ def tabulate(records: list[CensusRecord], root: Path) -> dict:
         )
     )
 
+    messages: Counter[str] = Counter()
     occurrences: Counter[str] = Counter()
     books: Counter[str] = Counter()
     for r in records:
         for c in set(r.codes):
             books[c] += 1
-        occurrences.update(r.codes)
+        messages.update(r.codes)
+        for code, n in r.code_occurrences:
+            occurrences[code] += n
+    # Schema v2 (issue #13): `messages` is the aggregated-entries scale the
+    # gate measures (one entry per distinct defect text); `occurrences` is
+    # the true per-site scale (summed locations), present only where the
+    # harness parsed the document rather than falling back to the regex scan.
     codes = {
+        "messages": dict(messages.most_common()),
         "occurrences": dict(occurrences.most_common()),
-        "books": {code: books[code] for code, _ in occurrences.most_common()},
+        "books": {code: books[code] for code, _ in messages.most_common()},
     }
 
     worst = [
@@ -444,9 +518,13 @@ def run_observe(args) -> int:
                 file=sys.stderr,
             )
             return 1
-        if not isinstance(previous, dict) or previous.get("schema") != SCHEMA:
+        if not isinstance(previous, dict) or previous.get("schema") not in (
+            SCHEMA,
+            SCHEMA_V1,
+        ):
             print(
-                f"error: --against artifact {args.against} is not a {SCHEMA} document",
+                f"error: --against artifact {args.against} is not a "
+                f"{SCHEMA} (or {SCHEMA_V1}) document",
                 file=sys.stderr,
             )
             return 1
@@ -477,6 +555,22 @@ def run_observe(args) -> int:
         .isoformat(timespec="seconds")
         .replace("+00:00", "Z"),
         "tool": {"bindery": __version__, "epubcheck": _epubcheck_version()},
+        # The two counting scales, stated in the artifact so no consumer has
+        # to rediscover them (issue #13): every number in codes.messages and
+        # in the per-book rows' codes list is an aggregated epubcheck JSON
+        # message entry, while codes.occurrences sums the per-message
+        # locations arrays (the per-site scale of epubcheck's text summary).
+        "counting": {
+            "messages": (
+                "aggregated epubcheck JSON message entries: one per distinct "
+                "defect text; the scale the repair gate measures"
+            ),
+            "occurrences": (
+                "summed per-message locations arrays: every site the "
+                "epubcheck text summary counts; absent where the census "
+                "harness fell back to the legacy code scan"
+            ),
+        },
         "root": str(root),
         "census_seconds": round(census_s, 1),
         **tab,
@@ -527,12 +621,15 @@ def run_observe(args) -> int:
         f"\nbooks: {lib['epubs_total']}  clean: {lib['clean']}  "
         f"with findings: {lib['with_findings']}  unreadable: {lib['unreadable']}"
     )
-    top = list(artifact["codes"]["occurrences"].items())[:10]
+    top = list(artifact["codes"]["messages"].items())[:10]
     if top:
+        occ = artifact["codes"]["occurrences"]
         print("top error codes:")
         for code, n in top:
+            o = occ.get(code)
+            scale = f" / {o} occurrence(s)" if o else ""
             print(
-                f"  {code}: {n} occurrence(s) in "
+                f"  {code}: {n} message(s){scale} in "
                 f"{artifact['codes']['books'][code]} book(s)"
             )
     print(f"artifact: {output}")

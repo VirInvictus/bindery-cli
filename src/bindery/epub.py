@@ -28,6 +28,7 @@ from .pagination import collect_runheads, detect_page_layer, strip_pagination_do
 from .reserialize import reserialize_if_broken
 from .transforms import (
     _PROTECTED_RE,
+    _STYLE_BLOCK_RE,
     HTML_TRANSFORMS,
     XML_TRANSFORMS,
     add_img_alt,
@@ -37,6 +38,7 @@ from .transforms import (
     escape_unknown_entities,
     fix_cdata_terminator,
     fix_comment_double_hyphen,
+    fix_duplicate_ids,
     fix_empty_body,
     fix_id_colons,
     fix_misnested_inline,
@@ -274,6 +276,7 @@ class RepairFlags:
     strip_epub3_attrs: bool = False
     downgrade_epub3: bool = False
     prune_missing: bool = False
+    declare_missing: bool = False
     strip_anchors: bool = False
     url_spaces: bool = False
     fix_container: bool = False
@@ -281,6 +284,7 @@ class RepairFlags:
     fix_cover: bool = False
     comment_double_hyphens: bool = False
     svg_dup_ids: bool = False
+    duplicate_ids: bool = False
     cdata_terminator: bool = False
     misnested_inline: bool = False
     stray_close: bool = False
@@ -350,8 +354,15 @@ def fix_pagelist_class(ncx_text: str) -> tuple[str, int]:
     return _PAGELIST_OPEN_RE.sub(_add, ncx_text), count
 
 
+# The fixed EPUB3-semantics set (issue #11): `role` and `aria-hidden` join
+# the original three. Deliberately NOT here: `hidden` (stripping it would
+# REVEAL content the author hid, a rendering change) and `epub:prefix`
+# (it binds the prefixes the kept epub:type values use). The 2026-10-25
+# population census found every role/aria-hidden carrier on version="2.0"
+# packages with DPUB-ARIA doc-* roles and aria-hidden="true" only — no
+# visual default either way, the same inert class as aria-label.
 _EPUB3_ATTR_RE = re.compile(
-    r"\s+(?:page-progression-direction|epub:type|aria-label)"
+    r"\s+(?:page-progression-direction|epub:type|aria-label|role|aria-hidden)"
     r'=(?:"[^"]*"|\'[^\']*\')'
 )
 
@@ -563,12 +574,14 @@ def fix_manifest_media_types(opf_text: str, opf_dir: str, peek) -> tuple[str, in
 
 def strip_epub3_attributes(text: str) -> tuple[str, int]:
     """Scrub the EPUB3-only attributes older conversions sprinkle onto EPUB2
-    documents: ``page-progression-direction``, ``epub:type`` and
-    ``aria-label`` — epubcheck answers RSC-005 for each on an EPUB2 package
-    (the 2026-09-02 verdict: scrub, not tolerate). Rendering is unchanged;
-    none of them carries visible content. The set is fixed and documented:
-    extend it only with a named epubcheck finding, never speculatively, so a
-    reader-legitimate attribute can never be swept up by accident.
+    documents: ``page-progression-direction``, ``epub:type``,
+    ``aria-label``, ``role`` and ``aria-hidden`` — epubcheck answers RSC-005
+    for each on an EPUB2 package (the 2026-09-02 verdict: scrub, not
+    tolerate; the set extension and its census are issue #11). Rendering is
+    unchanged; none of them carries visible content. The set is fixed and
+    documented: extend it only with a named epubcheck finding, never
+    speculatively, so a reader-legitimate attribute can never be swept up
+    by accident.
 
     The edit is anchored to real start tags and never touches CDATA sections
     or comments, so prose that merely mentions ``epub:type="chapter"`` and
@@ -913,6 +926,159 @@ def prune_missing_manifest_items(
         return ""
 
     return _ITEM_TAG_RE.sub(repl, opf_text), count, pruned
+
+
+# ---- --declare-missing-items: the RSC-008 repair (issue #16). The prune's
+# predicate is target-absent, but an undeclared resource is by definition
+# PRESENT, so the RSC-008 family (the 2026-10-25 census: 441/452 sampled
+# findings are content <img src> to present-but-undeclared files) needs the
+# inverse move: add the manifest declaration the package never wrote. The
+# element carrying the reference is untouched; only the OPF grows.
+
+# Extension -> media type for the declarations this repair writes. The font
+# and image names are from epubcheck's blessed sets (font/* prefixes are
+# blessed on both EPUB2 and EPUB3 packages); anything outside the map is
+# skipped rather than guessed: a wrong media type would trade RSC-008 for a
+# fresh OPF-029.
+_DECLARE_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".css": "text/css",
+    ".xhtml": "application/xhtml+xml",
+    ".html": "application/xhtml+xml",
+    ".htm": "application/xhtml+xml",
+    ".ncx": "application/x-dtbncx+xml",
+    ".otf": "font/otf",
+    ".ttf": "font/ttf",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".xpgt": "application/vnd.adobe-page-template+xml",
+}
+
+_CSS_URL_RES = (_RENAME_CSS_URL_QUOTED_RE, _RENAME_CSS_URL_BARE_RE)
+
+
+def _iter_css_urls(css: str):
+    """Every url() target in a CSS fragment: group 3 of the quoted form, but
+    group 2 of the bare form (whose group 3 is the closing paren)."""
+    for um in _RENAME_CSS_URL_QUOTED_RE.finditer(css):
+        yield um.group(3)
+    for um in _RENAME_CSS_URL_BARE_RE.finditer(css):
+        yield um.group(2)
+
+
+def _collect_undeclared_urls(
+    text: str, doc_dir: str, declared: frozenset[str], present: frozenset[str]
+) -> set[str]:
+    """The src/href/url() targets this document references that exist in the
+    archive but not in the manifest. Scheme-carrying references, fragments,
+    raw-space names (the --encode-url-spaces shape), and unresolvable
+    spellings are skipped: this repair never guesses."""
+    found: set[str] = set()
+    for m in _PRUNE_IMG_TAG_RE.finditer(text):
+        sm = _SRC_ATTR_RE.search(m.group(1))
+        if sm:
+            found.add(sm.group(2))
+    for m in _LINK_TAG_RE.finditer(text):
+        hm = _HREF_ATTR_RE.search(m.group(1))
+        if hm:
+            found.add(hm.group(2))
+    for sm in _STYLE_BLOCK_RE.finditer(text):
+        found.update(_iter_css_urls(sm.group(1)))
+    out: set[str] = set()
+    for ref in found:
+        if not ref or "#" in ref or " " in ref or _URL_SCHEME_RE.match(ref):
+            continue
+        resolved = _resolve_href(doc_dir, ref)
+        if resolved is not None and resolved in present and resolved not in declared:
+            out.add(resolved)
+    return out
+
+
+def collect_undeclared_resources(
+    zin: zipfile.ZipFile, opf_text: str, opf_dir: str, present: frozenset[str]
+) -> frozenset[str]:
+    """Every archive-present, manifest-absent resource the book references:
+    content <img src> and <link href>, inline <style> url()s, stylesheet
+    url()s, and OPF guide <reference href>s. The caller runs it once per
+    book (the prune's whole-book-property pattern) and hands the result to
+    declare_missing_manifest_items. Non-UTF-8 documents are skipped (their
+    references are nobody's guess)."""
+    declared: set[str] = set()
+    for m in _ITEM_TAG_RE.finditer(opf_text):
+        hm = _HREF_ATTR_RE.search(m.group(0))
+        if hm:
+            resolved = _resolve_href(opf_dir, hm.group(2))
+            if resolved is not None:
+                declared.add(resolved)
+
+    def resolvable(ref: str, doc_dir: str) -> str | None:
+        if not ref or "#" in ref or " " in ref or _URL_SCHEME_RE.match(ref):
+            return None
+        resolved = _resolve_href(doc_dir, ref)
+        if resolved is not None and resolved in present and resolved not in declared:
+            return resolved
+        return None
+
+    targets: set[str] = set()
+    for m in _GUIDE_REF_RE.finditer(opf_text):
+        hm = _HREF_ATTR_RE.search(m.group(0))
+        if hm:
+            r = resolvable(hm.group(2), opf_dir)
+            if r:
+                targets.add(r)
+    for item in zin.infolist():
+        low = item.filename.lower()
+        try:
+            text = zin.read(item).decode("utf-8")
+        except (UnicodeDecodeError, RuntimeError):
+            continue
+        doc_dir = posixpath.dirname(item.filename)
+        if low.endswith(CONTENT_SUFFIXES):
+            targets |= _collect_undeclared_urls(text, doc_dir, declared, present)
+        elif low.endswith((".css", ".xpgt")):
+            for ref in _iter_css_urls(text):
+                r = resolvable(ref, doc_dir)
+                if r:
+                    targets.add(r)
+    return frozenset(targets)
+
+
+def declare_missing_manifest_items(
+    opf_text: str, opf_dir: str, targets: frozenset[str]
+) -> tuple[str, int]:
+    """Write one `<item>` per undeclared target, inserted before
+    `</manifest>`. Deterministic: targets in sorted order, ids `bindery-dN`
+    (prefixed with `_` until free), href the relative spelling from the OPF,
+    media type from _DECLARE_MEDIA_TYPES. Nothing on the spine changes (no
+    itemref is written), so reading order and rendering are untouched — the
+    package simply tells the truth about the files it carries. An itemref
+    with no matching manifest item is deliberately NOT repaired here: which
+    file that idref meant is underdetermined, and guessing could weld a
+    foreign document into the spine."""
+    if not targets or "</manifest>" not in opf_text:
+        return opf_text, 0
+    existing_ids = {m.group(3) for m in _XML_ID_RE.finditer(opf_text)}
+    lines: list[str] = []
+    count = 0
+    for i, target in enumerate(sorted(targets), 1):
+        media_type = _DECLARE_MEDIA_TYPES.get(posixpath.splitext(target)[1].lower())
+        if media_type is None:
+            continue
+        item_id = f"bindery-d{i}"
+        while item_id in existing_ids:
+            item_id = "_" + item_id
+        existing_ids.add(item_id)
+        href = _xml_escape(posixpath.relpath(target, opf_dir or "."), {'"': "&quot;"})
+        lines.append(f'<item id="{item_id}" href="{href}" media-type="{media_type}"/>')
+        count += 1
+    if not count:
+        return opf_text, 0
+    return opf_text.replace("</manifest>", "\n".join(lines) + "\n</manifest>", 1), count
 
 
 # ---- --strip-stub-docs: the lossy drop of repeated placeholder spine docs.
@@ -1476,7 +1642,10 @@ def repair_epub(
     <pageList> elements in the NCX (older HarperCollins / Anna's Archive conversions
     fail epubcheck on both).
     With `strip_epub3_attrs`, scrub the EPUB3-only attributes epubcheck rejects on an
-    EPUB2 package (page-progression-direction, epub:type, aria-label; fixed set).
+    EPUB2 package (page-progression-direction, epub:type, aria-label, role,
+    aria-hidden; fixed set — issue #11 extended it with the last two, the
+    dominant EPUB3-semantics-on-legacy-package family; `hidden` stays
+    unstripped on purpose because removing it would reveal hidden content).
     With `downgrade_epub3`, downgrade EPUB3/HTML5 semantic elements (figure, figcaption,
     section) to their EPUB2 equivalents with the semantic name kept as a class; names a
     stylesheet styles as an element selector are protected for the whole book.
@@ -1484,6 +1653,12 @@ def repair_epub(
     (RSC-007/PKG-010): dead <link> elements, anchors' href to absent files, absent
     <img> sources (replaced by their alt text when they carry one), and orphaned
     non-spine OPF manifest items. Spine documents are never pruned.
+    With `declare_missing`, the RSC-008 inverse: add manifest `<item>` declarations
+    for files the archive carries and the book references (content <img src>,
+    <link href>, CSS url(), OPF guide references) but the manifest never declared.
+    Deterministic ids and blessed media types only; no itemref is written, so the
+    spine is untouched. An itemref with no manifest item stays unrepaired (which
+    file it meant is underdetermined).
     With `strip_anchors`, strip href attributes that cannot resolve: a #fragment the
     target document does not define (RSC-020/RSC-012; NCX navTargets keep the document
     target) and non-resolvable URI schemes (kindle:, file:). Anchor text is always
@@ -1515,6 +1690,10 @@ def repair_epub(
     first occurrence keeps its name, later ones gain `_2`/`_3`..., and
     internal references need no rewrite because they resolve to the first
     definition under every reader's first-match lookup.
+    With `duplicate_ids`, the same first-keeps-name rename for duplicate
+    `id` values in the content documents themselves (RSC-005 'Duplicate id'
+    on .xhtml/.html carriers): every reference to the name still resolves
+    to the first definition, exactly as readers resolved it before.
     With `cdata_terminator`, complete a truncated CDATA-terminator comment in
     an inline <style> block (`/*]]>` -> `/*]]>*/`; the CSS-008 'Premature end
     of file' class, one error per affected document).
@@ -1654,12 +1833,23 @@ def repair_epub(
         # references (the content-doc prune in the id snapshot above, and the
         # manifest prune, which runs ahead of rewrite_space_renames)
         present_src: frozenset[str] = frozenset()
-        if flags.prune_missing or flags.strip_anchors or flags.fix_media_types:
+        if (
+            flags.prune_missing
+            or flags.strip_anchors
+            or flags.fix_media_types
+            or flags.declare_missing
+        ):
             for n in zin.namelist():
                 norm_to_raw.setdefault(_norm_path(space_renames.get(n, n)), n)
             present = frozenset(norm_to_raw)
             if space_renames:
                 present_src = frozenset(_norm_path(n) for n in zin.namelist())
+        # --declare-missing-items: the whole-book reference census (which
+        # present files does the book reference without declaring?), computed
+        # once like the prune's existence set.
+        undeclared: frozenset[str] = frozenset()
+        if flags.declare_missing and opf_text is not None:
+            undeclared = collect_undeclared_resources(zin, opf_text, opf_dir, present)
 
         # --strip-stub-docs: the whole-book stub identity decision needs the
         # spine order and every spine doc's visible text, so it runs once up
@@ -1685,6 +1875,8 @@ def repair_epub(
                         t, _ = reserialize_if_broken(t)
                     if flags.id_colons:
                         t, _ = fix_id_colons(t)
+                    if flags.duplicate_ids:
+                        t, _ = fix_duplicate_ids(t)
                     if flags.block_in_inline:
                         t, _ = unwrap_block_in_inline(t)
                     if flags.illegal_tags:
@@ -1888,6 +2080,7 @@ def repair_epub(
                 or flags.page_map
                 or flags.strip_epub3_attrs
                 or flags.prune_missing
+                or flags.declare_missing
                 or flags.url_spaces
                 or flags.fix_media_types
                 or flags.fix_cover
@@ -1936,6 +2129,11 @@ def repair_epub(
                     text, n = prune_dangling_edges(text, pruned_ids)
                     if n:
                         report.add({"prune_edges_rewritten": n})
+                        opf_changed = True
+                if flags.declare_missing and undeclared:
+                    text, n = declare_missing_manifest_items(text, opf_dir, undeclared)
+                    if n:
+                        report.add({"manifest_items_declared": n})
                         opf_changed = True
                 if flags.strip_stub_docs and stub_hrefs:
                     text, n_items, n_refs, stub_ids = strip_stub_manifest(
@@ -2073,6 +2271,10 @@ def repair_epub(
                     text, n = fix_id_colons(text)
                     if n:
                         counts["fix_id_colons"] = n
+                if flags.duplicate_ids:
+                    text, n = fix_duplicate_ids(text)
+                    if n:
+                        counts["fix_duplicate_ids"] = n
                 if flags.block_in_inline:
                     text, n = unwrap_block_in_inline(text)
                     if n:
