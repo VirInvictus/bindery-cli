@@ -288,6 +288,37 @@ class TestPrologAndXmlns(unittest.TestCase):
         out, n = strip_prolog_junk("﻿<!DOCTYPE html><html/>")
         self.assertEqual((out, n), ("<!DOCTYPE html><html/>", 1))
 
+    def test_calibre_cdata_style_wrapper_is_never_amputated(self):
+        # the 2026-10-24 surgery: Calibre wraps inline CSS in
+        # /*<![CDATA[*/ ... /*]]>*/; the bare CDATA protection ended at the
+        # first ]]>, leaving the trailing */ as an outside segment that
+        # strip_prolog_junk amputated (a phantom fix truncating the CSS
+        # comment: one CSS-008 "Premature end of file" per wrapped file,
+        # 111 gate-rejected books library-wide)
+        s = (
+            '<?xml version="1.0"?><html><head><style type="text/css">'
+            "/*<![CDATA[*/ p { color: red } /*]]>*/</style></head>"
+            "<body/></html>"
+        )
+        self.assertEqual(strip_prolog_junk(s), (s, 0))
+        self.assertIn("/*]]>*/", s)
+
+    def test_truncated_calibre_wrapper_still_reachable_for_the_terminator_fix(self):
+        # a genuinely truncated closer (no trailing */) must stay outside the
+        # protected span so --fix-cdata-terminator can still see and repair it
+        s = (
+            '<?xml version="1.0"?><html><head><style type="text/css">'
+            "/*<![CDATA[*/ p { color: red } /*]]></style></head>"
+            "<body/></html>"
+        )
+        self.assertEqual(strip_prolog_junk(s), (s, 0))
+        self.assertNotIn("/*]]>*/", s)  # the truncated shape, preserved as-is
+
+    def test_real_junk_still_stripped(self):
+        out, n = strip_prolog_junk("\xef\xbb\xbfstray bytes<html/>")
+        self.assertEqual(n, 1)
+        self.assertTrue(out.startswith("<html/>"))
+
     def test_junk_stripped_without_a_declaration(self):
         out, n = strip_prolog_junk("stray<html/>")
         self.assertEqual((out, n), ("<html/>", 1))
@@ -530,11 +561,86 @@ class TestFixNcxPlayorder(unittest.TestCase):
         self.assertEqual(out, ncx)
 
     def test_resequence_count_still_counts_real_changes(self):
+        # contract semantics (2026-10-24): two playOrder-bearing elements with
+        # no <content> are distinct targets, so sharing one value violates the
+        # distinctness rule; resequencing changes only the first (1) and the
+        # second lands on 2 unchanged, so one attribute change
         ncx = '<navPoint playOrder="2"/><navPoint playOrder="2"/>'
         out, n = fix_ncx_playorder(ncx)
-        self.assertEqual(n, 1)  # the first moves 2->1; the second is right
+        self.assertEqual(n, 1)
         self.assertIn('playOrder="1"', out)
         self.assertIn('playOrder="2"', out)
+
+    def test_shared_target_valid_ncx_is_never_rewritten(self):
+        # the steel-breeze shape from the 2026-10-24 surgery: two navPoints
+        # whose <content src> point at the same file legitimately share one
+        # playOrder; the old unconditional renumbering split them into a
+        # finding and the gate rejected the book
+        ncx = (
+            '<navPoint id="num_1" playOrder="1"><content src="Text/split_000.html"/></navPoint>'
+            '<navPoint id="num_2" playOrder="1"><content src="Text/split_000.html"/></navPoint>'
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_pagetarget_participates_in_the_sequence(self):
+        # chronomancy's shape: valid navPoints 1..3 with a pageTarget pointing
+        # at its own page far ahead is a sequence gap; the pageTarget joins
+        # the sequence as value 4
+        ncx = (
+            '<navPoint playOrder="1"><content src="a.xhtml"/></navPoint>'
+            '<navPoint playOrder="2"><content src="b.xhtml"/></navPoint>'
+            '<navPoint playOrder="3"><content src="c.xhtml"/></navPoint>'
+            '<pageTarget id="page_447" value="447" playOrder="442">'
+            '<content src="page447.xhtml"/></pageTarget>'
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual(n, 1)
+        self.assertIn('playOrder="4"', out)
+        self.assertNotIn('playOrder="442"', out)
+
+    def test_pagetarget_sequence_valid_is_untouched(self):
+        ncx = (
+            '<navPoint playOrder="1"><content src="a.xhtml"/></navPoint>'
+            '<navPoint playOrder="2"><content src="b.xhtml"/></navPoint>'
+            '<pageTarget id="pg" value="3" playOrder="3">'
+            '<content src="c.xhtml"/></pageTarget>'
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_same_target_conflicting_values_share_one_value(self):
+        ncx = (
+            '<navPoint playOrder="1"><content src="a.xhtml"/></navPoint>'
+            '<navPoint playOrder="2"><content src="a.xhtml"/></navPoint>'
+            '<navPoint playOrder="3"><content src="b.xhtml"/></navPoint>'
+        )
+        out, n = fix_ncx_playorder(ncx)
+        # groups in first-appearance order: a.xhtml -> 1 (shared by the first
+        # two), b.xhtml -> 2; both the conflict (2) and the old 3 are rewritten
+        self.assertEqual(n, 2)
+        self.assertEqual(out.count('playOrder="1"'), 2)
+        self.assertIn('playOrder="2"', out)
+        self.assertNotIn('playOrder="3"', out)
+
+    def test_nested_navpoints_with_parent_content_first_are_untouched(self):
+        ncx = (
+            '<navPoint id="a" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="a.xhtml"/>'
+            '<navPoint id="b" playOrder="2"><navLabel><text>B</text></navLabel>'
+            '<content src="b.xhtml"/></navPoint></navPoint>'
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_non_integer_playorder_is_resequenced(self):
+        ncx = (
+            '<navPoint playOrder="x"><content src="a.xhtml"/></navPoint>'
+            '<navPoint playOrder="2"><content src="b.xhtml"/></navPoint>'
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual(n, 1)
+        self.assertIn('playOrder="1"', out)
 
 
 class TestStripInvalidValue(unittest.TestCase):

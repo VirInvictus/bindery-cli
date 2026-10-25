@@ -61,7 +61,18 @@ _EPUB_PREFIX_VAL_RE = re.compile(r"(?:^|\s)([A-Za-z_][\w.-]*)\s*:\s*\S+")
 # (e.g. `&` in CDATA-wrapped CSS/JS renders as `&`; escaped, it renders as `&amp;`).
 # Splitting on this regex yields alternating outside/protected segments, so the
 # markup transforms run only on the even (outside) indices.
-_PROTECTED_RE = re.compile(r"(<!\[CDATA\[.*?\]\]>|<!--.*?-->)", re.DOTALL)
+#
+# The first alternative is Calibre's inline-CSS wrapper idiom
+# `/*<![CDATA[*/ ... /*]]>*/`: the bare CDATA alternative ends at the first `]]>`
+# (inside the closing `/*]]>`), leaving the trailing `*/` as an outside segment,
+# where strip_prolog_junk amputated it as "stray bytes before the first `<"` (a
+# phantom fix that truncated the CSS comment and manufactured one CSS-008
+# "Premature end of file" per wrapped file; the 2026-10-24 whole-library dry run
+# gate-rejected 111 books on exactly this). The wrapper is protected as one unit.
+_PROTECTED_RE = re.compile(
+    r"(/\*<!\[CDATA\[\*/.*?/\*\]\]>\*/|<!\[CDATA\[.*?\]\]>|<!--.*?-->)",
+    re.DOTALL,
+)
 
 
 def outside_protected_map(s: str, fn: Transform) -> tuple[str, int]:
@@ -323,38 +334,127 @@ def drop_duplicate_xmlns(s: str) -> tuple[str, int]:
     return s, count
 
 
+# The playOrder contract epubcheck enforces (the RSC-005 playOrder findings):
+# elements whose <content src> point at the SAME target share one value,
+# distinct targets carry distinct values, and the value set is contiguous
+# 1..K across navPoint + navTarget + pageTarget elements together.
+_PLAYORDER_EL_RE = re.compile(
+    r"<(?:navPoint|navTarget|pageTarget)\b[^>]*>", re.IGNORECASE
+)
+_PLAYORDER_ATTR_RE = re.compile(
+    r"\s+playOrder\s*=\s*(\"[^\"]*\"|'[^']*')", re.IGNORECASE
+)
+_CONTENT_SRC_RE = re.compile(
+    r"<content\b[^>]*?\ssrc\s*=\s*(\"[^\"]*\"|'[^']*')", re.IGNORECASE
+)
+
+
 @_outside_protected
 def fix_ncx_playorder(s: str) -> tuple[str, int]:
-    """Re-sequence `playOrder` integers across `<navPoint>` start tags so they
-    are strictly sequential (NCX-004/NCX-005 class findings). The edit is
-    anchored to navPoint start tags: the word `playOrder` inside a nav
-    label's text is content, not markup, and is never touched.
+    """Re-sequence `playOrder` values so the NCX satisfies epubcheck's playOrder
+    contract, and touch nothing when it already does.
+
+    Contract-gated (the 2026-10-24 whole-library surgery): the previous form
+    renumbered every `<navPoint>` to document-order 1..N unconditionally, which
+    rewrote VALID TOCs into violations -- navPoints whose `<content src>` share
+    a target must share one playOrder (splitting them is a finding), pageTarget/
+    navTarget elements participate in the same sequence (ignoring them leaves
+    gaps), and the gate rejected 211 of the 579 books it fired on, against 17
+    real fixes. The resequencing here assigns each distinct target one value in
+    first-appearance order and rewrites only the attributes whose value changes.
+
+    Anchored to start tags of the three playOrder-bearing elements: the word
+    `playOrder` inside a nav label's text is content, not markup, and is never
+    touched. A navPoint with no playOrder attribute is not part of the sequence
+    (adding attributes is not this repair), and an element whose `<content src>`
+    cannot be located is treated as its own target. Known limit: the tag match
+    ends at the first `>`, so a `>` inside a quoted attribute value before the
+    playOrder attribute hides the element (the same single-class shape every
+    tag matcher here documents).
     """
+    elements: list[dict] = []  # (start, end, raw_value, target, order)
+    current: dict | None = None
+    for m in _PLAYORDER_EL_RE.finditer(s):
+        tag = m.group(0)
+        attr = _PLAYORDER_ATTR_RE.search(tag)
+        if attr is None:
+            continue
+        if current is not None:
+            elements.append(current)
+        current = {
+            "start": m.start(),
+            "end": m.end(),
+            "tag": tag,
+            "raw": attr.group(1),
+            "value": attr.group(1).strip("\"'"),
+            "target": None,
+        }
+    if current is not None:
+        elements.append(current)
+    if not elements:
+        return s, 0
+
+    # Assign each element the src of the first <content> following its own start
+    # tag and before the next playOrder-bearing element starts (flat and
+    # parent-content-first nesting both assign correctly; children-content-first
+    # nesting is the documented limit).
+    for i, el in enumerate(elements):
+        next_start = elements[i + 1]["start"] if i + 1 < len(elements) else len(s)
+        m = _CONTENT_SRC_RE.search(s, el["end"], next_start)
+        if m is not None:
+            el["target"] = m.group(1).strip("\"'")
+
+    def key_of(el: dict) -> str:
+        # An element whose content src cannot be located is its own target
+        # (keyed by position so two such elements never merge).
+        return el["target"] if el["target"] is not None else f"\0{el['start']}"
+
+    groups: dict[str, list[dict]] = {}
+    for el in elements:
+        groups.setdefault(key_of(el), []).append(el)
+
+    # Contract check: every target group carries exactly one integer value,
+    # groups never share a value, and the value set is exactly 1..len(groups).
+    used: set[int] = set()
+    contract_ok = True
+    for members in groups.values():
+        vals: set[int] = set()
+        for el in members:
+            try:
+                vals.add(int(el["value"]))
+            except ValueError:
+                contract_ok = False
+                break
+        if not contract_ok or len(vals) != 1 or vals & used:
+            contract_ok = False
+            break
+        used |= vals
+    if contract_ok and used == set(range(1, len(groups) + 1)):
+        return s, 0
+
+    # Violating: re-sequence by first appearance of each target.
+    assigned: dict[str, int] = {}
+    out = []
+    last = 0
     count = 0
-    playorder = 1
-
-    def repl(m: re.Match) -> str:
-        nonlocal count, playorder
-        # the captured value carries its quotes; strip them before comparing,
-        # or every already-correct navPoint counts as a fix on every pass
-        # (identical output bytes, phantom counts; found by the plugin work,
-        # 2026-09-12). A correct value is returned untouched, so a
-        # single-quoted correct attribute keeps its quote style.
-        if m.group(2).strip("\"'") == str(playorder):
-            res = m.group(0)
-        else:
+    for el in elements:
+        key = key_of(el)
+        if key not in assigned:
+            assigned[key] = len(assigned) + 1
+        new = str(assigned[key])
+        if el["value"] != new:
             count += 1
-            res = f'{m.group(1)} playOrder="{playorder}"'
-        playorder += 1
-        return res
-
-    s, n = re.subn(
-        r"(<navPoint\b[^>]*?)\s+playOrder\s*=\s*(\"[^\"]*\"|'[^']*')",
-        repl,
-        s,
-        flags=re.IGNORECASE,
-    )
-    return s, count
+            attr = _PLAYORDER_ATTR_RE.search(el["tag"])
+            new_tag = (
+                el["tag"][: attr.start()]
+                + f' playOrder="{new}"'
+                + el["tag"][attr.end() :]
+            )
+            out.append(s[last : el["start"]])
+            out.append(new_tag)
+            last = el["end"]
+    out.append(s[last:])
+    return "".join(out), count
 
 
 @_outside_protected

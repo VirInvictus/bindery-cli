@@ -46,7 +46,12 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
    a declaration must be the very first thing in the document; before a DOCTYPE or the
    root element it is legal prolog whitespace and is left in place. (Stripping it
    anyway counted a fix on an undamaged document, which forced the archive rewrite's
-   lossy `decode("utf-8", "replace")` round-trip for no gain.)
+   lossy `decode("utf-8", "replace")` round-trip for no gain.) Calibre's inline-CSS
+   wrapper `/*<![CDATA[*/ ... /*]]>*/` is protected as one unit (v0.54.0): the bare
+   CDATA span ends inside the closing `/*]]>`, which left the trailing `*/` outside
+   the protection map, where the prolog strip amputated it -- a phantom fix
+   truncating the CSS comment (one CSS-008 "Premature end of file" per wrapped
+   file; 111 whole-library gate rejections).
 2. **drop_duplicate_xmlns**: keep only the first `xmlns="..."` on the root `<html>`.
 3. **escape_bare_amp**: replace a `&` that does not start a valid entity or character
    reference with `&amp;`.
@@ -63,9 +68,17 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
 Applied to the NCX sidecar (`.ncx`): strip_prolog_junk, escape_bare_amp,
 fix_named_entities, plus **dtb:uid sync** (rewriting the NCX's `dtb:uid`
 meta to match the OPF's unique identifier when they drift, NCX-001) and
-**fix_ncx_playorder** (resequencing `playOrder` attributes on
-`<navPoint>` start tags so they are strictly sequential; nav-label text
-is never touched).
+**fix_ncx_playorder** (resequencing `playOrder` values so the NCX
+satisfies epubcheck's playOrder contract: elements whose `<content src>`
+point at the same target share one value, distinct targets carry distinct
+values, and the value set is contiguous 1..K across navPoint,
+navTarget, and pageTarget elements together. Contract-gated since v0.54.0:
+an NCX that already satisfies the contract is returned untouched -- the
+previous unconditional 1..N renumbering rewrote valid TOCs into violations
+(splitting duplicate-target sharing, colliding with pageTarget sequences;
+211 of the 579 books it fired on gate-rejected, against 17 real fixes).
+nav-label text is never touched; a navPoint with no playOrder attribute is
+not part of the sequence).
 With `--fix-ids`, ids in the NCX that are not valid XML names (digit-led, as when a
 converter stamps navPoint ids from UUIDs; colon-bearing) are renamed with the same
 `id_` scheme as OPF manifest ids. NCX ids are internal to the NCX (nothing in the

@@ -1,5 +1,57 @@
 # bindery-cli Patch Notes
 
+## v0.54.0 (2026-10-24)
+
+### The error-code surgery fixes: the core pass stopped breaking valid books
+
+The 2026-10-24 whole-library surgery (the record lives in
+`OBSERVE-RESEARCH.md`, specimens in the gitignored testing facility)
+proved that the tool's two worst whole-library behaviors, 313 gate
+rejections and a wall of no-change rewrites, were both self-inflicted.
+Two always-on core transforms carried bugs; the epubcheck gate correctly
+refused every damaged output, which is why no library book was ever hurt.
+
+**fix_ncx_playorder rewrote valid TOCs into violations.** The old form
+renumbered every `<navPoint>` playOrder to document-order 1..N
+unconditionally. epubcheck's actual contract is subtler: navPoints whose
+`<content src>` point at the same target must SHARE one playOrder value,
+distinct targets need distinct values, and pageTarget/navTarget elements
+participate in the same contiguous sequence. Real TOCs satisfy this with
+duplicate-target sharing and interleaved pageTargets, so the renumbering
+manufactured RSC-005 playOrder findings on books whose NCX had zero
+findings before. Whole-library tally: 579 firings, 17 real fixes, 211
+gate-rejected regressions, 347 no-op rewrites. The transform now parses
+the contract (element kind, playOrder value, content target in document
+order), returns unchanged when the NCX already satisfies it, and on a
+violation re-sequences by first-appearance target order, rewriting only
+the attributes whose value changes. Verified against a minimal synthetic
+EPUB: a shared-target NCX that validates clean goes in and comes out
+untouched; the genuinely broken shapes (all-1 NCX, split shared values,
+sequence gaps) still repair.
+
+**strip_prolog_junk amputated the trailing `*/` of Calibre's CDATA style
+wrappers.** The protection map's CDATA alternative ends at the first
+`]]>`, which inside Calibre's `/*<![CDATA[*/ ... /*]]>*/` idiom sits
+before the wrapper's own closing `*/`. That orphan landed in the outside
+segment, the prolog strip ate it as "stray bytes before the first `<"`
+(the whitespace guard cannot catch `*`), and every wrapped stylesheet
+came back with a truncated comment: one CSS-008 "Premature end of file"
+per file, a phantom fix whose fired count exactly equaled the wrapper
+count (18/18, 22/22, 6/6 in the samples). The protection map now carries
+the Calibre wrapper as its own first alternative, so the idiom is one
+protected unit; a genuinely truncated closer (no trailing `*/`) stays
+outside the span, where `--fix-cdata-terminator` can still reach it.
+
+**fix_named_entities is exonerated** by the same surgery: it fired solo
+in 93 whole-library records with zero rejections (14 real fixes, 78
+count-neutral). No change.
+
+Verification: 9-agent research pass with an independent claim-verification
+lane (4/4 claims confirmed, minimal synthetic reproducers for both bugs);
+730 tests green (the playorder suite now pins the contract semantics,
+including the shared-target regression test); a whole-library dry run
+after the fix confirms the rejection collapse.
+
 ## v0.53.1 (2026-10-24)
 
 ### The .observe artifact now carries its per-book census rows
