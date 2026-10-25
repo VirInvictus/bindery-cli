@@ -572,6 +572,47 @@ the audit's trouble, so it takes the trouble slot), 2 for its own usage errors (
 path that is not a directory, a directory with no EPUBs, an unknown book id) and
 for tagging-setup failure.
 
+## Observe subcommand (read-only census)
+
+`bindery observe PATH [--output FILE] [--against FILE] [--workers N] [--limit N]
+[--no-preview]` validates every EPUB under a tree in one warm-JVM pass and
+writes one self-describing `.observe` artifact. It is the whole-library
+answering of "where are we at": the census measures every book (clean ones
+included) for epubcheck counts AND error codes together, tabulates the result
+(library totals, a severity histogram with error-mass and per-count buckets,
+the error-code profile as occurrences and distinct books, the worst offenders),
+and records per-book census rows so any later question can be answered from
+the artifact without re-validating.
+
+The census harness embeds its Java like the FastDaemon does (JEP 330, no
+javac, in-memory compile) and always answers for every input path: a book the
+JVM cannot read arrives as the `-1,-1,-1` sentinel record rather than being
+dropped, and a run that comes back short of the input count refuses to write
+a partial census (exit 2). Counting matches the subprocess oracle by
+construction: the harness scans the JSON document `generate()` serializes,
+the same document the gate is calibrated on.
+
+The optional repair preview (default on; `--no-preview` skips) composes the
+shipped library runner in-process (`run phase1`'s pattern): a dry-run sweep
+over the default flag set, recording per-candidate status, before/after
+counts, and the fix breakdown. The preview measures what `--apply` would
+write; it never writes. `--workers N` governs the preview's sweep pass; the
+census is parallel inside its own JVM.
+
+The artifact is versioned (`schema: bindery-observe-v1`) and strictly
+read-only: the only file the verb writes is the artifact itself, and the
+writer refuses to land it inside the scanned root (the keep-root-clean
+rule; the default output is `observe-<timestamp>.observe` in the current
+directory). `--against FILE` loads a previous artifact of the same schema and
+carries a `trend` block: library-total deltas, error-mass delta, and per-code
+book-count changes with `new_codes`/`resolved_codes`. A schema mismatch is a
+usage error, never a silently incomparable trend. Exit codes: 0 artifact
+written, 1 invocation problem (no EPUBs, toolchain missing, output inside
+the scanned root, `--against` schema mismatch), 2 the census harness failed
+mid-run. The library and audit walks skip `.caltrash` (trash is not library
+content; the 2026-10-24 census found two trashed books walking the tree
+before the guard).
+
 ## Run verbs (acquisition slices)
 
 `bindery run phase1 DIR [--json FILE] [--apply-lossy] [--backup DIR] [--non-interactive]`

@@ -1,5 +1,52 @@
 # bindery-cli Patch Notes
 
+## v0.53.0 (2026-10-24)
+
+### `bindery observe`: the whole-library census, one artifact per run
+
+The 2026-10-24 whole-library autopsy answered "where are we at" the hard way:
+a dry-run sweep plus hand tabulation in the main thread. That session is now
+a verb. `bindery observe PATH` validates every EPUB under a tree in one
+warm-JVM pass, paying JVM startup once and running the parallel stream across
+all cores, and writes one self-describing `.observe` artifact: the library
+totals, a severity histogram (fatal books, error-count buckets, warnings-only,
+unreadable, error mass), the error-code profile as occurrences and distinct
+books, the worst offenders, and the per-book census rows so any later question
+can be answered from the artifact without re-validating.
+
+The harness embeds its Java like the FastDaemon does (JEP 330 single-file
+launcher, no javac, in-memory compile), so the verb ships in the wheel and
+the scripts/ benchmarking facility stays unshipped and untouched. Counting
+matches the subprocess oracle by construction: the harness scans the JSON
+document `generate()` serializes, the same document epubcheck --json emits
+and the gate is calibrated on. The census answers for every input path: a
+book the JVM cannot read arrives as the `-1,-1,-1` sentinel record instead of
+being dropped (the scripts/ audit mode's silence is exactly why a missing-
+rows warning was needed there), and a run that comes back short of the input
+count refuses to write a partial census (exit 2).
+
+The optional repair preview (default on; `--no-preview` skips) composes the
+shipped library runner in-process, the `run phase1` pattern: a dry-run sweep
+over the default flag set recording per-candidate status, before/after
+counts, and the fix breakdown. It measures what `--apply` would write and
+never writes. Artifacts are versioned (`bindery-observe-v1`); `--against
+FILE` composes a trend block against a previous artifact of the same schema
+(library deltas, error-mass delta, per-code book-count changes with
+`new_codes`/`resolved_codes`), and a schema mismatch is a usage error rather
+than a silently incomparable trend. The verb is strictly read-only: the only
+file written is the artifact, and the writer refuses to land it inside the
+scanned root (default output `observe-<timestamp>.observe` in the current
+directory). Exit contract: 0 artifact written, 1 invocation problem, 2 census
+harness failure.
+
+### `.caltrash` is not library content
+
+The same session's census found two trashed books walking the tree as repair
+candidates. `iter_epubs` (the library sweep's walk) and the audit directory
+walk now skip anything under `.caltrash`: a deletion pending Calibre's own
+cleanup is never a repair candidate, and an `--apply` could in principle have
+written into the trash.
+
 ## v0.52.0 (2026-10-21)
 
 ### The repairer's own prune could destroy the book it was repairing (issue #10)

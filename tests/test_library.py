@@ -31,6 +31,19 @@ class TestIterEpubs(unittest.TestCase):
             names = [p.name for p in iter_epubs(root)]
         self.assertEqual(names, ["a.epub", "b.EPUB"])
 
+    def test_caltrash_is_not_a_candidate(self):
+        # .caltrash holds deletions pending Calibre's own cleanup: a sweep
+        # that walks it wastes work on removed books and an --apply could in
+        # principle write into the trash (the 2026-10-24 census finding).
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "a.epub").write_bytes(b"x")
+            trash = root / ".caltrash" / "b" / "1234"
+            trash.mkdir(parents=True)
+            (trash / "removed.epub").write_bytes(b"x")
+            names = [p.name for p in iter_epubs(root)]
+        self.assertEqual(names, ["a.epub"])
+
 
 class TestAtomicReplace(unittest.TestCase):
     def setUp(self):

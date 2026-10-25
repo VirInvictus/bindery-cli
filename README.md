@@ -168,9 +168,12 @@ without a gate, and the mode costs two epubcheck runs per imported book.
 
 ## Usage
 
-Five verbs: `bindery repair` fixes a single EPUB epubcheck-gated, `bindery audit`
+Six verbs: `bindery repair` fixes a single EPUB epubcheck-gated, `bindery audit`
 reports content flaws without touching anything, `bindery library` sweeps a Calibre
 library tree (dry run by default; `--apply` replaces accepted books atomically in place),
+`bindery observe` validates every EPUB under a tree in one warm-JVM pass and writes one
+versioned `.observe` census artifact (counts and error codes together, tabulated, with
+the gated repair preview and `--against` trend diffing),
 `bindery run` composes the acquisition pathway's EPUB slices (phase-1 pre-import
 vetting, phase-3 scoped post-import repair) for a calling agent, and `bindery doctor`
 checks the installation (see Install).
@@ -325,6 +328,34 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - Exit codes, per verb (for scripts and cron; `--help-json`'s `exit_contract` carries this machine-side): `repair` exits 0 when clean, probed, OR written (a probe writes nothing and exits 0; a PARTIAL repair writes its best output and exits 0; the `--json` record's status says so) and 1 on trouble (gate-rejected, epubcheck failure, unreadable input) or invocation problems (bad args, an existing output without `--force`); it never exits 2. `library`, `run phase1`, and `run phase3` use the unified contract: 0 clean, 2 when any book was flagged, rejected, unreadable, errored, or partial, 1 for invocation problems. `audit` runs the inverse contract: 0 clean, 1 when any book was flagged (a flag is the audit's trouble), 2 for its own usage errors, 3 when findings coexist with a failed `--json`/`--tag` write. `audit --tag` and `library --apply --install-to-calibre` are lock-class doors: they are REFUSED with exit 1 while Calibre is running. Argparse-level misuse exits 2 everywhere before any validation runs.
 - A `partial` book (improved but still unable to open) is reported for manual follow-up and fails the run with exit 2, in `library`, `run phase1`, and `run phase3` alike: a book that still needs a human is trouble.
 - `repair` refuses to overwrite an existing output file unless `--force` is given.
+
+## Observing a library
+
+`bindery observe` is the whole-library census: one warm-JVM pass validates
+every EPUB (counts and error codes together, clean books included), the
+result is tabulated (severity histogram, dominant error-code classes, worst
+offenders), and one self-describing `.observe` artifact carries the per-book
+records so any later question can be answered without re-validating:
+
+```sh
+bindery observe ~/docs/Calibre\ Library --output ~/observe/base.observe
+```
+
+- Strictly read-only: the only file written is the artifact, and the writer
+  refuses to land it inside the scanned root (the default output is
+  `observe-<timestamp>.observe` in the current directory).
+- The optional repair preview (default on, `--no-preview` skips) composes the
+  shipped library runner in-process as a dry-run over the default flag set:
+  it measures what `--apply` would write, per candidate, and never writes.
+- `--against base.observe` carries a trend block in the new artifact: library
+  deltas, error-mass delta, and per-code changes with `new_codes` and
+  `resolved_codes`. Artifacts are versioned (`bindery-observe-v1`); a
+  schema mismatch is a usage error, never a silently incomparable trend.
+- A book the JVM cannot read arrives as a sentinel record instead of being
+  dropped, and a run that comes back short of the input count refuses to
+  write a partial census. The library and audit walks skip `.caltrash`.
+- Exit codes: 0 artifact written, 1 invocation problem, 2 the census harness
+  failed mid-run.
 
 ## Run slices
 

@@ -20,9 +20,14 @@ from pathlib import Path
 
 def iter_epubs(root: Path):
     """Yield every .epub under a Calibre library tree, sorted. Case-insensitive on the
-    suffix: Calibre emits lowercase, but a hand-added Book.EPUB should not be invisible."""
+    suffix: Calibre emits lowercase, but a hand-added Book.EPUB should not be invisible.
+    Books inside .caltrash are deletions pending Calibre's own cleanup, never repair
+    candidates: the 2026-10-24 whole-library census found two of them walking the tree,
+    and an --apply could in principle have written into the trash."""
     yield from sorted(
-        p for p in root.rglob("*.epub", case_sensitive=False) if p.is_file()
+        p
+        for p in root.rglob("*.epub", case_sensitive=False)
+        if p.is_file() and ".caltrash" not in p.parts
     )
 
 

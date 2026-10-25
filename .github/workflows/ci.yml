@@ -62,6 +62,7 @@ jobs:
           tests.test_plugin tests.test_validate
           tests.test_comment_hyphens tests.test_flags_wiring
           tests.test_flags_real_core tests.test_spine_guard
+          tests.test_observe
   plugin-compat:
     name: Parse-check the plugin zip under the interpreters Calibre embeds
     runs-on: ubuntu-latest

@@ -46,6 +46,7 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
 | 0.50 | The contamination analyzer (issue #8): foreign-title template stamps, fan-bundle ad signatures, review-paste front matter; advisory by contract, archive-wide corpus (`Book.extra_docs`, capped), and the `_dir_dispatch` map that fixes the v0.44.0 cover/tocdrift ocr misroute in directory/single mode | v0.50.0 |
 | 0.51 | The unbound-prefix repair (issue #9): `--fix-unbound-prefix` binds the Calibre embed scar's undeclared attribute prefix inline (evidence-based URI, scope-tracked, refuse over guess), plus the masked-ncx-gain rule that stops a real dtb:uid sync reading as no measurable gain under a fatal package | v0.51.0 |
 | 0.52 | The spine guard (issue #10): the manifest prune reads the layout its hrefs are written in and derives its spine protection from the text it prunes (the raw-space wave's spine collapse), and `process_book` vetoes any candidate whose spine (itemref -> item -> archive) dangles more than the source's, above the counts and every promotion | v0.52.0 |
+| 0.53 | `bindery observe` (the observatory): the whole-library census in one warm-JVM pass (counts and error codes together, sentinel-backed so no book is dropped), tabulation (severity histogram, code profile, worst offenders), the gated repair preview composed in-process, the versioned `.observe` artifact with `--against` trend diffing and the keep-root-clean output guard; the library and audit walks skip `.caltrash` | v0.53.0 |
 
 ## Open work
 

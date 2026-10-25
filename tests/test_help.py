@@ -160,7 +160,7 @@ class TestHelpJson(unittest.TestCase):
         self.assertEqual(data["version"], __version__)
         self.assertEqual(
             [s["name"] for s in data["subcommands"]],
-            ["repair", "doctor", "audit", "library", "run"],
+            ["repair", "doctor", "audit", "library", "observe", "run"],
         )
         run = next(s for s in data["subcommands"] if s["name"] == "run")
         self.assertEqual([s["name"] for s in run["slices"]], ["phase1", "phase3"])

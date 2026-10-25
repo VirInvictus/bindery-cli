@@ -39,6 +39,7 @@ from .library import (
     iter_epubs,
     make_backup,
 )
+from .observe import run_observe
 from .validate import (
     CheckResult,
     epubcheck_available,
@@ -2387,6 +2388,65 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_repair_flags(lib)
     lib.set_defaults(func=run_library)
+
+    obs = sub.add_parser(
+        "observe",
+        help="read-only whole-library census: one versioned .observe artifact",
+        usage="bindery observe [options] path",
+        description="Validate every EPUB under a tree in one warm-JVM pass "
+        "(epubcheck counts and error codes together), tabulate the census "
+        "(severity histogram, dominant error-code classes, worst offenders), "
+        "optionally compose the gated repair preview (what `bindery library "
+        "--apply` would write: a dry-run over the default flag set), and "
+        "write one self-describing .observe artifact for trend diffing with "
+        "--against. Strictly read-only: the only file written is the "
+        "artifact, and the writer refuses to land it inside the scanned "
+        "root. Exit codes: 0 artifact written, 1 invocation problem (no "
+        "EPUBs, toolchain missing, output inside the scanned root, --against "
+        "schema mismatch), 2 the census harness failed mid-run.",
+        epilog="examples:\n"
+        "  bindery observe ~/docs/Calibre\\ Library --output ~/observe/base.observe\n"
+        "  bindery observe ~/docs/Calibre\\ Library --output next.observe "
+        "--against base.observe\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    obs.add_argument("path")
+    og = obs.add_argument_group("output")
+    og.add_argument(
+        "--output",
+        "-o",
+        metavar="FILE",
+        help="the .observe artifact path (default: observe-<timestamp>.observe "
+        "in the current directory; refused inside the scanned root)",
+    )
+    og.add_argument(
+        "--against",
+        metavar="FILE",
+        help="a previous .observe artifact: the new artifact carries a trend "
+        "delta block (library totals, error mass, per-code changes)",
+    )
+    oc = obs.add_argument_group("run control")
+    oc.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help="concurrent epubcheck workers for the preview's sweep pass "
+        "(default 1); the census pass is parallel inside its own JVM",
+    )
+    oc.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        help="validate at most N books (sampling)",
+    )
+    oc.add_argument(
+        "--no-preview",
+        action="store_true",
+        help="skip the repair preview: census and tabulation only, a single "
+        "validation pass",
+    )
+    obs.set_defaults(func=run_observe)
 
     run = sub.add_parser(
         "run",
