@@ -1,5 +1,52 @@
 # bindery-cli Patch Notes
 
+## v0.56.0 (2026-10-25)
+
+### The two boxed recipes, built: the OPF-030 wiring and the CSS-007 font half
+
+The v0.55.0 census lanes left two deterministic-but-marginal candidates
+recorded as recipes; both shipped the same day on the follow-up call.
+
+**`--fix-unique-identifier` (the OPF-030 recipe).** The dominant family:
+the package names an id (`bookid`, `uuid_id`, ISBN shapes) but no
+`dc:identifier` carries any id attribute at all. The repair writes the id
+the package itself names onto the first `dc:identifier` start tag; the
+dc: values are never touched. It refuses to guess every ambiguous shape:
+an absent or empty `unique-identifier` attribute, a non-NCName id, an
+already-wired OPF, no `dc:identifier` element, or a first identifier that
+already carries an id. The live gate on the census specimen (The Eagle Has
+Landed) surfaced a masking twist: the broken wiring was hiding a real
+NCX-001 (epubcheck cannot compare `dtb:uid` to an unresolvable
+identifier), and the default pass's uid sync skipped because the source
+had no resolvable uid. The repair now predicts the post-wiring uid (the
+same pure transformation the OPF branch applies; never a snapshot of a
+different layout, the issue #10 lesson) so one run wires the OPF AND
+aligns the NCX: the specimen went from 2 errors (OPF-030 + a masked
+latent) to 1 (a pre-existing out-of-scope OPF-032), accept, with
+`unique_identifier_wired:1` and the NCX sync fired. The multi-OPF merge
+leftovers whose failing OPF is a stale non-rootfile are unreachable by
+construction (only the located rootfile is repaired).
+
+**The CSS-007 font half of `--fix-media-types`.** The census found the
+INFO-severity family: `@font-face` srcs whose OPF declaration sits
+outside epubcheck's version-specific blessed font set (`text/plain`
+fonts, `application/xfont+otf`, `octet-stream` woff2). The map gains
+`ttf`/`otf`/`woff`/`woff2` with their magic bytes; the `font/*`
+spellings are blessed on BOTH package versions (EPUB2 blesses the prefix,
+EPUB3's exact list carries them), so no version gate is needed, and the
+existing magic-byte confirmation rule is unchanged (a font is rewritten
+only when its bytes name the format the extension does; `.eot` is never
+touched -- epubcheck rejects EOT as a font src however it is declared, so
+correcting it can only churn). Because CSS-007 is INFO, the error counts
+do not see the gain, so the flag is now accepted under the `no_worse` bar
+(the cover-wiring ruling's shape): the OPF-029 error slice still measures
+its real decrease through the normal gate, and a font-only repair no
+longer reads as gainless. Live gate on Brave New World (8 `text/plain`
+fonts): `media_types_normalized:8`, accept, CSS-007 fully cleared.
+
+Twenty-five structural repairs. Suite: 768 tests.
+
+
 ## v0.55.0 (2026-10-25)
 
 ### The issue batch: the 2026-10-24 surgery's follow-ups, #11 through #16

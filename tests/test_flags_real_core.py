@@ -272,10 +272,16 @@ def _fixtures() -> dict:
         "--fix-media-types": (
             {
                 "OEBPS/content.opf": _opf(
-                    [c1, _item("i", "i.png", "image/jpeg")], [r1]
+                    [
+                        c1,
+                        _item("i", "i.png", "image/jpeg"),
+                        _item("f", "f.ttf", "text/plain"),
+                    ],
+                    [r1],
                 ),
                 "OEBPS/c1.xhtml": _doc("<p>x</p>"),
                 "OEBPS/i.png": PNG_BYTES,
+                "OEBPS/f.ttf": b"\x00\x01\x00\x00\x00",
             },
             "media_types_normalized",
         ),
@@ -398,6 +404,22 @@ def _fixtures() -> dict:
                 ),
             },
             "fix_unterminated_attr",
+        ),
+        "--fix-unique-identifier": (
+            {
+                "OEBPS/content.opf": (
+                    '<?xml version="1.0"?>'
+                    '<package xmlns="http://www.idpf.org/2007/opf" '
+                    'version="2.0" unique-identifier="bookid">'
+                    '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                    "<dc:title>t</dc:title>"
+                    "<dc:identifier>urn:uuid:dangling</dc:identifier>"
+                    "</metadata>"
+                    f"<manifest>{c1}</manifest><spine>{r1}</spine></package>"
+                ),
+                "OEBPS/c1.xhtml": plain,
+            },
+            "unique_identifier_wired",
         ),
         "--fix-unbound-prefix": (
             {
@@ -546,8 +568,14 @@ class FlagEndToEndTests(unittest.TestCase):
         )
 
     def test_fix_media_types(self):
+        # v0.56.0: the fixture carries an image AND a font misdeclaration
         self.assertGreaterEqual(
-            self._fixes_for("--fix-media-types")["media_types_normalized"], 1
+            self._fixes_for("--fix-media-types")["media_types_normalized"], 2
+        )
+
+    def test_fix_unique_identifier(self):
+        self.assertEqual(
+            self._fixes_for("--fix-unique-identifier")["unique_identifier_wired"], 1
         )
 
     def test_fix_cover(self):

@@ -49,6 +49,7 @@ DEST_TO_FIELD = {
     "fix_stray_close": "stray_close",
     "fix_unterminated_attr": "unterminated_attr",
     "fix_unbound_prefix": "unbound_prefix",
+    "fix_unique_identifier": "unique_identifier",
     "strip_pagination": "strip_pagination",
     "strip_broken_tags": "strip_brokentags",
     "strip_watermarks": "strip_watermarks",

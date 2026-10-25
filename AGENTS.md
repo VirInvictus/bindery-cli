@@ -30,7 +30,7 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   `xmlns`, bare `&`, named entities, void self-closing), the NCX pipeline, and the
   mimetype fix (added/normalized/first-stored, epub.py's archive rewrite); every core
   fix must render identically to the author's intent: never add, remove, or reorder
-  visible content. The canonical opt-in inventory lives in spec.md: twenty-four structural
+  visible content. The canonical opt-in inventory lives in spec.md: twenty-five structural
   repairs, four lossy strips, four safe opt-ins, plus `--reserialize`.
   * **Structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
     `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
@@ -87,6 +87,19 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
     different spelling (the spine guard correctly refuses; the mass carrier
     is `--encode-url-spaces` territory), so the prune's coverage boundary is
     documented, not widened.
+    The v0.56.0 one (the boxed OPF-030 recipe, built same-day on Brandon's
+    call): `--fix-unique-identifier` wires the package's dangling
+    unique-identifier id onto the first `dc:identifier` start tag
+    (`unique_identifier_wired`), with the masked-NCX coordination: the uid
+    sync predicts the post-wiring uid before the loop (the same pure
+    function on the same input region, never a snapshot of a different
+    layout), so one run both wires the OPF and aligns the NCX dtb:uid the
+    broken wiring was masking. Refusals: absent/empty attribute, non-NCName
+    id, already-wired, no dc:identifier, first-identifier-has-id; normal
+    `gate`. The CSS-007 font half shipped the same release inside
+    `--fix-media-types` (font/* blessed on both package versions, magic
+    confirmed, `.eot` never touched) with the flag accepted under `no_worse`
+    (its gain sits on the INFO axis).
     They alter markup structure or fabricate minimal content. v0.14–v0.16 ran these unconditionally, which broke this rule;
     v0.17.0 restored it. `--unwrap-illegal-tags` additionally protects any illegal-tag
     name that an EPUB stylesheet styles as an element selector (`css_protected_tags`,

@@ -290,6 +290,7 @@ class RepairFlags:
     stray_close: bool = False
     unterminated_attr: bool = False
     unbound_prefix: bool = False
+    unique_identifier: bool = False
 
 
 @dataclass
@@ -524,14 +525,25 @@ def prune_dangling_edges(opf_text: str, pruned_ids: set[str]) -> tuple[str, int]
     return out, count
 
 
-# The media-type map is deliberately narrow: image types with an unambiguous
-# magic at offset 0, which is exactly the aggregator prevalence class (a jpg
-# stamped image/png). Extend only with a named epubcheck finding.
-_MEDIA_TYPES: dict[str, tuple[str, bytes]] = {
-    ".jpg": ("image/jpeg", b"\xff\xd8\xff"),
-    ".jpeg": ("image/jpeg", b"\xff\xd8\xff"),
-    ".png": ("image/png", b"\x89PNG"),
-    ".gif": ("image/gif", b"GIF8"),
+# The media-type map: image types with an unambiguous magic at offset 0
+# (the aggregator prevalence class: a jpg stamped image/png), plus the v0.56.0
+# font half (issue #17's CSS-007 lane: @font-face srcs whose OPF declaration
+# sits outside epubcheck's blessed font set -- text/plain fonts,
+# application/xfont+otf, octet-stream woff2). The font/* spellings are blessed
+# on BOTH package versions (EPUB2 blesses the font/ prefix; EPUB3's exact list
+# carries them), so the map needs no version gate. Deliberately absent:
+# application/vnd.ms-fontobject (.eot) -- epubcheck rejects EOT as a font src
+# whatever it is declared, so "correcting" it can only churn; .ttc/.dat fonts
+# (no blessed single spelling); extend only with a named epubcheck finding.
+_MEDIA_TYPES: dict[str, tuple[str, tuple[bytes, ...]]] = {
+    ".jpg": ("image/jpeg", (b"\xff\xd8\xff",)),
+    ".jpeg": ("image/jpeg", (b"\xff\xd8\xff",)),
+    ".png": ("image/png", (b"\x89PNG",)),
+    ".gif": ("image/gif", (b"GIF8",)),
+    ".ttf": ("font/ttf", (b"\x00\x01\x00\x00", b"true", b"OTTO")),
+    ".otf": ("font/otf", (b"OTTO", b"\x00\x01\x00\x00")),
+    ".woff": ("font/woff", (b"wOFF",)),
+    ".woff2": ("font/woff2", (b"wOF2",)),
 }
 _MEDIA_TYPE_ATTR_RE = re.compile(
     r"""((?:^|\s)media-type\s*=\s*)(["'])((?:(?!\2).)*)(\2)""", re.IGNORECASE
@@ -539,14 +551,19 @@ _MEDIA_TYPE_ATTR_RE = re.compile(
 
 
 def fix_manifest_media_types(opf_text: str, opf_dir: str, peek) -> tuple[str, int]:
-    """Normalize wrong manifest ``media-type`` declarations (OPF-029).
+    """Normalize wrong manifest ``media-type`` declarations (OPF-029, and
+    since v0.56.0 the CSS-007 font slice).
 
     An item's expected type comes from its extension; the rewrite only fires
     when the actual bytes at offset 0 confirm the extension (a PNG renamed
     .jpg keeps its - wrong but honest - declaration rather than gaining a
-    worse one). Files absent from the archive are the prune's business, not
-    this pass. Quote styles are preserved. Returns (text, count).
-    """
+    worse one; a font is rewritten only when its magic names the same format
+    the extension does). Files absent from the archive are the prune's
+    business, not this pass. Quote styles are preserved. Returns (text,
+    count). The font half's gain sits on epubcheck's INFO axis (CSS-007),
+    which the error counts do not measure, so process_book accepts this
+    flag's repairs under the no_worse bar (the cover-wiring ruling's
+    shape)."""
     changed = 0
 
     def repl(m: re.Match) -> str:
@@ -563,7 +580,7 @@ def fix_manifest_media_types(opf_text: str, opf_dir: str, peek) -> tuple[str, in
         if expected is None or mm.group(3) == expected[0]:
             return tag
         head = peek(resolved)
-        if head is None or not head.startswith(expected[1]):
+        if head is None or not any(head.startswith(magic) for magic in expected[1]):
             return tag
         changed += 1
         start, end = mm.span(3)
@@ -1527,6 +1544,47 @@ def opf_unique_id(opf_text: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+# The OPF-030 wiring repair (v0.56.0; the census lane's recorded recipe). The
+# dominant family: the package names an id but NO dc:identifier carries any id
+# attribute at all (a converter dropped the ids wholesale).
+_DC_IDENTIFIER_TAG_RE = re.compile(
+    r"""<dc:identifier\b(?:"[^"]*"|'[^']*'|[^>])*+>""", re.IGNORECASE
+)
+
+
+def fix_unique_identifier_wiring(opf_text: str) -> tuple[str, int]:
+    """Add the package's ``unique-identifier`` id to the first ``dc:identifier``.
+
+    epubcheck's OPF-030 fires when the ``<package unique-identifier="X">``
+    attribute names an id no element carries; the census's dominant family is
+    identifiers that carry no id attribute at all. The wiring writes only the
+    id the package itself names onto the first identifier start tag: the dc:
+    values are never touched, and reading/rendering cannot change. Refusals,
+    each a shape this repair refuses to guess at: an absent or empty
+    ``unique-identifier`` (nothing to wire; fabricating both halves of the
+    contract is metadata surgery), a named id that is not a valid XML NCName
+    (the wiring would create a new invalid id), an id="X" anywhere in the OPF
+    (already wired -- the rare multi-OPF leftovers whose failing OPF is a
+    stale non-rootfile are unreachable here anyway, since only the located
+    rootfile is repaired), no ``dc:identifier`` element, or a first identifier
+    that already carries an id (wiring X onto a different identifier than the
+    first is a choice, not a determination). Returns (text, count).
+    """
+    attr = _UID_ATTR_RE.search(opf_text)
+    if attr is None:
+        return opf_text, 0
+    uid = attr.group(2)
+    if _is_invalid_ncname(uid):
+        return opf_text, 0
+    if re.search(rf"""id\s*=\s*(["']){re.escape(uid)}\1""", opf_text):
+        return opf_text, 0
+    m = _DC_IDENTIFIER_TAG_RE.search(opf_text)
+    if m is None or re.search(r"""\bid\s*=""", m.group(0)):
+        return opf_text, 0
+    wired = m.group(0).replace("<dc:identifier", f'<dc:identifier id="{uid}"', 1)
+    return opf_text[: m.start()] + wired + opf_text[m.end() :], 1
+
+
 def sync_ncx_uid(ncx_text: str, uid: str) -> tuple[str, bool]:
     """Set the NCX dtb:uid meta to `uid`. Returns (text, changed)."""
     cur = _DTB_UID_RE.search(ncx_text) or _DTB_UID_RE_REV.search(ncx_text)
@@ -1717,6 +1775,11 @@ def repair_epub(
     under an OPF-namespaced package; anything else refuses the whole
     document. Content documents are not touched (their unbound prefixes have
     the --strip-bad-attrs drop).
+    With `unique_identifier`, wire the OPF-030 dangling unique-identifier: add
+    the id the package names to the first dc:identifier start tag when no
+    element carries it. Refuses to guess (absent/empty attribute, non-NCName
+    id, already-wired, no dc:identifier, a first identifier that has an id);
+    dc: values are never touched.
     With `strip_stub_docs` (lossy, the no_worse bar), drop spine documents whose
     entire visible text is one identical short placeholder repeated across the
     spine (the Bookmate/DRM-sample export whose chapters are all the same
@@ -1757,6 +1820,19 @@ def repair_epub(
         pkg_major = package_version(opf_text)
         if pkg_major is None or pkg_major >= 3:
             flags = replace(flags, strip_epub3_attrs=False, downgrade_epub3=False)
+        # The wiring repair creates the id->identifier link the NCX uid sync
+        # needs: on a dangling-uid book the source has no resolvable uid, so
+        # `uid` above is None and the default-pass sync would skip, leaving
+        # the NCX-001 that the broken wiring was masking to a second run.
+        # Predict the post-wiring uid by running the SAME pure transformation
+        # the OPF branch applies below -- nothing between here and there
+        # touches the package attribute or the dc:identifier tags, so the
+        # prediction is the branch's result, not a snapshot guess. Skipped
+        # when uid is "" (the non-strict-UTF-8 OPF case: never drive a
+        # mojibake uid into the NCX).
+        wired_uid = None
+        if flags.unique_identifier and uid is None and opf_text is not None:
+            wired_uid = opf_unique_id(fix_unique_identifier_wiring(opf_text)[0])
         # Running-header detection and the page-layer decision need the whole book, so
         # collect content text once up front. Only when the lossy strip is requested.
         runheads: set[str] = set()
@@ -2067,8 +2143,9 @@ def repair_epub(
                     if n:
                         counts["ncx_fragments_stripped"] = n
                 synced = False
-                if uid:
-                    text, synced = sync_ncx_uid(text, uid)
+                sync_uid = uid if uid else wired_uid
+                if sync_uid:
+                    text, synced = sync_ncx_uid(text, sync_uid)
                     if synced:
                         report.ncx_uid_synced = True
                 if counts or synced or ncx_changed:
@@ -2087,6 +2164,7 @@ def repair_epub(
                 or flags.comment_double_hyphens
                 or flags.strip_stub_docs
                 or flags.unbound_prefix
+                or flags.unique_identifier
             ):
                 opf_changed = False
                 if flags.unbound_prefix:
@@ -2101,6 +2179,11 @@ def repair_epub(
                     text, n = fix_manifest_ids(text)
                     if n:
                         report.add({"fix_manifest_ids": n})
+                        opf_changed = True
+                if flags.unique_identifier:
+                    text, n = fix_unique_identifier_wiring(text)
+                    if n:
+                        report.add({"unique_identifier_wired": n})
                         opf_changed = True
                 if flags.page_map:
                     text, n = strip_page_map(text)

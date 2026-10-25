@@ -13,7 +13,7 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-four
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-five
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
@@ -22,7 +22,8 @@ The deliberate exceptions to "semantics-preserving" come in opt-in groups. The t
 `--fix-container`, `--fix-media-types`, `--fix-cover`, `--fix-comment-double-hyphen`,
 `--fix-svg-dup-ids`, `--fix-duplicate-ids`, `--fix-cdata-terminator`,
 `--fix-misnested-inline`,
-`--fix-stray-close`, `--fix-unterminated-attr`, `--fix-unbound-prefix`) alter
+`--fix-stray-close`, `--fix-unterminated-attr`, `--fix-unbound-prefix`,
+`--fix-unique-identifier`) alter
 markup structure or fabricate minimal content; the four
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
 `--strip-stub-docs`) remove
@@ -141,7 +142,7 @@ byte-for-byte. The normal gate applies.
 
 ### Opt-in: structural repairs
 
-Twenty-four repairs go past well-formedness and therefore require their own flag; none is ever
+Twenty-five repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
@@ -263,9 +264,15 @@ touched.
 - **`--fix-media-types`**: normalize wrong manifest `media-type` declarations (OPF-029: a
 file's bytes do not match the declared type). The expected type comes from the extension, and
 the rewrite fires only when the file's magic bytes at offset 0 confirm the extension (jpg,
-jpeg, png, gif): a PNG renamed `.jpg` keeps its wrong-but-consistent declaration rather than
-gaining a worse one. Attribute-only, quote-style preserved; files absent from the archive
-belong to `--prune-missing-resources`.
+jpeg, png, gif; since v0.56.0 also the CSS-007 font slice: `ttf`/`otf`/`woff`/`woff2`
+declared outside epubcheck's blessed font set are rewritten to their `font/*` spellings
+when the magic bytes confirm the extension -- `font/*` is blessed on both package
+versions, so no version gate is needed; `.eot` is never touched, epubcheck rejects EOT
+as a font src however it is declared): a PNG renamed `.jpg` keeps its
+wrong-but-consistent declaration rather than gaining a worse one. Attribute-only,
+quote-style preserved; files absent from the archive belong to
+`--prune-missing-resources`. The font half's gain sits on the INFO axis the counts do
+not measure, so the flag is accepted under the `no_worse` bar (v0.56.0).
 
 - **`--fix-cover`**: repair dangling EPUB2 cover wiring (the cover-wiring ruling's
 deterministic half). A `<meta name="cover" content="X">` whose `X` names no manifest id is
@@ -276,6 +283,17 @@ file is absent: that class belongs to `--prune-missing-resources` and its edge c
 The EPUB3 `properties="cover-image"` slice is audit-only by ruling. Cover wiring is invisible
 to epubcheck, so cover-only repairs are accepted under the `no_worse` bar the lossy strips
 use, with the `partial` rule intact.
+- **`--fix-unique-identifier`**: wire the OPF-030 dangling unique-identifier (v0.56.0, the
+census lane's recipe): when `<package unique-identifier="X">` names an id no element
+carries (the dominant family: identifiers that lost their id attributes wholesale), the id
+X is written onto the first `dc:identifier` start tag. The dc: values are never touched,
+and the repair predicts the post-wiring uid for the always-on NCX sync (the broken wiring
+was masking the dtb:uid comparison; one run wires the OPF and aligns the NCX instead of
+surfacing NCX-001 for a second run -- the issue #9 masking pattern, unmasked direction).
+Refuses to guess: an absent or empty attribute, a non-NCName id, an already-wired OPF, no
+`dc:identifier` element, or a first identifier that already carries an id. The multi-OPF
+leftovers whose failing OPF is a stale non-rootfile are unreachable by construction
+(only the located rootfile is repaired).
 - **`--fix-comment-double-hyphen`**: replace `--` inside XML comments with an en-dash
   (RSC-016: "The string `--` is not permitted within comments", a fatal: the book parses in
   lenient readers and never passes epubcheck). The edit is confined to comment bodies:
@@ -355,13 +373,13 @@ use, with the `partial` rule intact.
   byte-identical. Runs on the OPF only: content documents have the
   invalid-attribute drop (`--strip-bad-attrs`) for the same defect class.
 
-Twenty-two of the twenty-four are evaluated by the normal `gate`: unlike the lossy strips,
+Twenty-three of the twenty-five are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
-improvement is a noop and nothing is applied. The two exceptions are `--fix-cover` and
-`--encode-url-spaces`, whose gains sit on axes epubcheck does not measure (cover
-wiring is not a schema finding; the rename half's PKG-010 gain sits on the warning
-axis): both are accepted under the same `no_worse` bar the lossy strips use, with
-the partial rule intact. CDATA sections are never rewritten
+improvement is a noop and nothing is applied. The three exceptions are `--fix-cover`, `--encode-url-spaces`, and
+`--fix-media-types` (whose gains sit on axes epubcheck's counts do not measure:
+cover wiring is not a schema finding; the rename half's PKG-010 gain sits on the
+warning axis; the font half's CSS-007 gain sits on the INFO axis): all are accepted
+under the same `no_worse` bar the lossy strips use, with the partial rule intact. CDATA sections are never rewritten
 anywhere; comment bodies only by the double-hyphen fix above, and nothing else inside
 them.
 

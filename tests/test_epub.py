@@ -17,6 +17,7 @@ from bindery.epub import (
     fix_manifest_ids,
     fix_ncx_ids,
     fix_pagelist_class,
+    fix_unique_identifier_wiring,
     generate_container,
     ncx_uid_mismatch,
     opf_unique_id,
@@ -1303,6 +1304,127 @@ class TestEncodeUrlSpacesEpub(unittest.TestCase):
         self.assertNotIn("url_spaces_encoded", report.fixes)
 
 
+class TestFixUniqueIdentifier(unittest.TestCase):
+    """The OPF-030 wiring repair (v0.56.0): add the id the package names to
+    the first dc:identifier when no element carries it; every ambiguous
+    shape refuses."""
+
+    OPF_HEAD = (
+        '<?xml version="1.0"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+        'unique-identifier="{uid}">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+    )
+
+    def _opf(self, uid: str, idents: str) -> str:
+        return self.OPF_HEAD.format(uid=uid) + idents + "</metadata></package>"
+
+    def test_wires_the_first_identifier(self):
+        opf = self._opf(
+            "bookid",
+            "<dc:identifier>urn:uuid:X</dc:identifier>"
+            "<dc:identifier>urn:uuid:Y</dc:identifier>",
+        )
+        out, n = fix_unique_identifier_wiring(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('<dc:identifier id="bookid">', out)
+        self.assertIn("<dc:identifier>urn:uuid:Y</dc:identifier>", out)
+        ET.fromstring(out)
+
+    def test_existing_attributes_are_kept(self):
+        opf = self._opf(
+            "bookid", '<dc:identifier opf:scheme="ISBN">978</dc:identifier>'
+        )
+        out, n = fix_unique_identifier_wiring(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('<dc:identifier id="bookid" opf:scheme="ISBN">', out)
+
+    def test_empty_attribute_refuses(self):
+        opf = self._opf("", "<dc:identifier>urn:uuid:X</dc:identifier>").replace(
+            'unique-identifier=""', ""
+        )
+        out, n = fix_unique_identifier_wiring(opf)
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_invalid_ncname_refuses(self):
+        opf = self._opf("1bad", "<dc:identifier>urn:uuid:X</dc:identifier>")
+        out, n = fix_unique_identifier_wiring(opf)
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_already_wired_refuses(self):
+        opf = self._opf(
+            "bookid", '<dc:identifier id="other">urn:uuid:X</dc:identifier>'
+        )
+        # uid names "bookid", the first identifier carries a DIFFERENT id:
+        # wiring onto a later element is a choice, refused
+        out, n = fix_unique_identifier_wiring(opf)
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_uid_carried_anywhere_refuses(self):
+        opf = self._opf(
+            "bookid",
+            "<dc:identifier>urn:uuid:X</dc:identifier>"
+            '<dc:identifier id="bookid">urn:uuid:Y</dc:identifier>',
+        )
+        out, n = fix_unique_identifier_wiring(opf)
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_no_identifier_refuses(self):
+        opf = self._opf("bookid", "<dc:title>t</dc:title>")
+        out, n = fix_unique_identifier_wiring(opf)
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_repair_end_to_end(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr(
+                    "OEBPS/content.opf",
+                    self._opf("bookid", "<dc:identifier>urn:uuid:X</dc:identifier>"),
+                )
+                z.writestr(
+                    "OEBPS/c1.xhtml",
+                    '<?xml version="1.0"?><html '
+                    'xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+                    "</head><body><p>x</p></body></html>",
+                )
+            report = repair_epub(src, dst, flags=RepairFlags(unique_identifier=True))
+            self.assertEqual(report.fixes.get("unique_identifier_wired"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn(
+                    '<dc:identifier id="bookid">',
+                    z.read("OEBPS/content.opf").decode("utf-8"),
+                )
+
+    def test_repair_also_syncs_the_masked_ncx(self):
+        # The eagle shape: the dangling uid wiring MASKS the NCX-001 check
+        # (epubcheck cannot compare dtb:uid to an unresolvable identifier).
+        # One run must wire the OPF AND align the NCX to the now-resolvable
+        # uid, or the fix trades OPF-030 for a surfaced NCX-001.
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr(
+                    "OEBPS/content.opf",
+                    self._opf("bookid", "<dc:identifier>urn:uuid:X</dc:identifier>"),
+                )
+                z.writestr("OEBPS/toc.ncx", NCX_BAD)
+                z.writestr(
+                    "OEBPS/c1.xhtml",
+                    '<?xml version="1.0"?><html '
+                    'xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+                    "</head><body><p>x</p></body></html>",
+                )
+            report = repair_epub(src, dst, flags=RepairFlags(unique_identifier=True))
+            self.assertEqual(report.fixes.get("unique_identifier_wired"), 1)
+            self.assertTrue(report.ncx_uid_synced)
+            with zipfile.ZipFile(dst) as z:
+                ncx = z.read("OEBPS/toc.ncx").decode("utf-8")
+            self.assertIn('content="urn:uuid:X"', ncx)
+
+
 class TestDeclareMissingItems(unittest.TestCase):
     """The RSC-008 repair (issue #16): declare present-but-undeclared
     resources the book references; never touch the spine."""
@@ -1796,6 +1918,74 @@ class TestFixMediaTypes(unittest.TestCase):
                 z.writestr("mimetype", "application/epub+zip")
                 z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
                 z.writestr("OEBPS/content.opf", opf)
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
+            self.assertNotIn("media_types_normalized", report.fixes)
+
+
+class TestFontMediaTypes(unittest.TestCase):
+    """v0.56.0: the CSS-007 font half of --fix-media-types. The font/*
+    spellings are blessed on both package versions; the magic must confirm
+    the extension; .eot is never touched (epubcheck rejects EOT as a font
+    src however it is declared)."""
+
+    @staticmethod
+    def _build(path: Path, href: str, media_type: str, data: bytes) -> None:
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:X</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            f'<item id="f" href="{href}" media-type="{media_type}"/>'
+            "</manifest>"
+            "<spine/></package>"
+        )
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/" + href, data)
+
+    def test_font_declared_text_plain_is_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, "f.ttf", "text/plain", b"\x00\x01\x00\x00\x00")
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
+            self.assertEqual(report.fixes.get("media_types_normalized"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn(
+                    'media-type="font/ttf"',
+                    z.read("OEBPS/content.opf").decode("utf-8"),
+                )
+
+    def test_font_with_wrong_magic_is_left(self):
+        # text/plain declared over a file whose bytes are no font magic:
+        # the declaration is wrong but the extension cannot be trusted either
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, "f.ttf", "text/plain", b"not a font at all")
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
+            self.assertNotIn("media_types_normalized", report.fixes)
+
+    def test_woff2_octet_stream_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, "f.woff2", "application/octet-stream", b"wOF2\x00\x01")
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
+            self.assertEqual(report.fixes.get("media_types_normalized"), 1)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn(
+                    'media-type="font/woff2"',
+                    z.read("OEBPS/content.opf").decode("utf-8"),
+                )
+
+    def test_eot_is_never_touched(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(
+                src, "f.eot", "application/vnd.ms-fontobject", b"\x00\x00\x00lol"
+            )
             report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
             self.assertNotIn("media_types_normalized", report.fixes)
 

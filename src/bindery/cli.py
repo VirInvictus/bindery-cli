@@ -107,6 +107,7 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         stray_close=args.fix_stray_close or all_,
         unterminated_attr=args.fix_unterminated_attr or all_,
         unbound_prefix=args.fix_unbound_prefix or all_,
+        unique_identifier=args.fix_unique_identifier or all_,
     )
 
 
@@ -211,6 +212,21 @@ def process_book(
         # from the improvement gate. The cover-wiring ruling treats the
         # wiring as worth fixing: same bar as the lossy strips, no_worse
         # with the partial rule intact.
+        if not no_worse(before, after):
+            verdict = "reject"
+        elif after.fatals > 0:
+            verdict = "partial"
+        else:
+            verdict = "accept"
+    if report.fixes.get("media_types_normalized"):
+        # v0.56.0: the font half of --fix-media-types clears CSS-007, an INFO
+        # finding the error/warning counts do not measure, so a font-only
+        # repair answers 'equal' from the improvement gate. The
+        # magic-byte-confirmed normalization is worth having regardless (the
+        # cover-wiring ruling's shape): same no_worse bar, partial rule
+        # intact. The OPF-029 error slice still measures a real decrease and
+        # accepts through the normal gate; this promotion only stops an
+        # INFO-only or mixed-equal repair from reading as gainless.
         if not no_worse(before, after):
             verdict = "reject"
         elif after.fatals > 0:
@@ -1826,10 +1842,16 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "fix_media_types",
             "normalize wrong manifest media-types (magic-byte confirmed)",
             "normalize wrong manifest media-type declarations (OPF-029, e.g. a "
-            "jpg stamped image/png by an aggregator). Attribute-only and "
+            "jpg stamped image/png by an aggregator; since v0.56.0 also the "
+            "CSS-007 font slice: a ttf/otf/woff/woff2 declared outside "
+            "epubcheck's blessed font set, rewritten to its font/* spelling "
+            "when the magic bytes confirm the extension). Attribute-only and "
             "quote-preserving; it fires only when the file's magic bytes "
             "confirm the extension, so a misnamed-but-consistent file is never "
-            "made worse.",
+            "made worse (.eot is never touched: epubcheck rejects EOT as a "
+            "font src however it is declared). Accepted under the no-worse "
+            "bar: the font half's gain sits on the INFO axis the counts do "
+            "not measure.",
         ),
         (
             "declare_missing_items",
@@ -1842,6 +1864,18 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "rather than guessed), no itemref written (the spine is untouched). "
             "An itemref with no manifest item is deliberately not repaired: "
             "which file it meant is underdetermined.",
+        ),
+        (
+            "fix_unique_identifier",
+            "wire the dangling OPF unique-identifier onto the first dc:identifier (OPF-030)",
+            "add the id the package's unique-identifier attribute names to the "
+            "first dc:identifier start tag when no element carries it (OPF-030 "
+            "'The unique-identifier X was not found'; the census's dominant "
+            "family is identifiers that lost their id attributes wholesale). "
+            "Writes only the id the package itself names; the dc: values are "
+            "never touched. Refuses to guess: an absent or empty attribute, a "
+            "non-NCName id, an already-wired OPF, no dc:identifier element, or "
+            "a first identifier that already carries an id.",
         ),
         (
             "fix_cover",
