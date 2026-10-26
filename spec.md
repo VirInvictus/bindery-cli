@@ -207,8 +207,14 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   alt text when they carry one, dropped otherwise), and orphaned non-spine OPF manifest
   `<item>` declarations. Spine documents are never pruned: a missing spine document is
   a damaged fragment for the audit's spine-integrity check, never a silent drop. The
-  manifest existence check resolves the href the way the resolver does (unquoted,
-  normalized) and compares it against the layout the OPF text is written in: when
+  shared href resolver (v0.58.0, issue #20) decodes the five predefined XML entities
+  before normalization (an attribute value arrives escaped: `href="K&amp;C.png"` names
+  the entry `K&C.png`, and reading the escaped spelling as a path pruned live
+  declarations on the raw-ampersand books) and the OPF matchers accept a namespace
+  prefix (`<opf:item>` declares exactly what `<item>` does; a prefix-blind census
+  re-declared whole manifests). The manifest existence check resolves the href the way
+  the resolver does (unquoted, normalized) and compares it against the layout the OPF
+  text is written in: when
   `--encode-url-spaces` is renaming entries, the prune runs ahead of the reference
   rewrite and reads pre-rename hrefs, so it checks against the pre-rename archive
   (a raw-space href judged against renamed spellings is how live spine documents came
@@ -237,14 +243,20 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
 - **`--strip-broken-anchors`**: strip `href` attributes that cannot resolve, keeping
   the anchor text byte-for-byte. A `#fragment` the target document does not define
   (RSC-020 "fragment identifier not defined", RSC-012 "points to the wrong element") is
-  removed from the anchor; NCX `<content src="doc#frag"/>` falls back to the document
-  target, keeping chapter navigation at document precision: the fragment is never
-  re-pointed at a guessed sibling document, because a drifted id (Mobipocket `filepos`
-  anchors after a converter re-split) may exist nowhere. A target wholly absent from
-  the archive is left for the spine-integrity report. href values carrying a scheme no
-  reader resolves (`kindle:embed:`, `file:`, ...) are stripped under the same flag; the
-  resolvable set is fixed (`http`, `https`, `mailto`) and extends only with a named
-  finding.
+  removed from the anchor; NCX `<content src="doc#frag"/>` and OPF guide
+  `<reference href="doc#frag">` fall back to the document target, keeping navigation at
+  document precision: the fragment is never re-pointed at a guessed sibling document,
+  because a drifted id (Mobipocket `filepos` anchors after a converter re-split) may
+  exist nowhere. The guide half (v0.58.0) exists because the guide is not a content
+  document: its broken fragment hid while the target carried its own broken links and
+  surfaced only once the pass fixed them (issue #21, Fools Crow). When the NCX
+  fragments strip, the always-on playOrder pass re-runs on the final navMap: distinct
+  fragments that collapsed onto one document would otherwise violate the
+  same-target-shares-one-value contract the pass had just validated (issue #21,
+  Troubled Man). A target wholly absent from the archive is left for the
+  spine-integrity report. href values carrying a scheme no reader resolves
+  (`kindle:embed:`, `file:`, ...) are stripped under the same flag; the resolvable set
+  is fixed (`http`, `https`, `mailto`) and extends only with a named finding.
 - **`--encode-url-spaces`**: repairs raw-space URLs two ways. The reference half
   percent-encodes raw spaces in `src`/`href` attribute values across the package
   (OPF manifest, NCX `content src`, content documents): a URL with a literal space is
@@ -257,8 +269,16 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   against epubcheck 5.3). Ambiguous renames (a target that already exists, two names
   converging, a duplicated entry name) are refused per entry, and a book with any
   non-UTF-8 document refuses all of its renames (those entries pass through
-  byte-for-byte with no chance to rewrite their references). Scope stays fixed to the
-  space character: extend only with a named epubcheck finding.
+  byte-for-byte with no chance to rewrite their references). '[' and ']' in a renamed
+  spelling are percent-encoded in the rewritten reference (v0.58.0, issue #19): a raw
+  bracket is not a legal URL character (RSC-020 "Illegal character in path segment"),
+  and epubcheck decodes before lookup, so the encoded form resolves to the raw-spelled
+  entry. Both halves rewrite only attributes inside real start tags and processing
+  instructions, never comments, CDATA, or text: a book that teaches HTML carries
+  `href="a b.htm"` in its display text, and a bare attribute regex pairs the phantom
+  quote with the next real markup quote, corrupting that tag (issue #19, two RSC-016
+  parse fatals on a web-exploitation handbook). Scope stays fixed to the space
+  character: extend only with a named epubcheck finding.
 
 - **`--fix-container`**: generate `META-INF/container.xml` at the located OPF when the
 container is missing, unparseable, or names a file the archive does not contain. This is the
@@ -326,7 +346,11 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   anyway, and first-match is what readers actually did (the rule the SVG fix
   proved). The later duplicates gain `_2`, `_3`, ... and lose whatever invalid
   double-styling the second definition carried; the book keeps the styling it could
-  render deterministically.
+  render deterministically. Commented-out and CDATA-hidden tags do not count
+  (v0.58.0, issue #21): they are invisible to epubcheck's parser and to every reader,
+  and counting them renamed the REAL definition away from its name, dangling every
+  fragment that referenced it (an index link to an id present once in markup and once
+  in a comment).
 - **`--fix-cdata-terminator`**: complete a truncated CDATA-terminator comment in an
   inline `<style>` block: `/*]]>` becomes `/*]]>*/` (a comment-wrapped CDATA block
   whose closing `*/` the converter dropped; epubcheck's CSS parser reads the dangling

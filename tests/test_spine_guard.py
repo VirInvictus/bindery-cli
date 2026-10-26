@@ -189,8 +189,11 @@ class RawSpaceManifestRepairTests(_TempBook):
             )
             opf = z.read("OEBPS/content.opf").decode()
         # The manifest hrefs follow the entries to the renamed spelling, and
-        # every itemref still walks item -> file in the output archive.
-        self.assertIn('href="Author,_Anne_-_[Series_1]_-_Title_split_000.htm"', opf)
+        # every itemref still walks item -> file in the output archive. The
+        # brackets are percent-encoded in the reference (issue #19: epubcheck
+        # answers RSC-020 for raw '[' in a URL path) while the ENTRY keeps
+        # them raw; epubcheck decodes before lookup, so both spellings meet.
+        self.assertIn('href="Author,_Anne_-_%5BSeries_1%5D_-_Title_split_000.htm"', opf)
         self.assertNotIn("manifest_items_pruned", opf)
         self.assertEqual(spine_dangles(dst), 0)
 

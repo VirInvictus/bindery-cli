@@ -260,6 +260,40 @@ class TestEncodeUrlSpaces(unittest.TestCase):
         self.assertIn('<!-- keep href="a b.htm" -->', out)
         self.assertIn('href="c%20d.htm"', out)
 
+    def test_display_text_html_is_not_an_attribute(self):
+        # issue #19: a book that TEACHES HTML carries href="..." in its
+        # display text, and the unanchored regex paired the phantom quote
+        # with the next real markup quote -- encoding a space inside the
+        # real start tag's element name (two RSC-016 parse fatals on a
+        # web-exploitation handbook). Only the real attribute encodes.
+        s = (
+            '<p>shown: &lt;a href="mailto:x@y.z?<br class="c"/>&gt;</p>'
+            '<a href="real one.htm">x</a>'
+        )
+        out, n = encode_url_spaces(s)
+        self.assertEqual(n, 1)
+        self.assertIn('href="mailto:x@y.z?<br class="c"/>', out)
+        self.assertIn('href="real%20one.htm"', out)
+
+    def test_processing_instruction_href_is_encoded(self):
+        # the xml-stylesheet PI carries a real reference too; the anchor
+        # walk covers it so anchoring never loses a fix the text-level
+        # regex used to make
+        s = '<?xml version="1.0"?><?xml-stylesheet href="a b.css"?><r/>'
+        out, n = encode_url_spaces(s)
+        self.assertEqual(
+            (out, n),
+            ('<?xml version="1.0"?><?xml-stylesheet href="a%20b.css"?><r/>', 1),
+        )
+
+    def test_count_is_per_value_across_a_comment(self):
+        # the anchored walk runs per protected-span segment; the count must
+        # be the number of encoded values, not value x segment
+        s = '<a href="a b.htm">x</a><!-- c --><a href="c d.htm">y</a>'
+        out, n = encode_url_spaces(s)
+        self.assertEqual(n, 2)
+        self.assertEqual(out.count("%20"), 2)
+
 
 class TestPrologAndXmlns(unittest.TestCase):
     def test_strip_bom_and_junk(self):
@@ -1396,6 +1430,34 @@ class TestFixDuplicateIds(unittest.TestCase):
     def test_unique_ids_untouched(self):
         doc = '<html><body><p id="a"/><p id="b"/></body></html>'
         self.assertEqual(fix_duplicate_ids(doc), (doc, 0))
+
+    def test_commented_out_copy_is_not_a_duplicate(self):
+        # issue #21 (Seven Principles): the id exists once in markup and once
+        # inside an XML comment; epubcheck sees one definition, so the rename
+        # must too. Counting the comment renamed the REAL definition away
+        # from its name and dangled the index's cross-document fragment.
+        doc = (
+            "<html><body>"
+            '<!--<div class="block_00"><a class="hlink" id="ind282a"></a></div>-->'
+            '<p><a class="hlink" id="ind282a"></a>real</p>'
+            "</body></html>"
+        )
+        self.assertEqual(fix_duplicate_ids(doc), (doc, 0))
+
+    def test_real_duplicate_after_a_comment_still_renames(self):
+        # the comment absorbs its own occurrence; the two markup copies are
+        # still first + duplicate in document order
+        doc = (
+            "<html><body>"
+            '<!--<p id="x"/>-->'
+            '<p id="x">first</p>'
+            '<p id="x">second</p>'
+            "</body></html>"
+        )
+        out, n = fix_duplicate_ids(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('<p id="x">first</p>', out)
+        self.assertIn('id="x_2"', out)
 
 
 if __name__ == "__main__":

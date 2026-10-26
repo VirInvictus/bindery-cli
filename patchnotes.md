@@ -1,5 +1,93 @@
 # bindery-cli Patch Notes
 
+## v0.58.0 (2026-10-26)
+
+### Issues #18-#21: the structural dry run's four rejects, read to the root
+
+The 2026-10-25 whole-library structural run filed four issues and applied
+nothing; every fix here was bisected on the specimens first, and the
+forensics each turned up a mechanism the issue text had only half of.
+
+**Issue #18: one root cause under all 57 "unreadable" books.** The copy
+loop handed the source's own `ZipInfo` objects to `zout.writestr`, and
+`writestr` stamps the info it is given with the DESTINATION offsets
+(`header_offset` and the sizes land on it for the central directory).
+After an entry was copied, `zin`'s own name lookup for it pointed into
+the output file; the media-type peek's by-name open (v0.56.0) then read
+whatever bytes sat at the drifted offset. Fifty-six books died with "Bad
+magic number for file header" and one (Development as Freedom) tripped
+the read-side zip-bomb guard instead ("Overlapped entries ... possible
+zip bomb"): same mutation, different landing spot, which is why the
+issue's proposed disposition (a dedicated rebuild path for the bomb
+book) is unnecessary. The write now always gets a private `ZipInfo` (a
+shallow copy, so output bytes stay identical; a fresh one on renames, as
+before), the stale-container replacement too, and the peek additionally
+catches `zipfile.BadZipFile` per the issue's hardening ask (it subclasses
+`Exception` directly, not `OSError`): one entry with a genuinely corrupt
+local header is now a skipped probe, never an unreadable book. Both new
+tests fail on the pre-fix code.
+
+**Issue #19: the renames were only half of what the references needed.**
+Five of the six rejects (Magic Bites, King Beyond the Gate, Lavondyss,
+Sun Sword, Infinite Jest) share one mechanism: the renamed spellings
+still carry `[` and `]`, epubcheck answers RSC-020 "Illegal character in
+path segment" for a raw bracket in a URL path, and every rewritten
+reference re-flagged -- Magic Bites went 25 -> 37 errors with the space
+fix measured as PKG-010 18 -> 0. Renamed-reference spellings now
+percent-encode the brackets (`%5B`/`%5D`); epubcheck decodes before
+lookup, so the encoded form resolves to the raw-spelled entry, and the
+same books now go 25 -> 6, 41 -> 7, 28 -> 3, 48 -> 2 and 108 -> 22
+(RSC-020 85 -> 0 on Infinite Jest). The sixth reject (Hacking: The Next
+Generation) was pure corruption: the book TEACHES HTML, its display text
+carries `href="..."`, and the bare attribute regex paired the phantom
+quote with the next real markup quote, encoding a space into the
+following start tag's element name -- two RSC-016 parse fatals, and its
+seven counted "fixes" were all phantom. Both the space encoder and the
+rename rewrite now anchor on real start tags and processing instructions
+(comments and CDATA excluded; the PI branch is what keeps
+xml-stylesheet hrefs getting fixed), and the fatals are gone with zero
+phantom edits. Both new tests fail pre-fix.
+
+**Issue #20: hrefs are XML, entry names are not.** The prune+declare
+clash on the four Designers & Dragons volumes: their file names carry
+raw `&` while the manifest correctly spells `&amp;`, and the href
+resolver never decoded the entity, so the prune judged live declarations
+absent (30 new RSC-008s alone), the census then re-declared the same
+files from the raw-ampersand content references (30 OPF-074 duplicates
+alone), and the two flags literally swapped the items inside one run
+(net zero, by accident). `_resolve_href` now decodes the five predefined
+entities before normalization (attribute text arrives escaped; entry
+names are raw bytes), and the OPF item/itemref/reference matchers accept
+an optional namespace prefix -- the second shape, where Sony-style
+`<opf:item>` packages (Roadside Picnic, Twenty Love Poems, Zhuangzi)
+made the census see an empty manifest and duplicate every declaration.
+All seven books now probe as clean no-ops for both flags, and the
+prefix-tolerant matching fixes a latent `--fix-manifest-ids` gap on the
+same packages (a prefixed item's id used to be invisible to the rename
+while its spine idref was not).
+
+**Issue #21: three small deltas, three different mechanisms.** Troubled
+Man and Fools Crow both died in the NCX after the anchor pass: the
+always-on playOrder pass validates the contract BEFORE the fragment
+strip runs, and stripped fragments collapse distinct navTargets onto
+their documents, violating the same-target-shares-one-value rule the
+pass had just verified. The pass now re-runs on the final navMap (it is
+contract-gated, so a still-valid NCX re-runs as a no-op). Fools Crow's
+second new error was the OPF guide: its `type="toc"` reference pointed
+at a filepos fragment that never existed anywhere in the book, invisible
+while the target carried its own broken links and surfaced once they
+were fixed; `--strip-broken-anchors` now gives guide references the same
+document-precision fallback the NCX half has (`guide_fragments_stripped`).
+Fools Crow repairs 1e -> 0e, Troubled Man 2e -> 1e. Seven Principles was
+the duplicate-id rename counting a commented-out copy of an id as a
+second definition: epubcheck sees one definition, so renaming the REAL
+one (the only one a reader resolves) dangled the index's cross-document
+fragment. The shared rename now skips comment/CDATA-hidden tags
+entirely; the book's phantom rename is gone, its 11 errors hold, and the
+38 CSS-007 font normalizations still fire.
+
+Suite: 809 tests.
+
 ## v0.57.1 (2026-10-25)
 
 ### The prefixed dtb:uid sync: the issue #22 specimen's last finding

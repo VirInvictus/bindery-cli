@@ -13,6 +13,7 @@ never altered by any of them.
 
 from __future__ import annotations
 
+import copy
 import posixpath
 import re
 import zipfile
@@ -28,6 +29,7 @@ from .pagination import collect_runheads, detect_page_layer, strip_pagination_do
 from .reserialize import reserialize_if_broken
 from .transforms import (
     _PROTECTED_RE,
+    _START_TAG_OR_PI_RE,
     _STYLE_BLOCK_RE,
     HTML_TRANSFORMS,
     XML_TRANSFORMS,
@@ -43,6 +45,7 @@ from .transforms import (
     fix_id_colons,
     fix_misnested_inline,
     fix_missing_title,
+    fix_ncx_playorder,
     fix_ncx_src_fragments,
     fix_stray_close,
     fix_svg_dup_ids,
@@ -75,8 +78,13 @@ MARKER_NAMES = {"oceanofpdf.com"}
 # otherwise make the NCX-001 sync and OPF location silently no-op. The ([\"']) group
 # plus the tempered (?:(?!\1).)* body match a value up to its own quote character.
 _UID_ATTR_RE = re.compile(r"unique-identifier=([\"'])((?:(?!\1).)+)\1")
+# The optional prefix matches fix_manifest_ids up with the id-bearing tag the
+# same way _ITEM_TAG_RE matches it for the other readers: a prefixed
+# <opf:item id="..."> whose id needs the repair must be seen, or its spine
+# idref (which _IDREF_ATTR_RE does read) would be renamed against a
+# standing id (issue #20's prefix blindness, in fix_manifest_ids' own lane).
 _ITEM_ID_RE = re.compile(
-    r"(<item\b[^>]*?\bid=)([\"'])((?:(?!\2).)+)(\2)", re.IGNORECASE
+    r"(<(?:[\w.-]+:)?item\b[^>]*?\bid=)([\"'])((?:(?!\2).)+)(\2)", re.IGNORECASE
 )
 _ROOTFILE_RE = re.compile(r"full-path=([\"'])((?:(?!\1).)+)\1")
 
@@ -412,7 +420,7 @@ _COVER_CONTENT_RE = re.compile(
     r"""\s+content\s*=\s*(["'])((?:(?!\1).)+)\1""", re.IGNORECASE
 )
 _GUIDE_REF_RE = re.compile(
-    r"""<reference\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""", re.IGNORECASE
+    r"""<(?:[\w.-]+:)?reference\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""", re.IGNORECASE
 )
 
 
@@ -510,7 +518,7 @@ def prune_dangling_edges(opf_text: str, pruned_ids: set[str]) -> tuple[str, int]
         return tag
 
     out = re.sub(
-        r"""<(?:spine|item|itemref)\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""",
+        r"""<(?:[\w.-]+:)?(?:spine|item|itemref)\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""",
         strip_attrs,
         opf_text,
         flags=re.IGNORECASE,
@@ -731,13 +739,44 @@ def _norm_path(p: str) -> str:
     return posixpath.normpath(unquote(p))
 
 
+# Numeric character references (&#38; / &#x26;): every XML parser decodes them
+# in attribute values, and saxutils' unescape covers only the named five. A
+# reference outside the decode set reads as absent to the existence checks,
+# which is the destructive half of issue #20 one encoding step removed.
+_NUMERIC_REF_RE = re.compile(r"&#(\d+|x[0-9a-fA-F]+);")
+
+
+def _decode_numeric_refs(s: str) -> str:
+    if "&#" not in s:
+        return s
+
+    def repl(m: re.Match) -> str:
+        digits = m.group(1)
+        cp = int(digits, 16 if digits[0] in "xX" else 10)
+        return chr(cp) if 0 < cp <= 0x10FFFF else m.group(0)
+
+    return _NUMERIC_REF_RE.sub(repl, s)
+
+
 def _resolve_href(base_dir: str, href: str) -> str | None:
     """Resolve a package-relative href to an archive path, or None when it
     cannot denote an archive file (external scheme, empty target). The
-    fragment is dropped first: it selects a position in the file, not the file."""
-    if _URL_SCHEME_RE.match(href):
+    fragment is dropped first: it selects a position in the file, not the file.
+
+    The value arrives XML-escaped (attribute text: ``&amp;`` where the file
+    name carries ``&``), while archive entry names are raw; the five
+    predefined entities and the numeric character references are decoded
+    before anything else, so a properly escaped href resolves to its entry
+    instead of reading as absent (the prune's false removals and the
+    declarer's duplicates on the raw-ampersand books, issue #20). Decoding
+    runs before the fragment split deliberately: ``&#38;`` carries its own
+    ``#``, and the character the value denotes is what URL semantics apply
+    to. A real parser decodes nothing else in an attribute value, so named
+    entities like ``&copy;`` deliberately stay spelled out."""
+    decoded = _decode_numeric_refs(_xml_unescape(href, _XML_ATTR_ENTITIES))
+    if _URL_SCHEME_RE.match(decoded):
         return None
-    target = href.partition("#")[0]
+    target = decoded.partition("#")[0]
     if not target:
         return None
     return _norm_path(posixpath.join(base_dir, target))
@@ -791,6 +830,19 @@ _RENAME_CSS_URL_QUOTED_RE = re.compile(
 _RENAME_CSS_URL_BARE_RE = re.compile(r"""(url\(\s*)([^()'"]*?)(\s*\))""", re.IGNORECASE)
 
 
+def _encode_ref_path(path: str) -> str:
+    """Percent-encode the characters epubcheck refuses in a URL path
+    (RSC-020 'Illegal character in path segment'): the rename half writes
+    entry spellings that can carry '[' and ']' alongside the spaces it
+    removes, and writing them raw re-flagged every rewritten reference
+    (issue #19: five books' error counts multiplied). epubcheck DECODES
+    references before entry lookup, so the encoded form still resolves to
+    the raw-spelled entry."""
+    if "[" not in path and "]" not in path:
+        return path
+    return path.replace("[", "%5B").replace("]", "%5D")
+
+
 def _rewrite_rename_ref(
     m: re.Match, lookup_dir: str, out_dir: str, resolved_map: dict[str, str]
 ) -> str:
@@ -800,7 +852,7 @@ def _rewrite_rename_ref(
         return m.group(0)
     target = resolved_map[resolved]
     fragment = value.partition("#")[2]
-    new_value = posixpath.relpath(target, out_dir or ".") + (
+    new_value = _encode_ref_path(posixpath.relpath(target, out_dir or ".")) + (
         f"#{fragment}" if fragment else ""
     )
     return m.group(1) + m.group(2) + new_value + m.group(4)
@@ -814,17 +866,32 @@ def rewrite_space_renames(
     document's directory in the layout the references were written in;
     `out_dir` the same document's directory in the (identically renamed)
     output layout, which the replacement is spelled against. The two
-    differ only when a parent directory of the document itself renames."""
+    differ only when a parent directory of the document itself renames.
+
+    The attribute match is anchored inside real start tags and processing
+    instructions, outside comments and CDATA (the encode_url_spaces anchor):
+    display text can carry href="...", and the bare attribute regex pairs the
+    phantom quote with the next real markup quote, rewriting a value that was
+    never a reference."""
     count = 0
 
-    def sub(m: re.Match) -> str:
+    def ref_sub(m: re.Match) -> str:
         nonlocal count
         out = _rewrite_rename_ref(m, lookup_dir, out_dir, resolved_map)
         if out != m.group(0):
             count += 1
         return out
 
-    return _RENAME_REF_ATTR_RE.sub(sub, text), count
+    def rewrite_tag(m: re.Match) -> str:
+        return _RENAME_REF_ATTR_RE.sub(ref_sub, m.group(0))
+
+    def run(t: str) -> tuple[str, int]:
+        before = count
+        # the delta, not the cumulative: outside_protected_map sums every
+        # segment's return
+        return _START_TAG_OR_PI_RE.sub(rewrite_tag, t), count - before
+
+    return outside_protected_map(text, run)
 
 
 def rewrite_space_renames_css(
@@ -839,9 +906,9 @@ def rewrite_space_renames_css(
         if resolved is None or resolved not in resolved_map:
             return m.group(0)
         fragment = m.group(3).partition("#")[2]
-        new_value = posixpath.relpath(resolved_map[resolved], out_dir or ".") + (
-            f"#{fragment}" if fragment else ""
-        )
+        new_value = _encode_ref_path(
+            posixpath.relpath(resolved_map[resolved], out_dir or ".")
+        ) + (f"#{fragment}" if fragment else "")
         count += 1
         return m.group(1) + m.group(2) + new_value + m.group(4) + m.group(5)
 
@@ -850,7 +917,9 @@ def rewrite_space_renames_css(
         resolved = _resolve_href(lookup_dir, m.group(2))
         if resolved is None or resolved not in resolved_map:
             return m.group(0)
-        new_value = posixpath.relpath(resolved_map[resolved], out_dir or ".")
+        new_value = _encode_ref_path(
+            posixpath.relpath(resolved_map[resolved], out_dir or ".")
+        )
         count += 1
         return m.group(1) + new_value + m.group(3)
 
@@ -892,11 +961,16 @@ _PRUNE_IMG_TAG_RE = re.compile(
     r"""<img(?=[\s/>])((?:"[^"]*"|'[^']*'|[^>"'])*?)\s*(/?)>""",
     re.IGNORECASE | re.DOTALL,
 )
-_ITEM_TAG_RE = re.compile(r"""<item\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""", re.IGNORECASE)
+_ITEM_TAG_RE = re.compile(
+    r"""<(?:[\w.-]+:)?item\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""", re.IGNORECASE
+)
 # `<itemref` must not be swallowed by the `<item\b` matcher above (\b has no
 # boundary before the 'r'), and its own idref carries the spine order.
+# The optional prefix keeps the two apart under prefixed packages too
+# (<opf:item> / <opf:itemref>, issue #20): after the prefix's colon the
+# same \b logic separates item from itemref.
 _SPINE_ITEM_RE = re.compile(
-    r"""<itemref\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""", re.IGNORECASE
+    r"""<(?:[\w.-]+:)?itemref\b(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""", re.IGNORECASE
 )
 # `\b` is what keeps `<item\b` from matching `<itemref`: "itemref" has a word
 # character right after "item", so there is no boundary there.
@@ -1536,6 +1610,48 @@ def strip_ncx_broken_fragments(
     return outside_protected_map(ncx_text, fix)
 
 
+def strip_broken_guide_fragments(
+    opf_text: str, opf_dir: str, ids_by_doc: dict[str, frozenset[str]]
+) -> tuple[str, int]:
+    """Point the guide's `<reference href="doc#frag">` at `doc` when `doc`
+    exists but does not define `frag` (RSC-012 at content.opf).
+
+    The content-doc and NCX halves of --strip-broken-anchors leave this edge
+    behind: the guide is not a content document, so its broken fragment hid
+    until the pass fixed the target's own links and epubcheck got far enough
+    to flag the package (issue #21, Fools Crow: the type="toc" reference's
+    filepos anchor never existed anywhere in the book). Same precision as the
+    NCX half — the document-level reference survives, the fragment is dropped,
+    nothing is re-pointed at a guess; an unresolvable or unknown target is
+    left for the prune. The escaped spelling of the target part is preserved
+    (only the ``#frag`` tail goes)."""
+
+    def fix(part: str) -> tuple[str, int]:
+        count = 0
+
+        def repl(m: re.Match) -> str:
+            nonlocal count
+            tag = m.group(0)
+            hm = _HREF_ATTR_RE.search(tag)
+            if not hm:
+                return tag
+            href = hm.group(2)
+            if _URL_SCHEME_RE.match(href) or "#" not in href:
+                return tag
+            target, frag = href.partition("#")[::2]
+            resolved = _resolve_href(opf_dir, target) if target else None
+            ids = ids_by_doc.get(resolved or "") if resolved else None
+            if ids is None or frag in ids:
+                return tag
+            count += 1
+            value_start = hm.start(2)
+            return tag[:value_start] + target + tag[hm.end(2) :]
+
+        return _GUIDE_REF_RE.sub(repl, part), count
+
+    return outside_protected_map(opf_text, fix)
+
+
 def opf_unique_id(opf_text: str) -> str | None:
     """The dc:identifier value referenced by the OPF unique-identifier attribute."""
     attr = _UID_ATTR_RE.search(opf_text)
@@ -2061,7 +2177,9 @@ def repair_epub(
             # that is not in the archive); written before the generated
             # insertion could not fire, since the entry exists here.
             if container_bytes is not None and name == "META-INF/container.xml":
-                zout.writestr(item, container_bytes, compress_type=item.compress_type)
+                zout.writestr(
+                    copy.copy(item), container_bytes, compress_type=item.compress_type
+                )
                 report.add({"container_generated": 1})
                 report.files_changed += 1
                 continue
@@ -2069,6 +2187,16 @@ def repair_epub(
             # underscore spelling. A fresh ZipInfo, not a bare-string
             # arcname (that would stamp the current clock into the output;
             # see the mimetype note above).
+            #
+            # Either way the write gets a PRIVATE ZipInfo (the fresh one on a
+            # rename, a shallow copy otherwise): writestr stamps the info it
+            # is handed with the DESTINATION offsets (header_offset, sizes
+            # go onto it for the central directory), and sharing the
+            # source's info repointed zin's own name lookups into the
+            # output file mid-loop. The media-type peek's by-name opens then
+            # read whatever bytes sit at the drifted offset, and one bad
+            # local-header check killed the whole book as unreadable
+            # (issue #18, 56 books in the 2026-10-25 structural run).
             out_item = item
             if name in space_renames:
                 out_item = zipfile.ZipInfo(
@@ -2078,6 +2206,8 @@ def repair_epub(
                 out_item.compress_type = item.compress_type
                 report.add({"entries_renamed": 1})
                 report.files_changed += 1
+            else:
+                out_item = copy.copy(item)
             # read(item), not read(name): with duplicate entry names (seen in broken
             # EPUBs), read(name) returns the first entry's bytes for every duplicate.
             data = zin.read(item)
@@ -2149,6 +2279,18 @@ def repair_epub(
                     )
                     if n:
                         counts["ncx_fragments_stripped"] = n
+                        # The always-on playOrder pass ran above, on the
+                        # pre-strip navTargets: fragments that collapsed onto
+                        # their document now make distinct-target values share
+                        # a target, which is exactly the contract violation.
+                        # Re-sequence on the final navMap; the fix is
+                        # contract-gated, so a still-valid NCX re-runs as a
+                        # no-op (issue #21: Troubled Man, Fools Crow).
+                        text, n2 = fix_ncx_playorder(text)
+                        if n2:
+                            counts["fix_ncx_playorder"] = (
+                                counts.get("fix_ncx_playorder", 0) + n2
+                            )
                 synced = False
                 sync_uid = uid if uid else wired_uid
                 if sync_uid:
@@ -2170,6 +2312,7 @@ def repair_epub(
                 or flags.fix_cover
                 or flags.comment_double_hyphens
                 or flags.strip_stub_docs
+                or flags.strip_anchors
                 or flags.unbound_prefix
                 or flags.unique_identifier
             ):
@@ -2250,7 +2393,10 @@ def repair_epub(
                         try:
                             with zin.open(raw) as f:
                                 return f.read(8)
-                        except (KeyError, OSError, RuntimeError):
+                        # BadZipFile subclasses Exception directly (not
+                        # OSError): one entry with a corrupt local header is
+                        # a skipped probe, never an unreadable book
+                        except (KeyError, OSError, RuntimeError, zipfile.BadZipFile):
                             return None
 
                     text, n = fix_manifest_media_types(text, opf_dir, peek)
@@ -2281,6 +2427,19 @@ def repair_epub(
                     text, n = encode_url_spaces(text)
                     if n:
                         report.add({"url_spaces_encoded": n})
+                        opf_changed = True
+                if flags.strip_anchors:
+                    # After the reference rewrite, deliberately: ids_by_doc is
+                    # keyed by the RENAMED output spellings, so a guide href in
+                    # source spelling would miss its own target's ids and the
+                    # strip would silently no-op exactly on the books that
+                    # rename. Once the rewrite has run, a guide href resolving
+                    # to a renamed doc carries the renamed (ids-keyed)
+                    # spelling, like the content and NCX anchor halves (which
+                    # run post-rewrite with out_dir).
+                    text, n = strip_broken_guide_fragments(text, opf_dir, ids_by_doc)
+                    if n:
+                        report.add({"guide_fragments_stripped": n})
                         opf_changed = True
                 if opf_changed:
                     report.files_changed += 1

@@ -1793,9 +1793,12 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "strip hrefs that cannot resolve; anchor text always preserved",
             "strip href attributes that cannot resolve, keeping the anchor text "
             "byte-for-byte: a #fragment the target document does not define "
-            "(RSC-020/RSC-012; NCX navTargets keep the document target, so "
-            "chapter navigation survives) and unresolvable URI schemes "
-            "(kindle:, file:).",
+            "(RSC-020/RSC-012; NCX navTargets and OPF guide references keep the "
+            "document target, so navigation survives) and unresolvable URI "
+            "schemes (kindle:, file:). When the NCX fragments strip, the "
+            "always-on playOrder pass re-runs on the final navMap so collapsing "
+            "two fragments onto one document cannot leave the same-target-"
+            "shares-one-value contract violated.",
         ),
         (
             "encode_url_spaces",
@@ -1805,8 +1808,14 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "not a valid URL, RSC-020), and rename the archive entries whose "
             "names carry raw spaces to their underscore spellings, rewriting "
             "every reference to them (underscore, never percent-encoding: "
-            "epubcheck decodes references before entry lookup). Accepted under "
-            "the no-worse bar: the rename half's gain sits on the warning axis.",
+            "epubcheck decodes references before entry lookup; '[' and ']' in "
+            "a renamed spelling are percent-encoded in the rewritten reference, "
+            "since epubcheck rejects them raw in a URL path). Both halves "
+            "rewrite only attributes inside real start tags and processing "
+            "instructions: a book that displays HTML in its prose carries "
+            'href="..." in its text, and a bare attribute regex corrupts the '
+            "next real tag. Accepted under the no-worse bar: the rename half's "
+            "gain sits on the warning axis.",
         ),
         (
             "fix_svg_dup_ids",
@@ -1830,7 +1839,11 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "its name, later ones gain _2/_3, and no reference is rewritten "
             "because href='#x' anchors, CSS '#x' selectors, and cross-document "
             "fragment references all resolve to the first definition exactly "
-            "as readers resolved them before. The later duplicates lose "
+            "as readers resolved them before. Commented-out and CDATA-hidden "
+            "tags do not count as duplicates: they are invisible to epubcheck "
+            "and to every reader, and counting them renamed the real "
+            "definition away from its name (issue #21, Seven Principles). "
+            "The later duplicates lose "
             "whatever invalid double-styling the second definition carried.",
         ),
     ],

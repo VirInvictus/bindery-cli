@@ -774,8 +774,22 @@ _SRC_HREF_ATTR_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The reference-rewriting walks (encode_url_spaces here, the space-rename
+# rewrite in epub.py) anchor on this instead of _START_TAG_RE alone: an
+# xml-stylesheet processing instruction can carry an href to a stylesheet
+# too, and dropping it from the walk would leave a raw-space reference
+# unrewritten exactly where the unanchored regex used to fix it. The two
+# branches are prefix-disjoint (`<?` vs `<[a-zA-Z]`), but the loop
+# alternations are NOT disjoint on their first characters (`[^?]` matches
+# quotes, `[^>]` matches quotes too -- the original 0.41 overlap); the
+# possessive `*+` is what keeps a failing candidate linear, exactly as in
+# _START_TAG_RE. Never drop it on the belief that the branches suffice.
+_START_TAG_OR_PI_RE = re.compile(
+    r"""<\?[\w.-]+(?:"[^"]*"|'[^']*'|\?(?!>)|[^?])*+\?>"""
+    r"""|<[a-zA-Z][\w:.-]*(?:"[^"]*"|'[^']*'|[^>])*+>"""
+)
 
-@_outside_protected
+
 def encode_url_spaces(s: str) -> tuple[str, int]:
     """Percent-encode raw spaces in src/href attribute values
     (`href="a b.htm"` -> `href="a%20b.htm"`).
@@ -786,6 +800,14 @@ def encode_url_spaces(s: str) -> tuple[str, int]:
     strict readers; the encoded form denotes the same file and renders
     identically. Scope is fixed to the space character: extend only with a
     named epubcheck finding, never speculatively.
+
+    The match is anchored inside real start tags and processing instructions,
+    outside comments and CDATA (the strip_attrs_in_start_tags shape): a book
+    that TEACHES HTML carries href="a b.htm" in its display text, and the
+    bare attribute regex paired the phantom quote with the next real markup
+    quote -- encoding a space inside the following start tag's element name
+    and breaking the document's parse (issue #19: two RSC-016 parse fatals on
+    a web-exploitation handbook).
     """
     count = 0
 
@@ -796,7 +818,17 @@ def encode_url_spaces(s: str) -> tuple[str, int]:
         count += 1
         return m.group(1) + m.group(2) + m.group(3).replace(" ", "%20") + m.group(4)
 
-    return _SRC_HREF_ATTR_RE.sub(repl, s), count
+    def encode_tag(m: re.Match) -> str:
+        return _SRC_HREF_ATTR_RE.sub(repl, m.group(0))
+
+    def run(text: str) -> tuple[str, int]:
+        before = count
+        # the delta, not the cumulative: outside_protected_map sums every
+        # segment's return, so a document with a comment between matched
+        # attributes would report one count per segment
+        return _START_TAG_OR_PI_RE.sub(encode_tag, text), count - before
+
+    return outside_protected_map(s, run)
 
 
 # XML comments end at the first `-->`; CDATA sections do not contain comments
@@ -892,37 +924,48 @@ def _rename_duplicate_ids(s: str) -> tuple[str, int]:
     later one gains `_2`, `_3`, ... (prefixed with `_` until free), in
     document order. Internal references are never rewritten because they
     already resolve to the first definition under every reader's first-match
-    lookup, so first-keeps-id preserves exactly what was rendered."""
-    values = [
-        m.group(3)
-        for tag in _SVG_TAG_RE.finditer(s)
-        for m in [_SVG_ID_ATTR_RE.search(tag.group(0))]
-        if m is not None
-    ]
-    counts: dict[str, int] = {}
-    taken = set(values)
-    count = 0
+    lookup, so first-keeps-id preserves exactly what was rendered.
 
-    def fix_tag(tag: re.Match) -> str:
-        nonlocal count
+    Commented-out and CDATA-hidden tags do not count: they are invisible to
+    epubcheck's parser and to every reader, so counting them renamed the REAL
+    definition away from its name and dangled every fragment that referenced
+    it (issue #21, Seven Principles: an id present once in markup and once in
+    a comment read as duplicate, the markup copy became ``_2``, and the
+    index's ``#id`` link lost its target)."""
+    protected = (
+        [(m.start(), m.end()) for m in _PROTECTED_RE.finditer(s)] if "<!" in s else []
+    )
+
+    def hidden(pos: int) -> bool:
+        return any(a <= pos < b for a, b in protected)
+
+    id_tags = []
+    for tag in _SVG_TAG_RE.finditer(s):
         m = _SVG_ID_ATTR_RE.search(tag.group(0))
-        if m is None:
-            return tag.group(0)
+        if m is not None and not hidden(tag.start()):
+            id_tags.append((tag.start(), m))
+    counts: dict[str, int] = {}
+    taken = {m.group(3) for _, m in id_tags}
+    renames: list[tuple[int, re.Match, str]] = []
+    for pos, m in id_tags:
         v = m.group(3)
         if not v:
-            return tag.group(0)
+            continue
         n = counts.get(v, 0) + 1
         counts[v] = n
         if n == 1:
-            return tag.group(0)
+            continue
         new = f"{v}_{n}"
         while new in taken:
             new = "_" + new
         taken.add(new)
-        count += 1
-        return tag.group(0)[: m.start(3)] + new + tag.group(0)[m.end(3) :]
-
-    return _SVG_TAG_RE.sub(fix_tag, s), count
+        renames.append((pos, m, new))
+    if not renames:
+        return s, 0
+    out = s
+    for pos, m, new in sorted(renames, reverse=True):
+        out = out[: pos + m.start(3)] + new + out[pos + m.end(3) :]
+    return out, len(renames)
 
 
 def fix_svg_dup_ids(s: str) -> tuple[str, int]:

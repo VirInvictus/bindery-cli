@@ -167,6 +167,23 @@ class TestManifestIds(unittest.TestCase):
         out, n = fix_manifest_ids(opf)
         self.assertEqual((out, n), (opf, 0))
 
+    def test_prefixed_item_id_renamed_with_refs(self):
+        # issue #20's prefix blindness extended to fix_manifest_ids' own lane:
+        # a <opf:item id="7cgqkgid"> was invisible to the rename while the
+        # spine's <itemref idref> was not, so the idref was renamed against a
+        # standing id
+        opf = (
+            "<manifest>"
+            '<opf:item id="7cgqkgid" href="a.xhtml" '
+            'media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="7cgqkgid"/></spine>'
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('id="id_7cgqkgid"', out)
+        self.assertIn('idref="id_7cgqkgid"', out)
+
     def test_single_quoted_opf_renames_too(self):
         # reported 2026-09-08: the double-quote-only regex made a
         # single-quoting toolchain a silent count-0 no-op
@@ -1103,6 +1120,45 @@ class TestPruneMissingResources(unittest.TestCase):
         ):
             self.assertNotIn(key, report.fixes)
 
+    def test_escaped_ampersand_declaration_over_a_raw_entry_survives(self):
+        # issue #20 (Designers & Dragons): href="K&amp;C.png" over the entry
+        # "K&C.png" resolved to the escaped spelling, read as absent, and the
+        # prune deleted a live declaration -- epubcheck answered RSC-008 for
+        # every content reference that survived. The resolver decodes the
+        # attribute-value entities before the existence check.
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            opf = (
+                '<?xml version="1.0"?>'
+                '<package xmlns="http://www.idpf.org/2007/opf" '
+                'unique-identifier="bookid">'
+                '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
+                "</metadata>"
+                "<manifest>"
+                '<item href="c1.xhtml" id="c1" '
+                'media-type="application/xhtml+xml"/>'
+                '<item href="K&amp;C.png" id="pic" media-type="image/png"/>'
+                "</manifest>"
+                "<spine><itemref idref='c1'/></spine></package>"
+            )
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr(
+                    "OEBPS/c1.xhtml",
+                    '<?xml version="1.0"?><html '
+                    'xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+                    "</head><body><p>x</p></body></html>",
+                )
+                z.writestr("OEBPS/K&C.png", b"\x89PNG\r\n\x1a\n")
+            report = repair_epub(src, dst, RepairFlags(prune_missing=True))
+            self.assertNotIn("manifest_items_pruned", report.fixes)
+            with zipfile.ZipFile(dst) as z:
+                self.assertIn(
+                    "K&amp;C.png", z.read("OEBPS/content.opf").decode("utf-8")
+                )
+
 
 class TestStripBrokenAnchors(unittest.TestCase):
     """--strip-broken-anchors: hrefs to fragments the target does not define and
@@ -1189,6 +1245,139 @@ class TestStripBrokenAnchors(unittest.TestCase):
         # NCX falls back to the document target; absent targets untouched
         self.assertIn('<content src="a.xhtml"/>', ncx)
         self.assertIn('<content src="absent.xhtml#x"/>', ncx)
+
+    def test_guide_reference_broken_fragment_is_stripped(self):
+        # issue #21 (Fools Crow): the guide's undefined fragment hid while the
+        # target doc carried its own broken links; once the anchor pass fixed
+        # those, epubcheck flagged the package edge. The guide gets the same
+        # document-precision fallback as the NCX.
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            '<item href="c1.xhtml" id="c1" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="c1"/></spine>'
+            "<guide>"
+            '<reference href="c1.xhtml#real" type="toc" title="ToC"/>'
+            '<reference href="c1.xhtml#ghost" type="text" title="G"/>'
+            "</guide></package>"
+        )
+        doc = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            '</head><body><p id="real">target</p></body></html>'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", doc)
+            report = repair_epub(src, dst, RepairFlags(strip_anchors=True))
+            self.assertEqual(report.fixes.get("guide_fragments_stripped"), 1)
+            with zipfile.ZipFile(dst) as z:
+                out = z.read("OEBPS/content.opf").decode()
+        self.assertIn('<reference href="c1.xhtml#real" type="toc"', out)
+        self.assertIn('href="c1.xhtml" type="text"', out)
+
+    def test_guide_fragment_stripped_on_a_renamed_target(self):
+        # the review finding on this feature: ids_by_doc is keyed by the
+        # RENAMED output spellings, so the guide strip must run after the
+        # reference rewrite (pre-order it silently no-op'd on exactly the
+        # books that rename)
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            '<item href="a b.xhtml" id="a" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="a"/></spine>'
+            '<guide><reference href="a b.xhtml#ghost" type="toc" title="T"/></guide>'
+            "</package>"
+        )
+        doc = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body><p>plain</p></body></html>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/a b.xhtml", doc)
+            report = repair_epub(
+                src, dst, RepairFlags(strip_anchors=True, url_spaces=True)
+            )
+            self.assertEqual(report.fixes.get("entries_renamed"), 1)
+            self.assertEqual(report.fixes.get("guide_fragments_stripped"), 1)
+            with zipfile.ZipFile(dst) as z:
+                out = z.read("OEBPS/content.opf").decode()
+        self.assertIn('<reference href="a_b.xhtml" type="toc"', out)
+
+    def test_playorder_contract_rehealed_after_fragment_collapse(self):
+        # issue #21 (Troubled Man): the always-on playOrder pass ran before
+        # the anchor pass, so two distinct-fragment navTargets that collapsed
+        # onto one document left the NCX violating the same-target-shares-one-
+        # value contract. The pass re-runs on the final navMap.
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            '<item href="c1.xhtml" id="c1" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="c1"/></spine></package>'
+        )
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
+            '<meta name="dtb:uid" content="urn:uuid:U"/></head>'
+            "<navMap>"
+            '<navPoint id="n1" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="c1.xhtml#ghost_a"/></navPoint>'
+            '<navPoint id="n2" playOrder="2"><navLabel><text>B</text></navLabel>'
+            '<content src="c1.xhtml#ghost_b"/></navPoint>'
+            "</navMap></ncx>"
+        )
+        doc = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body><p>plain</p></body></html>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/toc.ncx", ncx)
+                z.writestr("OEBPS/c1.xhtml", doc)
+            report = repair_epub(src, dst, RepairFlags(strip_anchors=True))
+            self.assertEqual(report.fixes.get("ncx_fragments_stripped"), 2)
+            with zipfile.ZipFile(dst) as z:
+                out = z.read("OEBPS/toc.ncx").decode()
+        self.assertEqual(out.count('<content src="c1.xhtml"/>'), 2)
+        # one target, one shared playOrder value (the collapsed navPoints
+        # re-sequenced onto the same value instead of a contract violation)
+        self.assertIn(
+            'playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="c1.xhtml"/>',
+            out,
+        )
+        self.assertIn(
+            'playOrder="1"><navLabel><text>B</text></navLabel>'
+            '<content src="c1.xhtml"/>',
+            out,
+        )
 
     def test_anchor_text_conserved(self):
         self._build()
@@ -1363,6 +1552,39 @@ class TestEncodeUrlSpacesEpub(unittest.TestCase):
         self._build()
         report = repair_epub(self.src, self.dst)
         self.assertNotIn("url_spaces_encoded", report.fixes)
+
+    def test_renamed_ref_brackets_are_percent_encoded(self):
+        # issue #19: the renamed spelling can still carry '[' / ']'; epubcheck
+        # refuses them in a URL path (RSC-020 'Illegal character in path
+        # segment'), so the raw form re-flagged every rewritten reference and
+        # five books' error counts multiplied. The encoded form decodes back
+        # to the raw-spelled entry before lookup.
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr(
+                "OEBPS/content.opf",
+                '<?xml version="1.0"?>'
+                '<package xmlns="http://www.idpf.org/2007/opf" '
+                'unique-identifier="bookid">'
+                '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
+                "</metadata>"
+                "<manifest>"
+                '<item href="pic [1].jpg" id="p" media-type="image/jpeg"/>'
+                "</manifest>"
+                '<spine><itemref idref="p"/></spine>'
+                "</package>",
+            )
+            z.writestr("OEBPS/pic [1].jpg", b"\xff\xd8\xffBINARY")
+        report = repair_epub(self.src, self.dst, RepairFlags(url_spaces=True))
+        self.assertEqual(report.fixes.get("entries_renamed"), 1)
+        self.assertEqual(report.fixes.get("renamed_refs_rewritten"), 1)
+        with zipfile.ZipFile(self.dst) as z:
+            self.assertIn("OEBPS/pic_[1].jpg", z.namelist())
+            self.assertIn(
+                'href="pic_%5B1%5D.jpg"',
+                z.read("OEBPS/content.opf").decode("utf-8"),
+            )
 
 
 class TestFixUniqueIdentifier(unittest.TestCase):
@@ -1620,6 +1842,103 @@ class TestDeclareMissingItems(unittest.TestCase):
                 opf_out = z.read("OEBPS/content.opf").decode()
             self.assertIn('href="images/i.png"', opf_out)
             self.assertIn('media-type="image/png"', opf_out)
+
+    def test_prefixed_manifest_items_count_as_declared(self):
+        # issue #20 (Roadside Picnic): a Sony-style OPF writes <opf:item>;
+        # the census matched only bare <item>, saw nothing declared, and the
+        # declarer duplicated every declaration (one OPF-074 per added item).
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+            'unique-identifier="id"><metadata/>'
+            '<manifest xmlns:opf="http://www.idpf.org/2007/opf">'
+            '<opf:item id="c1" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/>'
+            '<opf:item id="pic" href="images/i.png" media-type="image/png"/>'
+            "</manifest>"
+            "<spine><itemref idref='c1'/></spine></package>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr(
+                    "OEBPS/c1.xhtml",
+                    '<?xml version="1.0"?><html '
+                    'xmlns="http://www.w3.org/1999/xhtml">'
+                    "<body><img src='images/i.png'/></body></html>",
+                )
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/images/i.png", b"\x89PNG\r\n\x1a\n")
+            with zipfile.ZipFile(src) as z:
+                got = collect_undeclared_resources(
+                    z, opf, "OEBPS", frozenset(z.namelist())
+                )
+        self.assertEqual(got, frozenset())
+
+    def test_escaped_ampersand_href_counts_as_declared(self):
+        # issue #20 (Designers & Dragons): entry names carry raw '&' while
+        # the manifest spells it &amp;. The prune read the escaped spelling
+        # as an absent file (deleting live declarations; the declarer then
+        # re-added the same files from the raw-& content references, and the
+        # two flags swapped the items inside one run). The census resolves
+        # the raw-& reference against the &amp;-spelled declaration.
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+            'unique-identifier="id"><metadata/>'
+            "<manifest>"
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="pic" href="K&amp;C.png" media-type="image/png"/>'
+            "</manifest>"
+            "<spine><itemref idref='c1'/></spine></package>"
+        )
+        # the content reference carries the RAW ampersand (what a recovering
+        # producer writes and what epubcheck's lenient reader accepts)
+        content = (
+            '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+            "<body><img src='K&C.png'/></body></html>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("OEBPS/c1.xhtml", content)
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/K&C.png", b"\x89PNG\r\n\x1a\n")
+            with zipfile.ZipFile(src) as z:
+                got = collect_undeclared_resources(
+                    z, opf, "OEBPS", frozenset(z.namelist())
+                )
+        self.assertEqual(got, frozenset())
+
+    def test_numeric_character_reference_href_counts_as_declared(self):
+        # issue #20's resolver decode covers numeric refs too (every XML
+        # parser decodes them in attribute values): href="K&#38;C.png" names
+        # the entry K&C.png
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+            'unique-identifier="id"><metadata/>'
+            "<manifest>"
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="pic" href="K&#38;C.png" media-type="image/png"/>'
+            "</manifest>"
+            "<spine><itemref idref='c1'/></spine></package>"
+        )
+        content = (
+            '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+            "<body><img src='K&C.png'/></body></html>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("OEBPS/c1.xhtml", content)
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/K&C.png", b"\x89PNG\r\n\x1a\n")
+            with zipfile.ZipFile(src) as z:
+                got = collect_undeclared_resources(
+                    z, opf, "OEBPS", frozenset(z.namelist())
+                )
+        self.assertEqual(got, frozenset())
 
 
 if __name__ == "__main__":
@@ -2048,6 +2367,65 @@ class TestFontMediaTypes(unittest.TestCase):
                 src, "f.eot", "application/vnd.ms-fontobject", b"\x00\x00\x00lol"
             )
             report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
+            self.assertNotIn("media_types_normalized", report.fixes)
+
+    def test_probe_survives_source_output_offset_drift(self):
+        # issue #18: writestr stamps the ZipInfo it is handed with the
+        # DESTINATION offsets, and the copy loop used to hand it the
+        # source's own info. On a book whose output entries land at
+        # different offsets than the source's (different deflate level),
+        # the peek's by-name open then read the wrong entry's local
+        # header; 56 books came back unreadable in the 2026-10-25
+        # structural run. The image sits BEFORE the OPF so its info is
+        # already stamped by the time the OPF's peek probes it; the
+        # source is written at compresslevel 9 so the output (default
+        # level) drifts from the first deflate entry onward.
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            filler = b"filler text line\n" * 400
+            opf = (
+                '<?xml version="1.0"?>'
+                '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+                '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                '<dc:identifier id="bookid">urn:uuid:X</dc:identifier>'
+                "</metadata>"
+                "<manifest>"
+                '<item id="pic" href="pic.jpg" media-type="image/png"/>'
+                "</manifest>"
+                "<spine/></package>"
+            )
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
+                for i in range(6):
+                    z.writestr(f"OEBPS/f{i}.xhtml", filler)
+                z.writestr("OEBPS/pic.jpg", b"\xff\xd8\xff\xe0JFIF")
+                z.writestr("OEBPS/content.opf", opf)
+            report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
+            self.assertEqual(report.fixes.get("media_types_normalized"), 1)
+
+    def test_badzipfile_from_the_probe_is_a_skipped_probe(self):
+        # issue #18's hardening half: zipfile.BadZipFile subclasses
+        # Exception directly (not OSError), so the peek's except tuple
+        # missed it and one entry that cannot be opened killed the whole
+        # book as unreadable. The probe is best-effort by contract: the
+        # item keeps its (wrong but honest) declaration. The failure is
+        # injected for the by-name open only — the copy loop's
+        # read(item) goes through a ZipInfo and must still succeed.
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            self._build(src, "pic.jpg", "image/png", b"\xff\xd8\xff\xe0JFIF")
+            real_open = zipfile.ZipFile.open
+
+            def failing_open(self, name, mode="r", pwd=None, **kw):
+                if isinstance(name, str) and name.endswith("pic.jpg"):
+                    raise zipfile.BadZipFile("Bad magic number for file header")
+                return real_open(self, name, mode, pwd, **kw)
+
+            with mock.patch.object(zipfile.ZipFile, "open", failing_open):
+                report = repair_epub(src, dst, RepairFlags(fix_media_types=True))
             self.assertNotIn("media_types_normalized", report.fixes)
 
 
