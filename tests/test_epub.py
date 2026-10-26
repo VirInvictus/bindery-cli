@@ -41,6 +41,15 @@ NCX_BAD = (
     '<meta name="dtb:uid" content="urn:uuid:THE-WRONG-ID"/>'
     "</head></ncx>"
 )
+# The Hackers spelling (issue #22's residual NCX-001): every element
+# carries the ncx: prefix, including the dtb:uid meta.
+NCX_BAD_PREFIXED = (
+    '<?xml version="1.0"?>'
+    '<ncx:ncx xmlns:ncx="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+    "<ncx:head>"
+    '<ncx:meta name="dtb:uid" content="urn:uuid:THE-WRONG-ID"/>'
+    "</ncx:head></ncx:ncx>"
+)
 CONTENT = (
     '<?xml version="1.0"?>'
     '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
@@ -77,6 +86,58 @@ class TestParts(unittest.TestCase):
         out, changed = sync_ncx_uid(NCX_BAD, uid)
         self.assertTrue(changed)
         self.assertIn(f'content="{uid}"', out)
+
+    def test_sync_ncx_uid_prefixed_meta(self):
+        # v0.57.1 (issue #22 follow-up): the 2010-era NCX spellings every
+        # element as <ncx:meta>; the sync reads and rewrites the dtb:uid
+        # there exactly as on the unprefixed shape.
+        out, changed = sync_ncx_uid(NCX_BAD_PREFIXED, "urn:uuid:THE-RIGHT-ID")
+        self.assertTrue(changed)
+        self.assertIn('content="urn:uuid:THE-RIGHT-ID"', out)
+        _, changed2 = sync_ncx_uid(out, "urn:uuid:THE-RIGHT-ID")
+        self.assertFalse(changed2)
+
+    def test_prefixed_meta_rev_order(self):
+        # content before name, under the prefix: the reversed-order matcher
+        # carries the same prefix extension.
+        ncx = (
+            '<ncx:ncx xmlns:ncx="http://www.daisy.org/z3986/2005/ncx/"><ncx:head>'
+            '<ncx:meta content="urn:uuid:THE-WRONG-ID" name="dtb:uid"/>'
+            "</ncx:head></ncx:ncx>"
+        )
+        out, changed = sync_ncx_uid(ncx, "urn:uuid:THE-RIGHT-ID")
+        self.assertTrue(changed)
+        self.assertIn('content="urn:uuid:THE-RIGHT-ID"', out)
+        ET.fromstring(out)
+
+    def test_prefixed_meta_no_false_positives(self):
+        # A prefixed element whose local name merely starts with "meta"
+        # (metadata) is not a dtb:uid carrier, prefix or not.
+        ncx = (
+            '<p:package xmlns:p="urn:x"><p:head>'
+            '<p:metadata name="dtb:uid" content="urn:uuid:THE-WRONG-ID"/>'
+            "</p:head></p:package>"
+        )
+        self.assertEqual(sync_ncx_uid(ncx, "urn:uuid:OTHER"), (ncx, False))
+
+    def test_ncx_uid_mismatch_prefixed(self):
+        # The --only ncx selector reads the same matchers: a prefixed-NCX
+        # book with a drifted uid is a candidate, an in-sync one is not.
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("OEBPS/c1.xhtml", CONTENT)
+                z.writestr("OEBPS/toc.ncx", NCX_BAD_PREFIXED)
+                z.writestr("OEBPS/content.opf", OPF)
+            self.assertTrue(ncx_uid_mismatch(src))
+            out, changed = sync_ncx_uid(NCX_BAD_PREFIXED, "urn:uuid:THE-RIGHT-ID")
+            self.assertTrue(changed)
+            src2 = Path(td) / "synced.epub"
+            with zipfile.ZipFile(src2, "w") as z:
+                z.writestr("OEBPS/c1.xhtml", CONTENT)
+                z.writestr("OEBPS/toc.ncx", out)
+                z.writestr("OEBPS/content.opf", OPF)
+            self.assertFalse(ncx_uid_mismatch(src2))
 
 
 class TestManifestIds(unittest.TestCase):
@@ -2394,18 +2455,21 @@ class TestUnboundPrefix(unittest.TestCase):
         with zipfile.ZipFile(src, "w") as z:
             z.writestr("mimetype", "application/epub+zip")
             z.writestr("OEBPS/c1.xhtml", CONTENT)
-            z.writestr("OEBPS/toc.ncx", NCX_BAD)
+            # the real specimen's NCX is prefixed throughout (v0.57.1)
+            z.writestr("OEBPS/toc.ncx", NCX_BAD_PREFIXED)
             z.writestr("OEBPS/content.opf", EMBED_SCARRED_OPF)
         return src, dst
 
     def test_embed_scar_element_and_attribute_bound(self):
         # Issue #22: one run binds both halves of the 9.7.0 scar. On the
         # specimen each fix alone left the other masked behind a still-fatal
-        # package (1f/1e -> 1f/0e); together they parse it clean.
+        # package (1f/1e -> 1f/0e); together they parse it clean. The NCX
+        # sync fires on the specimen's prefixed meta spelling (v0.57.1).
         with tempfile.TemporaryDirectory() as td:
             src, dst = self._build_embed_scar(td)
             report = repair_epub(src, dst, RepairFlags(unbound_prefix=True))
             self.assertEqual(report.fixes.get("unbound_prefixes_bound"), 2)
+            self.assertTrue(report.ncx_uid_synced)
             with zipfile.ZipFile(dst) as z:
                 opf = z.read("OEBPS/content.opf").decode()
             self.assertIn(

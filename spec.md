@@ -70,7 +70,12 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
 
 Applied to the NCX sidecar (`.ncx`): strip_prolog_junk, escape_bare_amp,
 fix_named_entities, plus **dtb:uid sync** (rewriting the NCX's `dtb:uid`
-meta to match the OPF's unique identifier when they drift, NCX-001) and
+meta to match the OPF's unique identifier when they drift, NCX-001; the
+matcher reads the meta under a namespace prefix too since v0.57.1 --
+2010-era producers spell every element `<ncx:meta>`, and a prefixed
+`dtb:uid` carrier used to survive an otherwise-clean repair as the
+book's last finding -- and the `--only ncx` selector reads the same
+matchers) and
 **fix_ncx_playorder** (resequencing `playOrder` values so the NCX
 satisfies epubcheck's playOrder contract: elements whose `<content src>`
 point at the same target share one value, distinct targets carry distinct

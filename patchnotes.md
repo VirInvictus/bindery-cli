@@ -1,5 +1,30 @@
 # bindery-cli Patch Notes
 
+## v0.57.1 (2026-10-25)
+
+### The prefixed dtb:uid sync: the issue #22 specimen's last finding
+
+Same night as v0.57.0, on the follow-up call: the Hackers specimen
+repaired to `0f/1e` because its residual error was NCX-001, not embed
+damage. That book's 2010-era NCX spells every element with the `ncx:`
+prefix (`<ncx:meta name="dtb:uid" .../>`), and the always-on sync's
+matchers anchored on a literal `<meta`, so a prefixed dtb:uid carrier
+was invisible: the sync skipped, and the drift survived an otherwise
+clean repair. Both matchers (`_DTB_UID_RE` and the reversed
+content-before-name form) now accept an optional namespace prefix on the
+meta element; the group layout is unchanged (the prefix lives inside the
+reconstruct group), so the quote-agnostic replacement logic is
+untouched, and a prefixed element whose local name merely starts with
+"meta" (the `<p:metadata>` shape) still matches nothing. The `--only
+ncx` sweep selector reads the same matchers, so prefixed-NCX books with
+drifted uids are now candidates too. Live gate on the specimen chain:
+the scarred Hackers book now goes `1f/1e/0w -> 0f/0e/0w` in one run
+(`unbound_prefixes_bound:2, ncx_uid_synced`), the exact end state the
+hand repair had reached.
+
+Suite: 793 tests.
+
+
 ## v0.57.0 (2026-10-25)
 
 ### Issue #22: the embed scar's element half, and the end of the silent equal

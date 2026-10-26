@@ -233,12 +233,16 @@ def fix_ncx_ids(ncx_text: str) -> tuple[str, int]:
 
 # Both accept single or double quotes; group 3 is the uid value and group(1)+group(4)
 # reconstruct everything around it, so the replacement logic is quote-agnostic too.
+# The element may carry a namespace prefix: the 2010-era O'Reilly NCX spellings
+# every element as <ncx:meta> (v0.57.1, the issue #22 specimen's residual
+# NCX-001). The prefix group needs its trailing colon, so it cannot swallow
+# into the [^>]* runs, and a failing split re-parts only within the tag name.
 _DTB_UID_RE = re.compile(
-    r"(<meta\b[^>]*\bname=[\"']dtb:uid[\"'][^>]*\bcontent=([\"']))((?:(?!\2).)*)(\2)",
+    r"(<(?:[A-Za-z_][\w.:-]*:)?meta\b[^>]*\bname=[\"']dtb:uid[\"'][^>]*\bcontent=([\"']))((?:(?!\2).)*)(\2)",
     re.IGNORECASE,
 )
 _DTB_UID_RE_REV = re.compile(
-    r"(<meta\b[^>]*\bcontent=([\"']))((?:(?!\2).)*)"
+    r"(<(?:[A-Za-z_][\w.:-]*:)?meta\b[^>]*\bcontent=([\"']))((?:(?!\2).)*)"
     r"(\2[^>]*\bname=[\"']dtb:uid[\"'][^>]*>)",
     re.IGNORECASE,
 )
