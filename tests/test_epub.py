@@ -2322,6 +2322,28 @@ SCARRED_OPF = (
     '<spine toc="ncx"><itemref idref="c1"/></spine></package>'
 )
 
+# The Hackers shape (issue #22): no xmlns:dc on <metadata>; every dc:
+# element self-declares inline except <dc:date>, whose ELEMENT prefix is
+# then unbound, and the identifier's ns0:scheme is out of scope too.
+EMBED_SCARRED_OPF = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="ID1" '
+    'version="2.0">'
+    "<metadata>"
+    '<dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Hackers</dc:title>'
+    '<dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/" '
+    'xmlns:ns0="http://www.idpf.org/2007/opf" ns0:role="aut" '
+    'ns0:file-as="Levy, Steven">Steven Levy</dc:creator>'
+    '<dc:identifier xmlns:dc="http://purl.org/dc/elements/1.1/" id="ID1" '
+    'ns0:scheme="calibre">fccddb12-6dd3-4896-ab23-c676558ca98b</dc:identifier>'
+    "<dc:date>2001-01-02</dc:date>"
+    "</metadata>"
+    '<manifest><item id="c1" href="c1.xhtml" '
+    'media-type="application/xhtml+xml"/><item id="ncx" href="toc.ncx" '
+    'media-type="application/x-dtbncx+xml"/></manifest>'
+    '<spine toc="ncx"><itemref idref="c1"/></spine></package>'
+)
+
 
 class TestUnboundPrefix(unittest.TestCase):
     """Issue #9: the Calibre embed scar. One dc: element carries an
@@ -2366,3 +2388,39 @@ class TestUnboundPrefix(unittest.TestCase):
             # the bound package parses and its unique-identifier resolves
             ET.fromstring(opf)
             self.assertFalse(ncx_uid_mismatch(dst))
+
+    def _build_embed_scar(self, td: str) -> tuple[Path, Path]:
+        src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/c1.xhtml", CONTENT)
+            z.writestr("OEBPS/toc.ncx", NCX_BAD)
+            z.writestr("OEBPS/content.opf", EMBED_SCARRED_OPF)
+        return src, dst
+
+    def test_embed_scar_element_and_attribute_bound(self):
+        # Issue #22: one run binds both halves of the 9.7.0 scar. On the
+        # specimen each fix alone left the other masked behind a still-fatal
+        # package (1f/1e -> 1f/0e); together they parse it clean.
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = self._build_embed_scar(td)
+            report = repair_epub(src, dst, RepairFlags(unbound_prefix=True))
+            self.assertEqual(report.fixes.get("unbound_prefixes_bound"), 2)
+            with zipfile.ZipFile(dst) as z:
+                opf = z.read("OEBPS/content.opf").decode()
+            self.assertIn(
+                '<dc:date xmlns:dc="http://purl.org/dc/elements/1.1/">2001-01-02</dc:date>',
+                opf,
+            )
+            self.assertIn(
+                '<dc:identifier xmlns:ns0="http://www.idpf.org/2007/opf" '
+                'xmlns:dc="http://purl.org/dc/elements/1.1/" id="ID1"',
+                opf,
+            )
+            ET.fromstring(opf)
+
+    def test_off_by_default_embed_scar(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = self._build_embed_scar(td)
+            report = repair_epub(src, dst)
+        self.assertNotIn("unbound_prefixes_bound", report.fixes)

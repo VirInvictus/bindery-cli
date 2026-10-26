@@ -177,15 +177,21 @@ def process_book(
             watermark_refusals=report.watermark_refusals,
         )
     verdict = gate(before, after)
-    if verdict == "noop" and report.ncx_uid_synced and before.fatals > 0:
-        # The NCX-001 axis was masked in both measurements (issue #9): a fatal
-        # in the package halts the metadata checks, so epubcheck never compared
-        # dtb:uid to the unique-identifier, and the sync that really fixed it
-        # measures as no gain. The sync is semantics-preserving by construction
-        # (it writes only a differing dtb:uid content value), so the verdict
-        # stops calling real work gainless: partial, with the still-fatal rule
-        # intact (the library sweep still refuses to apply it; the single-file
-        # verb still writes it under the PARTIAL label when given a DST).
+    if verdict == "noop" and before.fatals > 0:
+        # The masked-axis rule. v0.51.0 (issue #9) named it for the NCX uid
+        # sync; v0.57.0 (issue #22) generalizes it to every fired fix. A
+        # still-fatal package keeps epubcheck's per-file halt, so any gain
+        # living below the halt — the dtb:uid comparison, a cleared error
+        # axis, a second latent fatal unmasked by the fix that cleared the
+        # first (the Hackers dc:date scar: unbound_prefixes_bound fired,
+        # 1f/1e -> 1f/0e, fatals read 1 -> 1) — measures as no gain. The
+        # honest verdict for real, unmeasurable work on a book that still
+        # will not open is partial, never equal: partial lands the book on
+        # the manual list (the sweep's still_fatal set) instead of vanishing
+        # into a silent skip. Application behavior is unchanged: still-fatal
+        # books are never auto-applied, and the gate's own partial/reject
+        # answers (fatals reduced, or a regression) never enter this branch
+        # (gate noop with fatals before implies fatals after).
         verdict = "partial"
     if (
         report.fixes.get("stripped_pagination")
@@ -1900,18 +1906,22 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
         ),
         (
             "fix_unbound_prefix",
-            "bind an undeclared attribute prefix inline (Calibre embed scar)",
-            "bind an attribute prefix the OPF never declares inline on the "
+            "bind an undeclared namespace prefix inline (Calibre embed scar)",
+            "bind a prefix the OPF never declares in scope inline on the "
             "element that uses it (RSC-016 'prefix is not bound'): calibre's "
             "embed_metadata writer can leave one dc: element carrying "
             "ns0:scheme while the xmlns declaration sits on a sibling, out of "
-            "XML scope, which fatals the whole package (plus OPF-030 on the "
+            "XML scope, and a later writer build leaves one dc: element's own "
+            "name unbound the same way (every dc: element self-declares "
+            "xmlns:dc except one, so <dc:date> dies with RSC-016); either "
+            "scar fatals the whole package (plus OPF-030 on the "
             "unique-identifier). The URI is evidence-based, never guessed: "
-            "the same prefix declared elsewhere in the document, or the OPF "
-            "namespace for a Dublin Core element under an OPF-namespaced "
-            "package; anything else refuses the document untouched. Content "
-            "documents are not touched (their unbound prefixes have the "
-            "--strip-bad-attrs drop).",
+            "the same prefix declared elsewhere in the document, or the use "
+            "site's own namespace under an OPF-namespaced package (the OPF "
+            "namespace for a Dublin Core element's attributes, the DC "
+            "namespace for a dc: element name); anything else refuses the "
+            "document untouched. Content documents are not touched (their "
+            "unbound prefixes have the --strip-bad-attrs drop).",
         ),
     ],
     "lossy strips (these delete converter-injected content; accepted on a no-worse bar)": [

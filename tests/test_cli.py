@@ -316,6 +316,30 @@ class TestRepairJson(unittest.TestCase):
         self.assertEqual(data["before"]["fatals"], 1)
         self.assertEqual(data["after"]["fatals"], 0)
 
+    def test_masked_partial_writes_with_dst(self):
+        # Issue #22's reclassification at the verb level: a still-fatal
+        # gate-noop book reads partial (not equal), and an explicit DST is
+        # still written, labeled PARTIAL (rc 0: the file is a real change
+        # worth keeping, the label says it is not fixed).
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            dst = Path(td) / "out.epub"
+            build(src)
+            jout = Path(td) / "repair.json"
+            results = [CheckResult(1, 1, 0), CheckResult(1, 1, 0)]
+            out = io.StringIO()
+            with (
+                mock.patch("bindery.cli.run_epubcheck", side_effect=results),
+                redirect_stdout(out),
+            ):
+                rc = main(["repair", str(src), str(dst), "--json", str(jout)])
+            data = json.loads(jout.read_text())
+            self.assertTrue(dst.exists())
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["status"], "partial")
+        self.assertTrue(data["applied"])
+        self.assertIn("PARTIAL", out.getvalue())
+
     def test_nochange_and_reject_records_are_written(self):
         with tempfile.TemporaryDirectory() as td:
             src2 = Path(td) / "in2.epub"
@@ -1700,7 +1724,11 @@ class TestSweepWorkers(unittest.TestCase):
 
         def oracle(path):
             checked.append(path.name)
-            return CheckResult(1, 0, 0)
+            # Error-flat, never fatal: a fatal-flat book with a fired core
+            # fix reads partial since the masked-axis rule (issue #22), and
+            # partial books are trouble (exit 2) rather than the rc-0 path
+            # this limit/window mechanic tests.
+            return CheckResult(0, 1, 0)
 
         with tempfile.TemporaryDirectory() as td:
             for name in ("a", "b", "c", "d", "e"):
@@ -1737,7 +1765,8 @@ class TestSweepWorkers(unittest.TestCase):
 
         def oracle(path):
             checked.append(path.name)
-            return CheckResult(1, 0, 0)
+            # Error-flat, never fatal: see test_limit_stays_lazy_within_one_window.
+            return CheckResult(0, 1, 0)
 
         with tempfile.TemporaryDirectory() as td:
             for name in ("a", "b", "c", "d", "e"):
@@ -1882,11 +1911,13 @@ class TestStripStubDocsGate(unittest.TestCase):
         self.assertEqual(o.status, "reject")
 
 
-class TestMaskedNcxUidGain(unittest.TestCase):
-    """Issue #9, the gate's masked axis: a fatal package halts the metadata
-    checks, so epubcheck never compares dtb:uid to the unique-identifier and
-    a real NCX uid sync measures as no gain. A noop verdict that carries a
-    sync on a book that started with fatals is reclassified partial: real
+class TestMaskedFatalGain(unittest.TestCase):
+    """The gate's masked axis. Issue #9 named it for the NCX uid sync; issue
+    #22 generalized it to every fired fix: a still-fatal package keeps
+    epubcheck's per-file halt, so real work below the halt — a sync, a
+    cleared error axis, a second latent fatal unmasked by the fix that
+    cleared the first — measures as no gain, and the verdict must not call
+    it gainless. Noop + fatals on both sides reclassifies to partial: real
     work the oracle could not see, still-fatal rules intact."""
 
     def _verdict(self, before, after, report):
@@ -1922,6 +1953,32 @@ class TestMaskedNcxUidGain(unittest.TestCase):
         report = RepairReport(ncx_uid_synced=True)
         o = self._verdict(CheckResult(1, 0, 0), CheckResult(2, 0, 0), report)
         self.assertEqual(o.status, "reject")
+
+    def test_fired_fix_still_fatal_is_partial_not_equal(self):
+        # Issue #22's exact shape (the Hackers dc:date scar): the fix fired,
+        # cleared one fatal, and unmasked a latent second (1f/1e -> 1f/0e):
+        # fatals read 1 -> 1, the gate says noop, and equal would hide a
+        # book that still will not open.
+        report = RepairReport(fixes={"unbound_prefixes_bound": 1})
+        o = self._verdict(CheckResult(1, 1, 0), CheckResult(1, 0, 0), report)
+        self.assertEqual(o.status, "partial")
+        self.assertNotIn("no measurable gain", o.summary)
+        self.assertIn("unbound_prefixes_bound", o.summary)
+
+    def test_unrelated_fix_on_still_fatal_book_is_partial(self):
+        # Any fired fix under a still-fatal package sits on a masked axis:
+        # the per-file halt hides whatever the fix cleared below it.
+        report = RepairReport(fixes={"fix_manifest_ids": 1})
+        o = self._verdict(CheckResult(2, 0, 0), CheckResult(2, 0, 0), report)
+        self.assertEqual(o.status, "partial")
+
+    def test_clean_book_noop_stays_equal(self):
+        # No fatals, no unmasking: a noop is a noop, and a clean book must
+        # not land on the manual list.
+        report = RepairReport(fixes={"fix_manifest_ids": 1})
+        o = self._verdict(CheckResult(0, 1, 0), CheckResult(0, 1, 0), report)
+        self.assertEqual(o.status, "equal")
+        self.assertIn("no measurable gain", o.summary)
 
 
 class TestHelpLayout(unittest.TestCase):

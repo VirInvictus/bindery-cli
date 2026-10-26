@@ -958,6 +958,22 @@ def _scarred_opf(scar: str, healthy: str = "") -> str:
     )
 
 
+def _embed_scarred_opf(scar: str, healthy: str = "") -> str:
+    """The Hackers shape (issue #22): the metadata element carries no
+    xmlns:dc; every healthy dc: element self-declares one inline, exactly the
+    embed writer's habit, and the scarred element misses its declaration."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="ID1" '
+        'version="2.0">\n'
+        "  <metadata>\n"
+        f"    {healthy}\n"
+        f"    {scar}\n"
+        "  </metadata>\n"
+        "</package>"
+    )
+
+
 class TestFixUnboundPrefixes(unittest.TestCase):
     SCAR = '<dc:identifier id="ID1" ns0:scheme="calibre">uuid-x</dc:identifier>'
     HEALTHY = (
@@ -1120,6 +1136,155 @@ class TestFixUnboundPrefixes(unittest.TestCase):
 
     def test_idempotent(self):
         doc = _scarred_opf(self.SCAR, self.HEALTHY)
+        once, _ = fix_unbound_prefixes(doc)
+        twice, n2 = fix_unbound_prefixes(once)
+        self.assertEqual((twice, n2), (once, 0))
+
+
+_DC_DECL = 'xmlns:dc="http://purl.org/dc/elements/1.1/"'
+
+
+class TestFixUnboundElementPrefixes(unittest.TestCase):
+    """Issue #22, the element half of the embed scar: the writer
+    self-declares xmlns:dc on every dc: element but one, so that element's
+    own ELEMENT prefix is unbound (RSC-016 'The prefix "dc" for element
+    "dc:date" is not bound'). Same evidence rules as the attribute half;
+    the dc: element's rule-2 fallback is the DC namespace itself."""
+
+    def test_unbound_element_prefix_bound_inline(self):
+        # The Hackers specimen shape: healthy siblings self-declare, the
+        # scarred element's declaration never made it in.
+        doc = _embed_scarred_opf(
+            "<dc:date>2001-01-02</dc:date>",
+            f"<dc:title {_DC_DECL}>Hackers</dc:title>",
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertIn(
+            f"<dc:date {_DC_DECL}>2001-01-02</dc:date>",
+            out,
+        )
+        ET.fromstring(out)
+
+    def test_element_and_attribute_scars_together(self):
+        # The full scar: ns0:scheme unbound on the identifier AND dc:date's
+        # element prefix unbound; one run binds both (2f -> 0f on the
+        # specimen, where either alone masked the other).
+        doc = _embed_scarred_opf(
+            f'<dc:identifier {_DC_DECL} id="ID1" ns0:scheme="calibre">u</dc:identifier>'
+            "<dc:date>2001-01-02</dc:date>",
+            '<dc:creator xmlns:ns0="http://www.idpf.org/2007/opf" '
+            f'{_DC_DECL} ns0:role="aut">A</dc:creator>',
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 2)
+        self.assertIn('xmlns:ns0="http://www.idpf.org/2007/opf"', out)
+        self.assertIn(f"<dc:date {_DC_DECL}>", out)
+        ET.fromstring(out)
+
+    def test_self_closing_element_prefix_bound(self):
+        doc = _embed_scarred_opf("<dc:date/>", f"<dc:title {_DC_DECL}>H</dc:title>")
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertIn(f"<dc:date {_DC_DECL}/>", out)
+        ET.fromstring(out)
+
+    def test_never_declared_dc_element_gets_dc_ns(self):
+        # Rule 2 for elements: no declaration anywhere; a dc:-prefixed
+        # element under an OPF-namespaced package is Dublin Core by the
+        # spec, so the DC namespace itself is the deterministic URI.
+        doc = _embed_scarred_opf("<dc:date>2001-01-02</dc:date>")
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertIn(f"<dc:date {_DC_DECL}>", out)
+        ET.fromstring(out)
+
+    def test_element_prefix_uses_document_evidence(self):
+        # Rule 1 outranks the dc-means-DC-NS intuition: the document's own
+        # declarations say what its prefix means, and the fix matches them.
+        doc = _embed_scarred_opf(
+            "<dc:date>2001-01-02</dc:date>",
+            '<dc:title xmlns:dc="http://foreign.example/not-dc">H</dc:title>',
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('<dc:date xmlns:dc="http://foreign.example/not-dc">', out)
+        ET.fromstring(out)
+
+    def test_ambiguous_element_evidence_refuses(self):
+        doc = _embed_scarred_opf(
+            "<dc:date>2001-01-02</dc:date>",
+            '<dc:title xmlns:dc="http://www.idpf.org/2007/opf">H</dc:title>'
+            '<dc:publisher xmlns:dc="http://other.example/ns">P</dc:publisher>',
+        )
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_no_evidence_not_dc_refuses(self):
+        doc = _embed_scarred_opf("<ns9:date>2001-01-02</ns9:date>")
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_dc_element_without_opf_package_refuses(self):
+        # Rule 2 needs the package itself to carry the OPF namespace; a
+        # bare dc: spelling outside one means nothing deterministic.
+        doc = _embed_scarred_opf("<dc:date>2001-01-02</dc:date>").replace(
+            'xmlns="http://www.idpf.org/2007/opf" ', ""
+        )
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_ancestor_declaration_satisfies(self):
+        # The Century Rain fixture's shape: xmlns:dc on <metadata> covers
+        # every dc: element name below it; nothing to do.
+        doc = _scarred_opf("<dc:date>2001-01-02</dc:date>")
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_own_declaration_satisfies(self):
+        doc = _embed_scarred_opf(f"<dc:date {_DC_DECL}>2001-01-02</dc:date>")
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_nested_element_prefixes_each_bound(self):
+        # The each-use-site contract the attribute half established: an
+        # inner element's unbound prefix gets its own inline declaration
+        # even though the outer's edit will scope over it.
+        doc = _embed_scarred_opf("<dc:meta><dc:date>2001-01-02</dc:date></dc:meta>")
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 2)
+        ET.fromstring(out)
+
+    def test_element_and_attribute_same_prefix_bound_once(self):
+        # One declaration per prefix per start tag: an attribute sharing the
+        # element's own unbound prefix never queues a second xmlns (the
+        # code-review collision), and the element's Dublin Core identity
+        # decides the URI for both.
+        doc = _embed_scarred_opf('<dc:date dc:event="x">2001-01-02</dc:date>')
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        self.assertEqual(out.count("xmlns:dc="), 1)
+        ET.fromstring(out)
+
+    def test_two_attributes_same_prefix_bound_once(self):
+        # The attribute half's own variant of the same collision (it
+        # emitted a duplicate xmlns attribute before the dedupe). The
+        # Century Rain fixture declares xmlns:dc on <metadata>, so only
+        # the two same-prefix attributes are unbound here.
+        doc = _scarred_opf(
+            '<dc:identifier id="ID1" ns0:x="1" ns0:y="2">u</dc:identifier>',
+            '<dc:creator xmlns:ns0="http://www.idpf.org/2007/opf">A</dc:creator>',
+        )
+        out, n = fix_unbound_prefixes(doc)
+        self.assertEqual(n, 1)
+        # the sibling's own declaration plus the one bind (never two binds)
+        self.assertEqual(out.count("xmlns:ns0="), 2)
+        ET.fromstring(out)
+
+    def test_xml_prefix_never_flagged(self):
+        doc = _embed_scarred_opf('<xml:stylesheet href="x"/>')
+        self.assertEqual(fix_unbound_prefixes(doc), (doc, 0))
+
+    def test_idempotent(self):
+        doc = _embed_scarred_opf(
+            "<dc:date>2001-01-02</dc:date>",
+            f"<dc:title {_DC_DECL}>Hackers</dc:title>",
+        )
         once, _ = fix_unbound_prefixes(doc)
         twice, n2 = fix_unbound_prefixes(once)
         self.assertEqual((twice, n2), (once, 0))

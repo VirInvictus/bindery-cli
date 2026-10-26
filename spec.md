@@ -358,16 +358,20 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   quote before the next `<` (a real multi-line value closes quote-first), and only
   double-quoted values are judged. It runs before the other tag-shape readers, which an
   open value otherwise lies to.
-- **`--fix-unbound-prefix`**: bind an attribute prefix the OPF never declares inline on
-  the element that uses it (the Calibre embed scar, issue #9: one dc: element carries
-  `ns0:scheme` while the `xmlns:ns0` declaration sits on a sibling, out of XML scope;
-  the RSC-016 "prefix is not bound" fatals make the whole package unparseable, which
-  also costs OPF-030 on the unique-identifier and masks the NCX-001 comparison). The
-  declaration is inserted on the user, the shape the file's own healthy siblings
-  already use. The URI is evidence-based, never guessed: the same prefix declared
-  elsewhere in the document with every declaration agreeing, or the OPF namespace for
-  a Dublin Core element under an OPF-namespaced package (the canonical EPUB 2
-  `opf:scheme` shape); anything else refuses the document untouched. Scope is tracked
+- **`--fix-unbound-prefix`**: bind a prefix the OPF never declares in scope inline on
+  the element that uses it (the Calibre embed scar: issue #9's attribute half, one dc:
+  element carrying `ns0:scheme` while the `xmlns:ns0` declaration sits on a sibling, out
+  of XML scope; and issue #22's element half, a later writer build self-declaring
+  `xmlns:dc` on every dc: element but one, so that element's own name dies with the
+  RSC-016 "prefix is not bound" fatal). Either scar makes the whole package
+  unparseable, which also costs OPF-030 on the unique-identifier and masks the NCX-001
+  comparison. The declaration is inserted on the user (element name or attribute
+  alike), the shape the file's own healthy siblings already use. The URI is
+  evidence-based, never guessed: the same prefix declared elsewhere in the document
+  with every declaration agreeing, or the use site's own namespace under an
+  OPF-namespaced package (the OPF namespace for a Dublin Core element's attributes,
+  the canonical EPUB 2 `opf:scheme` shape; the DC namespace for a literal `dc:` element
+  name); anything else refuses the document untouched. Scope is tracked
   with a lenient element stack over a comment/CDATA-aware tokenizer, so declarations
   that genuinely cover a use satisfy it without an edit and clean documents are
   byte-identical. Runs on the OPF only: content documents have the
@@ -455,6 +459,17 @@ follow-up and never auto-applied (the book still does not open). If epubcheck ca
 be run or its output cannot be parsed during a validated run, the book is an `error`:
 the gate has not accepted anything, so nothing is applied or written. With
 `--no-validate`, the gate is skipped and repairs are trusted on the RepairReport alone.
+
+One reporting rule rides on the noop verdict: the masked-axis reclassification. A
+`noop` on a book that started fatal means the fix fired and the count did not move,
+and with fatals still standing epubcheck's per-file halt hides whatever the fix
+actually cleared below the halt: the dtb:uid comparison (issue #9, where the rule
+was first scoped to the NCX sync), a cleared error axis, or a second latent fatal
+unmasked by the fix that cleared the first (issue #22's embed scar:
+`unbound_prefixes_bound` fired, `1f/1e -> 1f/0e`, fatals read 1 -> 1). Real,
+unmeasurable work on a book that still will not open is `partial`, never a silent
+`equal`: partial lands the book on the manual list. Application behavior is
+unchanged (still-fatal candidates are never auto-applied).
 
 One structural veto rides above the count gate: the spine-resolution check. The
 message count is not spine-aware, so a repair that orphans live itemrefs (manifest

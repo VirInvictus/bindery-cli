@@ -1,5 +1,62 @@
 # bindery-cli Patch Notes
 
+## v0.57.0 (2026-10-25)
+
+### Issue #22: the embed scar's element half, and the end of the silent equal
+
+The reconcile-embed fallout's last scar shape, plus the reporting gap its
+investigation exposed.
+
+**`--fix-unbound-prefix` binds element prefixes (shape 1).** Calibre
+9.7.0's `embed_metadata` self-declares `xmlns:dc` on every dc: element it
+writes but one, leaving that element's own ELEMENT prefix unbound:
+`FATAL(RSC-016): The prefix "dc" for element "dc:date" is not bound`. The
+v0.51.0 repair covered attribute prefixes only (`ns0:scheme`); the element
+name is a different use site and nothing in the inventory touched it, so
+the specimen chain sat one fatal apart from clean with no repair left to
+run. The same scope-tracking walk now checks each start tag's own name:
+an unbound element prefix is bound inline on the element, the exact shape
+the file's healthy siblings already use. The evidence rules carry over
+with one addition: rule 1 is unchanged (the prefix declared elsewhere in
+the document, every declaration agreeing), and rule 2 for a literal `dc:`
+element under an OPF-namespaced package resolves to the DC namespace
+itself (the attribute half's rule 2 names the OPF namespace because
+`opf:scheme` rides on DC elements; a `dc:` element IS the Dublin Core
+element). Ambiguous or unevidenced prefixes still refuse the whole
+document, clean documents stay byte-identical, and the each-use-site
+counting contract holds (nested unbound elements each get their own
+declaration, mirroring the attribute half). One start tag never carries
+two declarations for one prefix (XML forbids the duplicate attribute;
+the code-review pass caught the collision between an unbound element
+prefix and an unbound same-prefix attribute on one tag, and fixed the
+attribute-vs-attribute variant the attribute half had always carried).
+Live gate on the specimen
+(Hackers, the issue's own chain): the scarred original went
+`1f/1e -> 0f/1e` with `unbound_prefixes_bound:2` (attribute + element in
+one run), and the half-repaired intermediate that v0.56.0 refused as
+`equal` now repairs (`1f/0e -> 0f/1e`, the element bind alone). The
+residual error on the specimen is NCX-001, not embed damage: its 2010-era
+NCX spells every element with the `ncx:` prefix, which the always-on
+dtb:uid sync's `<meta\b` matcher does not read; that sync gap is recorded
+on the issue and left unrepaired here.
+
+**Still-fatal noops reclassify as partial (shape 2).** The same
+investigation caught the gate answering `equal (no measurable gain)` on a
+book whose fix had cleared one fatal and unmasked a latent second:
+`unbound_prefixes_bound:1` fired, `1f/1e -> 1f/0e`, fatals read 1 -> 1,
+and the silent skip buried a book that still will not open. The v0.51.0
+masked-ncx-gain rule already reclassified exactly this shape for the uid
+sync; it is now general (the gate's noop on any book that started and
+stayed fatal means the fix's real axis lives below epubcheck's per-file
+halt, whatever the fix was): the verdict is `partial`, the book lands on
+the manual list (`still_fatal`), and the still-fatal rule is untouched
+(partial candidates were never auto-applied). Clean books are unaffected:
+the rule cannot fire without fatals on both sides, and the gate's own
+partial and reject answers never enter it.
+
+Twenty-five structural repairs. Suite: 786 tests.
+
+
 ## v0.56.0 (2026-10-25)
 
 ### The two boxed recipes, built: the OPF-030 wiring and the CSS-007 font half

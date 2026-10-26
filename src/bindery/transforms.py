@@ -1153,18 +1153,23 @@ def fix_unbound_prefixes(opf: str) -> tuple[str, int]:
     Calibre's embed_metadata writer has been observed to leave one dc: element
     carrying an attribute prefix (``ns0:scheme``) whose xmlns declaration never
     made it into the document: the declaration sits on a sibling, and XML scope
-    ends at the sibling's end tag. The unparseable package costs every
-    downstream check (two RSC-016 fatals plus OPF-030 on the
-    unique-identifier). The repair is the shape the file's own healthy
-    siblings already use: declare the prefix on the element that uses it.
+    ends at the sibling's end tag. A later writer build (Calibre 9.7.0, issue
+    #22) leaves one dc: element's own ELEMENT prefix unbound the same way: it
+    self-declares ``xmlns:dc`` on every dc: element but one, and that one
+    (``<dc:date>``) dies with RSC-016. Both scars are the same defect — a
+    prefix used where XML scope has no binding for it — and the repair is the
+    shape the file's own healthy siblings already use: declare the prefix on
+    the element that uses it, on its name or its attribute alike.
 
     The URI is evidence-based, never guessed: (1) the same prefix declared
     elsewhere in the document, every declaration agreeing on one URI; (2) the
-    prefix declared nowhere, but the carrying element is Dublin Core (its
-    element prefix resolves to the DC namespace, or the literal ``dc:``
-    spelling when that is itself unbound) and the package element declares the
-    OPF namespace, the canonical EPUB 2 ``opf:scheme``/``opf:role`` shape
-    calibre's writer emits; (3) anything else refuses the whole document (an
+    prefix declared nowhere, but the use site is Dublin Core under a package
+    element that declares the OPF namespace — for an attribute, the carrying
+    element is DC (its element prefix resolves to the DC namespace, or the
+    literal ``dc:`` spelling when that is itself unbound) and the canonical
+    EPUB 2 ``opf:scheme``/``opf:role`` shape names the OPF namespace; for an
+    element, the literal ``dc:`` spelling IS the Dublin Core element, and its
+    namespace is the DC one; (3) anything else refuses the whole document (an
     invented URI would be a guess, and a half-bound package is still fatal, so
     a partial fix would buy nothing). Declarations scoped to an ancestor (or
     to the element itself) satisfy the check without an edit, so clean
@@ -1234,34 +1239,67 @@ def fix_unbound_prefixes(opf: str) -> tuple[str, int]:
                 for u in (default_uri, *decls.values())
                 if u
             )
-        # Push before the attribute check: the element's own declarations
-        # apply to its own attributes.
+        # Push before the checks: the element's own declarations apply to its
+        # own name and its own attributes alike.
         scope.append((name, decls))
-        binds: list[str] = []
+        # (prefix, fallback) pairs awaiting a URI: every use site whose prefix
+        # is unbound in scope. The fallback is the URI rule 2 names for that
+        # use site, or "" when rule 2 has nothing to say (it needs a Dublin
+        # Core use site under an OPF-namespaced package; anything else would
+        # be a guess and refuses instead).
+        elem_prefix, esep, _ = name.partition(":")
+        elem_ns = None
+        for _, d in reversed(scope):
+            if elem_prefix in d:
+                elem_ns = d[elem_prefix]
+                break
+        wanted: list[tuple[str, str]] = []
+        # One declaration per prefix per start tag (XML forbids a duplicate
+        # attribute): the element's own binding names the prefix for the
+        # whole tag, so an attribute on the same tag never queues it again.
+        pending: set[str] = set()
+        if (
+            esep
+            and elem_prefix not in _PREBOUND_PREFIXES
+            and not any(elem_prefix in d for _, d in scope)
+        ):
+            # The element's own name can carry the scar (issue #22): the
+            # embed writer self-declares xmlns:dc on every dc: element but
+            # one, and that element's own prefix is then unbound. A
+            # dc:-prefixed element under an OPF-namespaced package is Dublin
+            # Core by the spec, so its fallback URI is the DC namespace.
+            fallback = _DC_NS if pkg_ns and elem_prefix == "dc" else ""
+            wanted.append((elem_prefix, fallback))
+            pending.add(elem_prefix)
         for aname in attr_names:
             prefix, sep, _ = aname.partition(":")
             if not sep or prefix in _PREBOUND_PREFIXES:
                 continue
             if any(prefix in d for _, d in scope):
                 continue
+            if prefix in pending:
+                continue
+            # The canonical EPUB 2 attribute shape: opf:scheme/opf:role ride
+            # on Dublin Core elements with the OPF namespace.
+            fallback = (
+                _OPF_NS
+                if pkg_ns
+                and (elem_ns == _DC_NS or (elem_ns is None and elem_prefix == "dc"))
+                else ""
+            )
+            wanted.append((prefix, fallback))
+            pending.add(prefix)
+        binds: list[str] = []
+        for prefix, fallback in wanted:
             uris = decl_uris.get(prefix)
             if uris is not None:
                 if len(uris) != 1:
                     return opf, 0  # one prefix, two URIs: intent unreadable
                 uri = next(iter(uris))
+            elif fallback:
+                uri = fallback
             else:
-                elem_prefix, _, _ = name.partition(":")
-                elem_ns = None
-                for _, d in reversed(scope):
-                    if elem_prefix in d:
-                        elem_ns = d[elem_prefix]
-                        break
-                if pkg_ns and (
-                    elem_ns == _DC_NS or (elem_ns is None and elem_prefix == "dc")
-                ):
-                    uri = _OPF_NS
-                else:
-                    return opf, 0  # no evidence: refuse the whole document
+                return opf, 0  # no evidence: refuse the whole document
             binds.append(f' xmlns:{prefix}="{uri}"')
         if binds:
             # Insert directly after the element name, the position the

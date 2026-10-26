@@ -64,12 +64,20 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
     verified against 5.3), ambiguous renames refused per entry (`space_rename_map`),
     accepted under `no_worse` because PKG-010 sits on the warning axis the gate
     does not measure. `--fix-unbound-prefix` (v0.51.0, issue #9, the Calibre
-    embed scar) binds an attribute prefix the OPF never declares inline on the
-    element that uses it (`<dc:identifier id="ID1" ns0:scheme="calibre">`
+    embed scar; element half v0.57.0, issue #22) binds a prefix the OPF
+    never declares in scope inline on the element that uses it: the
+    attribute half (`<dc:identifier id="ID1" ns0:scheme="calibre">`
     whose `xmlns:ns0` sits on a sibling, out of XML scope; two RSC-016 fatals
-    plus OPF-030): URI evidence is the same prefix declared elsewhere in the
-    document (all declarations must agree) or the OPF namespace for a DC
-    element under an OPF-namespaced package, anything else refuses the whole
+    plus OPF-030) and, since v0.57.0, the element half (the Calibre 9.7.0
+    writer self-declares `xmlns:dc` on every dc: element but one, so that
+    element's own name dies with `FATAL(RSC-016): The prefix "dc" for
+    element "dc:date" is not bound`; the scope walk now checks each start
+    tag's own name and binds it on the element): URI evidence is the same
+    prefix declared elsewhere in the
+    document (all declarations must agree) or the use site's own namespace
+    for a Dublin Core site under an OPF-namespaced package (the OPF
+    namespace for a DC element's attributes, the DC namespace for a literal
+    `dc:` element name), anything else refuses the whole
     document; scope-tracked over a comment/CDATA-aware tokenizer, OPF only
     (content docs have the `--strip-bad-attrs` drop); normal `gate`.
     The v0.55.0 two (the 2026-10-25 issue batch): `--declare-missing-items`
@@ -145,12 +153,18 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   gain IS visible, so a run with no measurable improvement is a noop and nothing is
   applied) except the two whose gains sit on axes epubcheck does not measure:
   `--fix-cover` and `--encode-url-spaces`, accepted under the same `no_worse` bar with
-  the partial rule intact. One masked-axis rule (v0.51.0, issue #9): when the gate
-  answers noop but `report.ncx_uid_synced` fired on a book that started with fatals,
-  `process_book` reclassifies the verdict to `partial` (a fatal package halts the
-  metadata checks, so the dtb:uid comparison never ran in either measurement and the
-  real sync measures as no gain); application behavior is unchanged, since still-fatal
-  books are never applied. One structural veto rides above the counts (v0.52.0,
+  the partial rule intact. One masked-axis rule (v0.51.0, issue #9, for the
+  NCX sync; generalized v0.57.0, issue #22, to every fired fix): when the gate
+  answers noop on a book that started AND stayed fatal, `process_book`
+  reclassifies the verdict to `partial` (a still-fatal package keeps
+  epubcheck's per-file halt, so whatever the fix cleared below the halt --
+  the dtb:uid comparison, an error axis, a second latent fatal unmasked by the
+  fix that cleared the first: `unbound_prefixes_bound:1`, 1f/1e -> 1f/0e,
+  fatals read 1 -> 1 -- measures as no gain, and a silent `equal` buries a
+  book that still will not open instead of landing it on the manual list);
+  application behavior is unchanged, since still-fatal
+  books are never applied, and clean books are untouched (no fatals on both
+  sides, no reclassification). One structural veto rides above the counts (v0.52.0,
   issue #10): `process_book` probes source and candidate with `epub.spine_dangles`
   (itemref -> manifest item -> archive entry, resolved through the same helper the
   repair's existence checks use) and rejects any candidate whose dangle count rises

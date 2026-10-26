@@ -423,16 +423,22 @@ def _fixtures() -> dict:
         ),
         "--fix-unbound-prefix": (
             {
-                "OEBPS/content.opf": _opf(
-                    [c1],
-                    [r1],
-                    # The Calibre embed scar: ns0 declared on the sibling
-                    # creator only, so the identifier's ns0:scheme is unbound.
-                    meta=(
-                        '<dc:creator xmlns:ns0="http://www.idpf.org/2007/opf" '
-                        'ns0:role="aut">A</dc:creator>'
-                        '<dc:identifier id="id" ns0:scheme="calibre">uuid-x</dc:identifier>'
-                    ),
+                "OEBPS/content.opf": (
+                    '<?xml version="1.0"?>'
+                    '<package xmlns="http://www.idpf.org/2007/opf" '
+                    'version="2.0" unique-identifier="id">'
+                    # The 9.7.0 embed scar (issue #22): no xmlns:dc on
+                    # <metadata>; the creator self-declares it, the
+                    # identifier's ns0:scheme is out of scope, and dc:date's
+                    # own element prefix is unbound.
+                    "<metadata>"
+                    '<dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/" '
+                    'xmlns:ns0="http://www.idpf.org/2007/opf" '
+                    'ns0:role="aut">A</dc:creator>'
+                    '<dc:identifier id="id" ns0:scheme="calibre">uuid-x</dc:identifier>'
+                    "<dc:date>2001-01-02</dc:date>"
+                    "</metadata>"
+                    f"<manifest>{c1}</manifest><spine>{r1}</spine></package>"
                 ),
                 "OEBPS/c1.xhtml": plain,
             },

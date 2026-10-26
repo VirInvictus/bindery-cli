@@ -1766,15 +1766,18 @@ def repair_epub(
     own `>` (`<p class="footnote>` -> `<p class="footnote">`; the RSC-016
     'must not contain the < character' fatal). It runs before the tag-shape
     readers, which an open value otherwise lies to.
-    With `unbound_prefix`, bind an attribute prefix the OPF never declares
+    With `unbound_prefix`, bind a prefix the OPF never declares in scope
     inline on the element that uses it (the Calibre embed scar: one dc:
     element carries `ns0:scheme` while the xmlns declaration sits on a
-    sibling, out of scope; two RSC-016 fatals plus OPF-030 on the
-    unique-identifier). The URI is evidence-based: the same prefix declared
-    elsewhere in the document, or the OPF namespace for a Dublin Core element
-    under an OPF-namespaced package; anything else refuses the whole
-    document. Content documents are not touched (their unbound prefixes have
-    the --strip-bad-attrs drop).
+    sibling, out of scope; and, issue #22, the writer's own element half —
+    every dc: element self-declares `xmlns:dc` but one, and that
+    `<dc:date>`'s ELEMENT prefix is unbound; two RSC-016 fatals plus OPF-030
+    on the unique-identifier between them). The URI is evidence-based: the
+    same prefix declared elsewhere in the document, or the use site's own
+    namespace under an OPF-namespaced package (the OPF namespace for a
+    Dublin Core element's attributes, the DC namespace for a `dc:` element
+    name); anything else refuses the whole document. Content documents are
+    not touched (their unbound prefixes have the --strip-bad-attrs drop).
     With `unique_identifier`, wire the OPF-030 dangling unique-identifier: add
     the id the package names to the first dc:identifier start tag when no
     element carries it. Refuses to guess (absent/empty attribute, non-NCName
