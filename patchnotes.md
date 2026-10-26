@@ -54,7 +54,7 @@ the manual list (`still_fatal`), and the still-fatal rule is untouched
 the rule cannot fire without fatals on both sides, and the gate's own
 partial and reject answers never enter it.
 
-Twenty-five structural repairs. Suite: 786 tests.
+Twenty-five structural repairs. Suite: 789 tests.
 
 
 ## v0.56.0 (2026-10-25)
