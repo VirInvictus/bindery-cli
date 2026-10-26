@@ -208,7 +208,7 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   `<item>` declarations. Spine documents are never pruned: a missing spine document is
   a damaged fragment for the audit's spine-integrity check, never a silent drop. The
   shared href resolver (v0.58.0, issue #20) decodes the five predefined XML entities
-  before normalization (an attribute value arrives escaped: `href="K&amp;C.png"` names
+  and numeric character references before the fragment split (an attribute value arrives escaped: `href="K&amp;C.png"` names
   the entry `K&C.png`, and reading the escaped spelling as a path pruned live
   declarations on the raw-ampersand books) and the OPF matchers accept a namespace
   prefix (`<opf:item>` declares exactly what `<item>` does; a prefix-blind census

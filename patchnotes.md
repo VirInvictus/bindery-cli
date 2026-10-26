@@ -56,8 +56,10 @@ absent (30 new RSC-008s alone), the census then re-declared the same
 files from the raw-ampersand content references (30 OPF-074 duplicates
 alone), and the two flags literally swapped the items inside one run
 (net zero, by accident). `_resolve_href` now decodes the five predefined
-entities before normalization (attribute text arrives escaped; entry
-names are raw bytes), and the OPF item/itemref/reference matchers accept
+entities and numeric character references before the fragment split
+(attribute text arrives escaped; entry names are raw bytes; decoding
+first is also what keeps the `#` inside `&#38;` from cutting the
+target), and the OPF item/itemref/reference matchers accept
 an optional namespace prefix -- the second shape, where Sony-style
 `<opf:item>` packages (Roadside Picnic, Twenty Love Poems, Zhuangzi)
 made the census see an empty manifest and duplicate every declaration.
