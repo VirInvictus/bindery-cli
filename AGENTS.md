@@ -191,8 +191,9 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   (their gain is invisible to epubcheck, so it only forbids a regression, never demands
   a measured improvement). The structural opt-ins go through the normal `gate` (their
   gain IS visible, so a run with no measurable improvement is a noop and nothing is
-  applied) except the two whose gains sit on axes epubcheck does not measure:
-  `--fix-cover` and `--encode-url-spaces`, accepted under the same `no_worse` bar with
+  applied) except the three whose gains sit on axes epubcheck does not measure:
+  `--fix-cover`, `--encode-url-spaces`, and `--fix-media-types` (the font half,
+  v0.56.0), accepted under the same `no_worse` bar with
   the partial rule intact. One masked-axis rule (v0.51.0, issue #9, for the
   NCX sync; generalized v0.57.0, issue #22, to every fired fix): when the gate
   answers noop on a book that started AND stayed fatal, `process_book`
