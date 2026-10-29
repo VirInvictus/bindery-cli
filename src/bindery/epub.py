@@ -290,6 +290,7 @@ class RepairFlags:
     prune_missing: bool = False
     declare_missing: bool = False
     strip_anchors: bool = False
+    prune_ncx_targets: bool = False
     url_spaces: bool = False
     fix_container: bool = False
     fix_media_types: bool = False
@@ -1610,6 +1611,192 @@ def strip_ncx_broken_fragments(
     return outside_protected_map(ncx_text, fix)
 
 
+# --prune-dangling-ncx-targets (issue #23) token set: navPoint, its legacy
+# navTarget spelling, and pageTarget share one element family, so the
+# scanner tracks them together. Quote-aware possessive start tags (the
+# house matcher: the overlapping [^>] branch makes a plain greedy loop
+# re-partition exponentially on failing candidates) and the optional
+# namespace prefix, matching the OPF matchers' issue #20 tolerance.
+_NCXP_TOKEN_RE = re.compile(
+    r"""<(?:[\w.-]+:)?(navPoint|navTarget|pageTarget)\b(?:"[^"]*"|'[^']*'|[^>])*+>"""
+    r"""|</(?:[\w.-]+:)?(navPoint|navTarget|pageTarget)\s*>"""
+    r"""|<(?:[\w.-]+:)?(navMap|pageList)\b(?:"[^"]*"|'[^']*'|[^>])*+>"""
+    r"""|</(?:[\w.-]+:)?(navMap|pageList)\s*>""",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class _NcxTargetNode:
+    """One navPoint/navTarget/pageTarget element located in the NCX text.
+
+    Spans index the tags for the edit pass; `header_end` is where the
+    node's own header (navLabel, then the `<content>` that `own_src` came
+    from) ends and the first navPoint-family child or the node's own end
+    tag begins -- the splice edit removes [open_start, header_end) so the
+    dead label and dead target go with the tags while the children stay.
+    The survival pass fills `action`: "drop" removes the whole span,
+    "splice" removes the tags plus that header, None keeps the node."""
+
+    name: str
+    open_start: int
+    open_end: int
+    header_end: int = -1
+    close_start: int = -1
+    close_end: int = -1
+    own_src: str | None = None
+    children: list[_NcxTargetNode] = field(default_factory=list)
+    keeps: bool = True
+    action: str | None = None
+
+
+def strip_ncx_dangling_targets(
+    ncx_text: str, ncx_dir: str, present: frozenset[str]
+) -> tuple[str, int]:
+    """Remove navPoint/pageTarget elements whose `<content src>` names a
+    document the archive does not contain (RSC-007 at toc.ncx, issue #23).
+
+    `--prune-missing-resources` cannot reach this class: the OPF never
+    declared the dropped file, so there is no manifest item to prune and
+    the navPoint survived `--all` ("no applicable fixes"), while hand
+    removal breaks the playOrder contract (every survivor's value reads as
+    starting at 2). The wiring therefore re-runs the contract-gated
+    playOrder pass the moment this fires.
+
+    The rule is node-exact: a navPoint dies when ITS OWN target document is
+    absent. A dead node whose whole subtree dies with it is removed as one
+    span; a dead node above surviving descendants is spliced (its tags,
+    label, and dead `<content>` go, the children are re-homed one level up),
+    because dropping live navigation to repair a dead label is no repair.
+    Scheme URLs (kindle:, https:) and bare-fragment targets are never this
+    class, a node with no `<content>` of its own is left alone. The walk
+    tracks the navMap/pageList containers as tokens too: an unbalanced walk
+    (a stray close, a wrapper crossing a node's span) aborts the pass
+    unchanged, and so does a prune that would EMPTY a container -- the NCX
+    requires navPoint+/pageTarget+ and trading a wholly dead TOC for no TOC
+    is the manual list's call (verified against epubcheck 5.3: an empty
+    navMap is itself one RSC-005, so the gate would happily apply the
+    amputation). This is text surgery over a possibly-broken book; the gate
+    is the safety net behind it."""
+
+    def prune(text: str) -> tuple[str, int]:
+        tokens = list(_NCXP_TOKEN_RE.finditer(text))
+        # top-level family nodes bucket per container; `bare` holds nodes
+        # outside any navMap/pageList (DTD-invalid but seen in the wild)
+        containers: list[tuple[str, list[_NcxTargetNode]]] = []
+        bare: list[_NcxTargetNode] = []
+        stack: list[_NcxTargetNode] = []
+        cur_name: str | None = None
+        cur_bucket: list[_NcxTargetNode] = []
+
+        def bucket() -> list[_NcxTargetNode]:
+            if stack:
+                return stack[-1].children
+            return cur_bucket if cur_name else bare
+
+        for i, m in enumerate(tokens):
+            if m.group(1) is not None:  # navPoint/navTarget/pageTarget open
+                if m.group(0).endswith("/>"):
+                    # self-closing: complete leaf, no <content> child
+                    bucket().append(
+                        _NcxTargetNode(
+                            name=m.group(1).lower(),
+                            open_start=m.start(),
+                            open_end=m.end(),
+                        )
+                    )
+                    continue
+                node = _NcxTargetNode(
+                    name=m.group(1).lower(), open_start=m.start(), open_end=m.end()
+                )
+                node.header_end = (
+                    tokens[i + 1].start() if i + 1 < len(tokens) else len(text)
+                )
+                sm = _NCX_CONTENT_SRC_RE.search(text, node.open_end, node.header_end)
+                node.own_src = sm.group(3) if sm else None
+                stack.append(node)
+            elif m.group(2) is not None:  # family close
+                if not stack or stack[-1].name != m.group(2).lower():
+                    return text, 0  # unbalanced tree: never guess
+                node = stack.pop()
+                # the parent AFTER the pop: the closed node joins its
+                # parent's children, never its own
+                bucket().append(node)
+                node.close_start, node.close_end = m.start(), m.end()
+            elif m.group(3) is not None:  # navMap/pageList open
+                if stack or cur_name is not None:
+                    return text, 0  # a container inside a node or container
+                if not m.group(0).endswith("/>"):
+                    cur_name, cur_bucket = m.group(3).lower(), []
+            else:  # container close
+                if stack or cur_name != m.group(4).lower():
+                    return text, 0  # a node still open under the container
+                containers.append((cur_name, cur_bucket))
+                cur_name, cur_bucket = None, []
+        if stack or cur_name is not None:
+            return text, 0  # unclosed element at end of part: same refusal
+
+        # Survival, children before parents (every node lands after its
+        # parent in the pre-order flat list, so the reversed walk is
+        # post-order): a dead node keeps only what survives beneath it.
+        flat: list[_NcxTargetNode] = []
+        work: list[_NcxTargetNode] = list(bare)
+        for _, b in containers:
+            work.extend(b)
+        while work:
+            n = work.pop()
+            flat.append(n)
+            work.extend(n.children)
+        for n in reversed(flat):
+            resolved = _resolve_href(ncx_dir, n.own_src) if n.own_src else None
+            # None covers a missing <content>, an external scheme, and a
+            # bare fragment (it would resolve inside the NCX itself): none
+            # of those is the absent-document class
+            if resolved is None or resolved in present:
+                continue
+            child_keeps = any(c.keeps for c in n.children)
+            n.action = "splice" if child_keeps else "drop"
+            n.keeps = child_keeps
+        for _, b in containers:
+            if b and not any(n.keeps for n in b):
+                return text, 0  # the prune would empty a required container
+
+        tops: list[_NcxTargetNode] = list(bare)
+        for _, b in containers:
+            tops.extend(b)
+        edits: list[tuple[int, int]] = []
+        count = 0
+        work = [(n, False) for n in tops]  # (node, inside a dropped span)
+        while work:
+            n, buried = work.pop()
+            if buried or n.action is None:
+                work.extend((c, buried or n.action == "drop") for c in n.children)
+                continue
+            if n.action == "drop":
+                edits.append((n.open_start, n.close_end))
+                count += 1
+                work.extend((c, True) for c in n.children)
+            else:
+                # splice: the tags AND the dead node's own header (its
+                # navLabel and its dead <content>) go; only the children
+                # survive, re-homed one level up
+                edits.append((n.open_start, n.header_end))
+                edits.append((n.close_start, n.close_end))
+                count += 1
+                work.extend((c, False) for c in n.children)
+        if not edits:
+            return text, 0
+        out: list[str] = []
+        pos = 0
+        for start, end in sorted(edits):
+            out.append(text[pos:start])
+            pos = end
+        out.append(text[pos:])
+        return "".join(out), count
+
+    return outside_protected_map(ncx_text, prune)
+
+
 def strip_broken_guide_fragments(
     opf_text: str, opf_dir: str, ids_by_doc: dict[str, frozenset[str]]
 ) -> tuple[str, int]:
@@ -1841,6 +2028,11 @@ def repair_epub(
     target document does not define (RSC-020/RSC-012; NCX navTargets keep the document
     target) and non-resolvable URI schemes (kindle:, file:). Anchor text is always
     preserved byte-for-byte.
+    With `prune_ncx_targets`, remove NCX navPoint/pageTarget elements whose
+    <content src> names a document the archive does not contain (RSC-007; issue #23),
+    re-homing the surviving children of a dead navPoint one level up, and re-run the
+    contract-gated playOrder pass so the survivors' values stay contiguous in the
+    same run.
     With `url_spaces`, repair raw-space URLs two ways: percent-encode raw spaces
     in src/href attribute values across the package (OPF href, NCX src, content
     src/href; a literal space is not a valid URL, RSC-020), and RENAME the
@@ -2037,6 +2229,7 @@ def repair_epub(
             or flags.strip_anchors
             or flags.fix_media_types
             or flags.declare_missing
+            or flags.prune_ncx_targets
         ):
             for n in zin.namelist():
                 norm_to_raw.setdefault(_norm_path(space_renames.get(n, n)), n)
@@ -2286,6 +2479,24 @@ def repair_epub(
                         # Re-sequence on the final navMap; the fix is
                         # contract-gated, so a still-valid NCX re-runs as a
                         # no-op (issue #21: Troubled Man, Fools Crow).
+                        text, n2 = fix_ncx_playorder(text)
+                        if n2:
+                            counts["fix_ncx_playorder"] = (
+                                counts.get("fix_ncx_playorder", 0) + n2
+                            )
+                if flags.prune_ncx_targets:
+                    text, n = strip_ncx_dangling_targets(
+                        text, posixpath.dirname(out_item.filename), present
+                    )
+                    if n:
+                        counts["ncx_dangling_targets_pruned"] = n
+                        # The prune leaves the survivors' playOrder values
+                        # gapped (and pageTargets' shared values without
+                        # their navPoint anchors): the same contract
+                        # violation the fragment strip manufactures. The
+                        # pass is contract-gated, so a still-valid NCX
+                        # re-runs as a no-op (issue #23's hand-rescue
+                        # recipe, one gate).
                         text, n2 = fix_ncx_playorder(text)
                         if n2:
                             counts["fix_ncx_playorder"] = (

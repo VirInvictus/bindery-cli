@@ -13,12 +13,12 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-five
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-six
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
 `--prune-missing-resources`, `--declare-missing-items`, `--strip-broken-anchors`,
-`--encode-url-spaces`,
+`--prune-dangling-ncx-targets`, `--encode-url-spaces`,
 `--fix-container`, `--fix-media-types`, `--fix-cover`, `--fix-comment-double-hyphen`,
 `--fix-svg-dup-ids`, `--fix-duplicate-ids`, `--fix-cdata-terminator`,
 `--fix-misnested-inline`,
@@ -147,7 +147,7 @@ byte-for-byte. The normal gate applies.
 
 ### Opt-in: structural repairs
 
-Twenty-five repairs go past well-formedness and therefore require their own flag; none is ever
+Twenty-six repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
@@ -257,6 +257,31 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   spine-integrity report. href values carrying a scheme no reader resolves
   (`kindle:embed:`, `file:`, ...) are stripped under the same flag; the resolvable set
   is fixed (`http`, `https`, `mailto`) and extends only with a named finding.
+- **`--prune-dangling-ncx-targets`** (v0.59.0, issue #23): remove NCX
+  `navPoint`/`pageTarget` elements whose `<content src>` names a document the archive
+  does not contain (RSC-007 raised from toc.ncx). This is the class the prune flag
+  cannot reach (`--prune-missing-resources` prunes manifest items whose FILE is
+  absent; a producer that drops the document without declaring it leaves no item and
+  the navPoint survived `--all` as "no applicable fixes") and the class hand removal
+  breaks (every surviving playOrder reads as starting at 2, and naive renumbering
+  splits the navPoint/pageTarget same-target contract -- the live case ended at
+  391 RSC-005s before the rescue). The rule is node-exact: a navPoint dies when its
+  OWN target document is absent; a dead node whose whole subtree dies with it is
+  removed as one element, and a dead node above surviving descendants is spliced (its
+  tags, label, and dead `<content>` go; the children are re-homed one level up),
+  because dropping live navigation to repair a dead label is no repair. Scheme URLs,
+  bare fragments, comment-hidden elements, and contentless nodes are never touched,
+  and the token walk tracks the navMap/pageList containers: an unbalanced walk (a
+  stray close, a wrapper crossing a node's span) aborts the pass unchanged, and so
+  does a prune that would EMPTY a container -- the NCX requires navPoint+/pageTarget+
+  and trading a wholly dead TOC for no TOC is the manual list's call (an empty navMap
+  is itself one RSC-005, verified against epubcheck 5.3, so the gate would happily
+  apply the amputation). When the prune fires, the
+  always-on playOrder pass re-runs on the final navMap (the same contract-gated
+  re-sequencing the fragment strip uses), so the rescue that took hand surgery plus a
+  second `--all` run is one gate here. The live specimen went 0f/1e/0w to 0f/0e/0w in
+  one run (one navPoint pruned, 389 playOrder values re-sequenced across navMap and
+  pageList, epubcheck clean).
 - **`--encode-url-spaces`**: repairs raw-space URLs two ways. The reference half
   percent-encodes raw spaces in `src`/`href` attribute values across the package
   (OPF manifest, NCX `content src`, content documents): a URL with a literal space is
@@ -406,7 +431,7 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   byte-identical. Runs on the OPF only: content documents have the
   invalid-attribute drop (`--strip-bad-attrs`) for the same defect class.
 
-Twenty-three of the twenty-five are evaluated by the normal `gate`: unlike the lossy strips,
+Twenty-three of the twenty-six are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. The three exceptions are `--fix-cover`, `--encode-url-spaces`, and
 `--fix-media-types` (whose gains sit on axes epubcheck's counts do not measure:

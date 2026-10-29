@@ -24,6 +24,7 @@ from bindery.epub import (
     package_version,
     repair_epub,
     strip_epub3_attributes,
+    strip_ncx_dangling_targets,
     strip_page_map,
     sync_ncx_uid,
 )
@@ -1469,6 +1470,259 @@ class TestStripBrokenAnchors(unittest.TestCase):
             out = z.read("OEBPS/a.xhtml").decode()
         self.assertNotIn("pagebreak", out)
         self.assertIn("<a>jump</a>", out)
+
+
+class TestPruneDanglingNcxTargets(unittest.TestCase):
+    """--prune-dangling-ncx-targets (issue #23): navPoints/pageTargets whose
+    <content src> names a document absent from the archive are removed and
+    the playOrder pass re-sequences the survivors. Node-exact: live
+    navigation is never dropped to repair a dead label."""
+
+    PRESENT = frozenset({"OEBPS/a.xhtml", "OEBPS/b.xhtml"})
+
+    def _prune(self, ncx: str) -> tuple[str, int]:
+        return strip_ncx_dangling_targets(ncx, "OEBPS", self.PRESENT)
+
+    def test_dead_leaf_is_dropped_live_sibling_kept(self):
+        ncx = (
+            "<navMap>"
+            '<navPoint id="nav0" playOrder="1"><navLabel><text>Cover</text></navLabel>'
+            '<content src="c0.xhtml"/></navPoint>'
+            '<navPoint id="nav1" playOrder="2"><navLabel><text>A</text></navLabel>'
+            '<content src="a.xhtml"/></navPoint>'
+            "</navMap>"
+        )
+        out, n = self._prune(ncx)
+        self.assertEqual(n, 1)
+        self.assertNotIn('id="nav0"', out)
+        self.assertNotIn("c0.xhtml", out)
+        self.assertIn('<navPoint id="nav1" playOrder="2">', out)
+
+    def test_dead_parent_with_live_children_is_spliced(self):
+        ncx = (
+            "<navMap>"
+            '<navPoint id="p" playOrder="1"><navLabel><text>Part</text></navLabel>'
+            '<content src="gone.xhtml"/>'
+            '<navPoint id="c1" playOrder="2"><navLabel><text>One</text></navLabel>'
+            '<content src="a.xhtml"/></navPoint>'
+            '<navPoint id="c2" playOrder="3"><navLabel><text>Two</text></navLabel>'
+            '<content src="b.xhtml"/></navPoint>'
+            "</navPoint>"
+            "</navMap>"
+        )
+        out, n = self._prune(ncx)
+        self.assertEqual(n, 1)
+        # the dead parent's tags go; both live children stay, re-homed
+        self.assertEqual(out.count("<navPoint"), 2)
+        self.assertIn('<navPoint id="c1"', out)
+        self.assertIn('<navPoint id="c2"', out)
+        self.assertIn("<text>One</text>", out)
+        self.assertIn("<text>Two</text>", out)
+        self.assertNotIn("<text>Part</text>", out)
+        # still balanced: every opened navPoint closes
+        self.assertEqual(out.count("<navPoint"), out.count("</navPoint>"))
+
+    def test_dead_subtree_dropped_as_one_span(self):
+        ncx = (
+            "<navMap>"
+            '<navPoint id="p" playOrder="1"><navLabel><text>Part</text></navLabel>'
+            '<content src="gone.xhtml"/>'
+            '<navPoint id="c" playOrder="2"><navLabel><text>Child</text></navLabel>'
+            '<content src="also-gone.xhtml"/></navPoint>'
+            "</navPoint>"
+            '<navPoint id="n1" playOrder="3"><navLabel><text>A</text></navLabel>'
+            '<content src="a.xhtml"/></navPoint>'
+            "</navMap>"
+        )
+        out, n = self._prune(ncx)
+        self.assertEqual(n, 1)  # the maximal dead subtree counts once
+        self.assertNotIn("gone.xhtml", out)
+        self.assertNotIn("also-gone.xhtml", out)
+        self.assertIn('<navPoint id="n1"', out)
+
+    def test_scheme_bare_fragment_and_contentless_nodes_survive(self):
+        ncx = (
+            "<navMap>"
+            '<navPoint id="s" playOrder="1"><navLabel><text>K</text></navLabel>'
+            '<content src="kindle:embed:0003?mime=image/jpg"/></navPoint>'
+            '<navPoint id="f" playOrder="2"><navLabel><text>F</text></navLabel>'
+            '<content src="#here"/></navPoint>'
+            '<navPoint id="x" playOrder="3"><navLabel><text>X</text></navLabel>'
+            "</navPoint>"
+            "</navMap>"
+        )
+        out, n = self._prune(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_escaped_ampersand_src_resolves_to_its_entry(self):
+        # issue #20's decode: src="a&amp;b.xhtml" names the raw entry a&b.xhtml
+        ncx = (
+            "<navMap>"
+            '<navPoint id="n" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="a&amp;b.xhtml"/></navPoint>'
+            "</navMap>"
+        )
+        out, n = strip_ncx_dangling_targets(
+            ncx, "OEBPS", frozenset({"OEBPS/a&b.xhtml"})
+        )
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_dead_pagetarget_and_legacy_navtarget_are_dropped(self):
+        ncx = (
+            '<pageList class="pages">'
+            '<pageTarget id="pg1" playOrder="1"><navLabel><text>1</text></navLabel>'
+            '<content src="a.xhtml"/></pageTarget>'
+            '<pageTarget id="pg2" playOrder="2"><navLabel><text>2</text></navLabel>'
+            '<content src="gone.xhtml"/></pageTarget>'
+            "</pageList>"
+        )
+        out, n = self._prune(ncx)
+        self.assertEqual(n, 1)
+        self.assertNotIn("pg2", out)
+        self.assertIn("pg1", out)
+        # the legacy navTarget spelling, with a live sibling so the
+        # container never empties (the wholesale-dead rule refuses first)
+        navtarget = (
+            "<navMap>"
+            '<navPoint id="n0" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="a.xhtml"/></navPoint>'
+            '<navTarget id="t1" playOrder="2"><navLabel><text>B</text></navLabel>'
+            '<content src="gone.xhtml"/></navTarget>'
+            "</navMap>"
+        )
+        out, n = self._prune(navtarget)
+        self.assertEqual(n, 1)
+        self.assertNotIn("t1", out)
+        self.assertIn("n0", out)
+
+    def test_comment_hidden_navpoints_are_untouched(self):
+        ncx = (
+            "<navMap>"
+            "<!-- <navPoint id=\"dead\"><content src='gone.xhtml'/></navPoint> -->"
+            '<navPoint id="n1" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="a.xhtml"/></navPoint>'
+            "</navMap>"
+        )
+        out, n = self._prune(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_unbalanced_ncx_aborts_unchanged(self):
+        # dead src on purpose: with a live one the unchanged result would
+        # come from the keep path, not from either abort branch
+        wrapper_crossed = (
+            "<navMap>"
+            '<navPoint id="n1" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="gone.xhtml"/>'
+            "</navMap></navPoint>"
+        )
+        out, n = self._prune(wrapper_crossed)
+        self.assertEqual((out, n), (wrapper_crossed, 0))
+        unclosed = (
+            "<navMap>"
+            '<navPoint id="n1" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="gone.xhtml"/>'
+            "</navMap>"
+        )
+        out, n = self._prune(unclosed)
+        self.assertEqual((out, n), (unclosed, 0))
+
+    def test_prune_that_would_empty_a_container_refuses(self):
+        # every navPoint dead: epubcheck wants navPoint+ in navMap, so the
+        # prune would trade a dead TOC for a TOC-less NCX; the manual list
+        # keeps the book instead (verified: an empty navMap is itself RSC-005)
+        dead_navmap = (
+            "<navMap>"
+            '<navPoint id="n1" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="gone1.xhtml"/></navPoint>'
+            '<navPoint id="n2" playOrder="2"><navLabel><text>B</text></navLabel>'
+            '<content src="gone2.xhtml"/></navPoint>'
+            "</navMap>"
+        )
+        out, n = self._prune(dead_navmap)
+        self.assertEqual((out, n), (dead_navmap, 0))
+        # same rule per container: navMap lives, pageList dies wholesale
+        dead_pagelist = (
+            "<navMap>"
+            '<navPoint id="n1" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="a.xhtml"/></navPoint>'
+            "</navMap>"
+            '<pageList class="pages">'
+            '<pageTarget id="pg" playOrder="1"><navLabel><text>1</text></navLabel>'
+            '<content src="gone.xhtml"/></pageTarget>'
+            "</pageList>"
+        )
+        out, n = self._prune(dead_pagelist)
+        self.assertEqual((out, n), (dead_pagelist, 0))
+        # an ALREADY-empty container is not the prune's doing: bare navMap
+        # with live content in another container still prunes there
+        live_elsewhere = (
+            "<navMap></navMap>"
+            '<pageList class="pages">'
+            '<pageTarget id="pg1" playOrder="1"><navLabel><text>1</text></navLabel>'
+            '<content src="a.xhtml"/></pageTarget>'
+            '<pageTarget id="pg2" playOrder="2"><navLabel><text>2</text></navLabel>'
+            '<content src="gone.xhtml"/></pageTarget>'
+            "</pageList>"
+        )
+        out, n = self._prune(live_elsewhere)
+        self.assertEqual(n, 1)
+        self.assertNotIn("pg2", out)
+        self.assertIn("pg1", out)
+
+    def test_repair_epub_prunes_and_resequences_playorder(self):
+        # the issue #23 shape end to end: the dead Cover navPoint carries
+        # playOrder 1, so the survivors' values start at 2 until the
+        # contract-gated re-run heals them in the same pass
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            '<item href="a.xhtml" id="a" media-type="application/xhtml+xml"/>'
+            '<item href="toc.ncx" id="ncx" media-type="application/x-dtbncx+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="a"/></spine>'
+            "</package>"
+        )
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+            "<head>"
+            '<meta name="dtb:uid" content="urn:uuid:U"/>'
+            "</head>"
+            "<docTitle><text>t</text></docTitle>"
+            "<navMap>"
+            '<navPoint id="nav0" playOrder="1"><navLabel><text>Cover</text></navLabel>'
+            '<content src="c0.xhtml"/></navPoint>'
+            '<navPoint id="nav1" playOrder="2"><navLabel><text>A</text></navLabel>'
+            '<content src="a.xhtml"/></navPoint>'
+            "</navMap></ncx>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr(
+                    "OEBPS/a.xhtml",
+                    '<?xml version="1.0"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml">'
+                    "<head><title>t</title></head><body><p>x</p></body></html>",
+                )
+                z.writestr("OEBPS/toc.ncx", ncx)
+            report = repair_epub(src, dst, RepairFlags(prune_ncx_targets=True))
+            self.assertEqual(report.fixes.get("ncx_dangling_targets_pruned"), 1)
+            self.assertGreater(report.fixes.get("fix_ncx_playorder", 0), 0)
+            with zipfile.ZipFile(dst) as z:
+                out = z.read("OEBPS/toc.ncx").decode()
+        self.assertNotIn('id="nav0"', out)
+        self.assertNotIn("c0.xhtml", out)
+        self.assertIn('playOrder="1"', out)
+        self.assertNotIn('playOrder="2"', out)
+        ET.fromstring(out)
 
 
 class TestEncodeUrlSpacesEpub(unittest.TestCase):

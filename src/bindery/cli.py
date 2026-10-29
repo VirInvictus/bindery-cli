@@ -95,6 +95,7 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         prune_missing=args.prune_missing_resources or all_,
         declare_missing=args.declare_missing_items or all_,
         strip_anchors=args.strip_broken_anchors or all_,
+        prune_ncx_targets=args.prune_dangling_ncx_targets or all_,
         url_spaces=args.encode_url_spaces or all_,
         fix_container=args.fix_container or all_,
         fix_media_types=args.fix_media_types or all_,
@@ -1799,6 +1800,22 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "always-on playOrder pass re-runs on the final navMap so collapsing "
             "two fragments onto one document cannot leave the same-target-"
             "shares-one-value contract violated.",
+        ),
+        (
+            "prune_dangling_ncx_targets",
+            "remove NCX navPoints/pageTargets whose content src is absent (RSC-007)",
+            "remove NCX navPoint/pageTarget elements whose <content src> names a "
+            "document the archive does not contain (RSC-007; issue #23) -- the "
+            "class --prune-missing-resources cannot reach, because the OPF never "
+            "declared the dropped file, and whose hand removal breaks the "
+            "playOrder contract (every survivor's value reads as starting at 2). "
+            "A dead navPoint whose whole subtree dies with it is removed as one "
+            "element; a dead navPoint above surviving descendants is spliced: "
+            "its tags go and the children are re-homed one level up, because "
+            "dropping live navigation to repair a dead label is no repair. "
+            "When the prune fires, the always-on playOrder pass re-runs on the "
+            "final navMap, so the rescue that took hand surgery plus a second "
+            "--all run is one gate here.",
         ),
         (
             "encode_url_spaces",

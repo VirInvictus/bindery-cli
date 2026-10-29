@@ -245,6 +245,27 @@ def _fixtures() -> dict:
             },
             "broken_fragment_hrefs_stripped",
         ),
+        "--prune-dangling-ncx-targets": (
+            {
+                "OEBPS/content.opf": _opf(
+                    [c1, _item("n", "toc.ncx", "application/x-dtbncx+xml")], [r1]
+                ),
+                "OEBPS/c1.xhtml": plain,
+                "OEBPS/toc.ncx": (
+                    '<?xml version="1.0"?>'
+                    '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+                    "<head/><docTitle><text>t</text></docTitle><navMap>"
+                    '<navPoint id="nav0" playOrder="1">'
+                    "<navLabel><text>Cover</text></navLabel>"
+                    '<content src="c0.xhtml"/></navPoint>'
+                    '<navPoint id="nav1" playOrder="2">'
+                    "<navLabel><text>One</text></navLabel>"
+                    '<content src="c1.xhtml"/></navPoint>'
+                    "</navMap></ncx>"
+                ),
+            },
+            "ncx_dangling_targets_pruned",
+        ),
         "--encode-url-spaces": (
             {
                 "OEBPS/content.opf": _opf(
@@ -560,6 +581,14 @@ class FlagEndToEndTests(unittest.TestCase):
     def test_strip_broken_anchors(self):
         self.assertGreaterEqual(
             self._fixes_for("--strip-broken-anchors")["broken_fragment_hrefs_stripped"],
+            1,
+        )
+
+    def test_prune_dangling_ncx_targets(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--prune-dangling-ncx-targets")[
+                "ncx_dangling_targets_pruned"
+            ],
             1,
         )
 

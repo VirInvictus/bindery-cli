@@ -1,5 +1,54 @@
 # bindery-cli Patch Notes
 
+## v0.59.0 (2026-10-28)
+
+### Issue #23: the dangling NCX navPoint, pruned and re-sequenced in one gate
+
+`--prune-dangling-ncx-targets` is the twenty-sixth structural repair. The
+class: an NCX navPoint (or pageTarget) whose `<content src>` names a document
+the archive never contained. epubcheck answers RSC-007 from toc.ncx, and
+nothing reached it: `--prune-missing-resources` prunes manifest items whose
+FILE is absent, and a producer that drops the document without declaring it
+leaves no item to prune, so the navPoint survived `--all` with "no applicable
+fixes" (the Splintered Harmony fixture, 0f/1e/0w). Hand removal works but
+cascades: every surviving playOrder then reads as starting at 2 (391 RSC-005s
+on the live book), naive renumbering splits the navPoint/pageTarget
+same-target contract (79 more), and the working rescue was a second `--all`
+run to let the contract-gated playOrder pass heal the survivors. The new flag
+folds that whole recipe into one gate.
+
+The rule is node-exact, over a balanced stack scanner that tracks navPoint,
+the legacy navTarget spelling, and pageTarget as one family: a navPoint dies
+when its OWN target document is absent from the archive. A dead node whose
+whole subtree dies with it is removed as one element; a dead node above
+surviving descendants is spliced (its tags, its navLabel, and its dead
+`<content>` go; the children are re-homed one level up), because dropping
+live navigation to repair a dead label is no repair. Scheme URLs, bare
+fragments, contentless nodes, comment-hidden elements, and escaped-ampersand
+srcs that resolve (the issue #20 decoder) are never this class. The token
+walk tracks the navMap/pageList containers too: an unbalanced walk (a stray
+close, a wrapper crossing a node's span) aborts the pass unchanged, and so
+does a prune that would EMPTY a container, because the NCX requires
+navPoint+/pageTarget+ and an empty navMap is itself one RSC-005 (verified
+against epubcheck 5.3): without the rule, the gate would happily apply a
+TOC-less NCX, and a wholly dead TOC is the manual list's finding, not a
+repair. When the prune fires, the
+contract-gated playOrder pass re-runs in the same branch, the fragment
+strip's v0.58.0 pattern. On the fixture the one run went 0f/1e/0w to
+0f/0e/0w: one navPoint pruned, 389 playOrder values re-sequenced across
+navMap and pageList, epubcheck clean, and a second probe reports no
+applicable fixes.
+
+Wiring follows the house pattern: the `RepairFlags.prune_ncx_targets` field,
+the `_REPAIR_FLAG_TABLE` row (compact `--help` and `--help-repairs`), the
+`_flags_from_args` mapping, `--all` enabled like every structural flag, and
+the wiring test's dest-to-field pin. Tests: `TestPruneDanglingNcxTargets`
+pins the node-exact rule end to end (dead leaf, splice, dead subtree,
+refusals, the unbalanced abort, the container-emptying refusal, the
+escaped-ampersand resolve, pageTarget and navTarget, and the resequence
+through `repair_epub`), and the real-core
+suite drives the flag through argv. Suite: 820 tests.
+
 ## v0.58.0 (2026-10-26)
 
 ### Issues #18-#21: the structural dry run's four rejects, read to the root

@@ -37,6 +37,7 @@ DEST_TO_FIELD = {
     "prune_missing_resources": "prune_missing",
     "declare_missing_items": "declare_missing",
     "strip_broken_anchors": "strip_anchors",
+    "prune_dangling_ncx_targets": "prune_ncx_targets",
     "encode_url_spaces": "url_spaces",
     "fix_container": "fix_container",
     "fix_media_types": "fix_media_types",
