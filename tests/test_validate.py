@@ -211,14 +211,19 @@ class FailureModes(unittest.TestCase):
 
 
 class ScaledTimeout(unittest.TestCase):
-    """The size-scaled default budget (issue #15): the Summa Theologica
-    (10.4 MB) flaked at the fixed 300s; books over 10 MB get a minute per
-    started 10 MB, capped at 30 minutes."""
+    """The size- and entry-scaled default budget (issues #15, #24): the
+    Summa Theologica flaked at the fixed 300s (issue #15), then outgrew
+    the size term itself -- 384s source and 445s candidate against the
+    flat 300s its bytes computed (9.96 binary MiB never earned a chunk) --
+    because epubcheck's cost on it is entry-count-bound (3,831 entries,
+    3,808 spine docs). Books over 10 decimal MB get a minute per started
+    10 MB; books over 1,000 entries get a minute per started 500 entries;
+    capped at 30 minutes."""
 
     def test_at_or_under_ten_mb_keeps_the_base(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             small = Path(td) / "small.epub"
-            small.write_bytes(b"x" * (10 * 2**20))
+            small.write_bytes(b"x" * 9_500_000)
             self.assertEqual(oracle_timeout_for(small), 300)
             empty = Path(td) / "missing.epub"
             self.assertEqual(oracle_timeout_for(empty), 300)
@@ -226,11 +231,64 @@ class ScaledTimeout(unittest.TestCase):
     def test_over_ten_mb_scales_per_started_chunk(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             book = Path(td) / "summa.epub"
-            book.write_bytes(b"x" * int(10.4 * 2**20))
+            book.write_bytes(b"x" * 10_400_000)
             self.assertEqual(oracle_timeout_for(book), 360)
             big = Path(td) / "big.epub"
-            big.write_bytes(b"x" * (51 * 2**20))
+            big.write_bytes(b"x" * 55_000_000)
             self.assertEqual(oracle_timeout_for(big), 600)
+
+    def test_binary_mib_trap_earns_its_decimal_chunk(self) -> None:
+        """The Summa trap (issue #24): exactly 10 MiB is 10.49 decimal MB,
+        so the size term fires where the old binary divisor read it as
+        at-threshold and gave the flat 300s."""
+        with tempfile.TemporaryDirectory() as td:
+            book = Path(td) / "exactly-10mib.epub"
+            book.write_bytes(b"x" * (10 * 2**20))
+            self.assertEqual(oracle_timeout_for(book), 360)
+
+    def test_entry_heavy_book_scales_per_started_half_thousand(self) -> None:
+        """The Summa entry shape (issue #24): 3,831 tiny entries at
+        <= 10 decimal MB compute 300 + 6 x 60 = 660s; the entry term
+        mirrors the size term's started-chunk shape at 500-entry
+        granularity."""
+        with tempfile.TemporaryDirectory() as td:
+            book = Path(td) / "summa-shape.epub"
+            with zipfile.ZipFile(book, "w") as zf:
+                for i in range(3831):
+                    zf.writestr(f"OEBPS/Text/c{i}.xhtml", "<html/>")
+            self.assertEqual(oracle_timeout_for(book), 660)
+
+    def test_entry_term_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            exactly = Path(td) / "exactly-1000.epub"
+            with zipfile.ZipFile(exactly, "w") as zf:
+                for i in range(1000):
+                    zf.writestr(f"c{i}.xhtml", "<html/>")
+            self.assertEqual(oracle_timeout_for(exactly), 300)
+            over = Path(td) / "1001.epub"
+            with zipfile.ZipFile(over, "w") as zf:
+                for i in range(1001):
+                    zf.writestr(f"c{i}.xhtml", "<html/>")
+            self.assertEqual(oracle_timeout_for(over), 360)
+            wide = Path(td) / "2500.epub"
+            with zipfile.ZipFile(wide, "w") as zf:
+                for i in range(2500):
+                    zf.writestr(f"c{i}.xhtml", "<html/>")
+            self.assertEqual(oracle_timeout_for(wide), 540)
+
+    def test_the_real_summa_shape(self) -> None:
+        """The actual book (issue #24): 10,440,245 bytes (10.44 decimal
+        MB, one size chunk) plus 3,831 entries (six entry chunks) compute
+        300 + 60 + 360 = 720s against its measured 384s source / 445s
+        candidate."""
+        with tempfile.TemporaryDirectory() as td:
+            book = Path(td) / "summa-real.epub"
+            payload = b"x" * 10_200_000
+            with zipfile.ZipFile(book, "w") as zf:
+                zf.writestr("OEBPS/big.xhtml", payload)
+                for i in range(3830):
+                    zf.writestr(f"OEBPS/Text/c{i}.xhtml", "<html/>")
+            self.assertEqual(oracle_timeout_for(book), 720)
 
     def test_cap(self) -> None:
         with tempfile.TemporaryDirectory() as td:

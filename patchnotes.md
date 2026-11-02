@@ -1,5 +1,47 @@
 # bindery-cli Patch Notes
 
+## v0.60.0 (2026-11-01)
+
+### Issue #24: the oracle budget also scales on archive entry count
+
+The Summa Theologica (Calibre book #7301: 10,440,245 bytes, 3,831
+archive entries, 3,808 spine documents, a 16,456-finding playOrder NCX)
+kept dying at the gate even after v0.55.0's size-scaled budget, and the
+first miss was the units: the size term divides by binary MiB, and
+10,440,245 bytes is 9.96 MiB, so the book every doc reports as 10.4 MB
+computed the flat 300s base with no size chunk at all. Even with a size
+chunk it would have missed: epubcheck measured 384s on the source and
+445s on the `--all` candidate (both runs under sweep contention), because
+the book's cost is entry-count-bound (3,831 entries, 3,808 spine
+documents), not bytes-bound. Either way the retry burned the same way
+and every sweep misfiled the book as `(epubcheck timeout)` -- it stayed
+a candidate forever.
+
+Two budget changes, same 1800s cap. The size term counts decimal MB
+(how book sizes are actually reported), so exactly-10-MiB files earn
+their chunk instead of straddling the threshold. And the budget gains an
+entry term shaped like the size term at finer granularity: +60s per
+started 500 archive entries above the first 1,000. The Summa computes
+720s (300 base + 60 size + 360 entries) against its measured 445s worst
+case; books at or under 1,000 entries and 10 MB keep their historical
+budget exactly, and a path that does not open as a zip (the budget is
+computed before the book is judged) falls back to the size term alone.
+No gate or CLI surface changes; the sweep selectors and the OracleTimeout
+contract are untouched, and no library dry-run re-validation is
+triggered (the change is the oracle's patience, not an acceptance bar).
+
+The diagnosis also settled what the repair buys: epubcheck DOES police
+the playOrder contract (2 of the source's 6 RSC-005 error entries are
+exactly that: identical playOrder values for different targets, and
+playOrder sequence gaps), so the default-pass candidate measures
+0f/6e -> 0f/4e, a strict error decrease the gate accepts; the scoped
+`--all` candidate measures 0f/0e/0w. Measured pins live in
+tests/test_validate.py: exactly 10 MiB earns its decimal chunk (360s),
+the 3,831-entry shape at <= 10 MB computes 660s, the full Summa shape
+(10.44 decimal MB + 3,831 entries) computes 720s, exactly 1,000 entries
+stays at the size budget, 1,001 entries adds the first chunk, and 2,500
+entries compute 540s.
+
 ## v0.59.0 (2026-10-28)
 
 ### Issue #23: the dangling NCX navPoint, pruned and re-sequenced in one gate

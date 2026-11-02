@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,22 +53,47 @@ class OracleTimeout(RuntimeError):
 
 def oracle_timeout_for(path: Path, base: int = 300) -> int:
     """The epubcheck budget for one book: the base, plus a minute per
-    started 10 MB above 10 MB, capped at 30 minutes (issue #15).
+    started 10 MB above 10 MB, plus a minute per started 500 archive
+    entries above 1,000, capped at 30 minutes (issues #15, #24).
 
     The 2026-10-24 whole-library runs hit a 300s ceiling on the Summa
     Theologica (10.4 MB, 3,795-playOrder NCX): it timed out in one run and
     passed the identical gate in another, so the fixed budget misfiled a
     timing flake as a repair error. Bigger books simply get more time;
-    anything at or under 10 MB keeps the exact historical 300s.
+    the historical 300s base itself never changes.
+
+    The size term alone still misfiled the Summa twice (issue #24). First
+    the units: 10,440,245 bytes is 9.96 MiB, just under the binary 10 MiB
+    threshold, so the book the docs call 10.4 MB computed the flat 300s
+    base with no size chunk at all; the term now counts decimal MB,
+    matching how book sizes are actually reported. Second the shape:
+    measured at 384s on the source and 445s on the candidate, the book is
+    entry-count-bound (3,831 archive entries, 3,808 spine documents), not
+    bytes-bound. The entry term mirrors the size term's started-chunk
+    shape at finer granularity: a minute per started 500 entries above
+    the first 1,000 (an exact 500-multiple earns its chunk, like the
+    size term's exact-10-MB multiples), so ordinary books keep their
+    historical budget exactly. A path that does not open as a zip (the
+    budget is computed before the book is judged) falls back to the size
+    term alone.
     """
     try:
-        size_mb = path.stat().st_size / (2**20)
+        size_mb = path.stat().st_size / 10**6
     except OSError:
         return base
-    if size_mb <= 10:
-        return base
-    chunks = int((size_mb - 10) // 10) + 1
-    return min(base + 60 * chunks, 1800)
+    timeout = base
+    if size_mb > 10:
+        chunks = int((size_mb - 10) // 10) + 1
+        timeout += 60 * chunks
+    try:
+        with zipfile.ZipFile(path) as zf:
+            entries = len(zf.namelist())
+    except (OSError, zipfile.BadZipFile):
+        entries = 0
+    if entries > 1000:
+        entry_chunks = ((entries - 1000) // 500) + 1
+        timeout += 60 * entry_chunks
+    return min(timeout, 1800)
 
 
 def epubcheck_available() -> bool:
