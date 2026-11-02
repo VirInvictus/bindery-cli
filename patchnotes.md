@@ -1,5 +1,62 @@
 # bindery-cli Patch Notes
 
+## v0.61.0 (2026-11-02)
+
+### Issue #25: fix-empty-body injects `<p>&#160;</p>`, not bare `&nbsp;`
+
+Space Prison (Calibre book #11556, the Pyramid 1960 scan-conversion rip)
+surfaced the defect in a phase-3 sweep: the book's 205-byte shell page
+(`OEBPS/text00001.html`, `<body></body>` under an XHTML 1.0 Strict
+DOCTYPE) made `--fix-empty-body` flip its own `--all` candidate from a
+clean decrease (`0f/6e/0w -> 0f/5e/0w` core) into a regression the gate
+had to refuse (`0f/6e/0w -> 1f/4e/0w --all`), the delta exactly
+`fix_empty_body:1` and the new count a FATAL RSC-016, "The entity nbsp
+was referenced, but not declared".
+
+The root cause has two halves, both verified against epubcheck 5.3 with
+a minimal-EPUB matrix across XHTML 1.0 Strict / Transitional / XHTML
+1.1 / no-DOCTYPE shapes on EPUB2 packages and plain `<!DOCTYPE html>`
+on EPUB3:
+
+- epubcheck validates EPUB2 content docs against the XHTML 1.1 DTD and
+  resolves named entities only from DTDs it carries locally (the XHTML
+  1.1 one). `&nbsp;` is not one of XML's five predefined entities, so
+  under every DOCTYPE epubcheck does not resolve locally -- XHTML 1.0
+  Strict and Transitional, and no DOCTYPE at all -- the injection was
+  an undeclared-entity parse fatal. EPUB3 is no refuge: XHTML content
+  documents are validated as XML there too, and `&nbsp;` is fatal
+  under every DOCTYPE shape tested.
+- The XHTML 1.1 body content model is block elements only, so bare
+  character data (named or numeric) never satisfied it anywhere: the
+  error the fix was named for ("element body incomplete") never
+  cleared. The old injection therefore never once applied under
+  epubcheck 5.x -- every run was either a fatal-regression reject or
+  an equal-noop -- which is why hardening it breaks no user: there was
+  no working behavior to preserve, only a dead flag whose only live
+  behavior was flipping candidates into rejects.
+
+The injection is now the exact literal `<p>&#160;</p>`. The numeric
+character reference needs no DTD in any validation path, and the
+wrapping `<p>` is the block element the content model demands; the
+matrix shows it clearing "body incomplete" on every EPUB2 DOCTYPE
+shape with zero fatals and zero new errors, while on EPUB3 books
+(where an empty body raises nothing) the gate answers equal and
+nothing applies. The gate now accepts the fixture honestly:
+`0f/6e/0w -> 0f/4e/0w` (body incomplete and the NCX playOrder error
+both fixed; the book's four pre-existing error-nits stay), applied
+under `--all`.
+
+The flag's name, selection rule, opt-in status, and count key are
+unchanged; only the injected bytes differ. `--fix-empty-body` and the
+plugin's default pass never overlapped (the plugin runs the default
+pass only), so the Bindery Repair zip in this release just carries the
+updated transform. Tests: `TestFixEmptyBody` (test_transforms.py) pins
+the literal, the no-named-entity invariant, whitespace/attribute/case
+shapes, and untouched non-empty bodies; test_epub.py carries the
+issue #25 regression shape (a Strict-DOCTYPE shell doc whose candidate
+must show the numeric-in-block injection and never `&nbsp;`). Suite:
+832 tests.
+
 ## v0.60.0 (2026-11-01)
 
 ### Issue #24: the oracle budget also scales on archive entry count
