@@ -550,6 +550,53 @@ class TestStructuralRepairsAreOptIn(unittest.TestCase):
                 self.assertGreaterEqual(n, 1)
 
 
+class TestFixEmptyBody(unittest.TestCase):
+    """The injection is `<p>&#160;</p>` (issue #25): epubcheck validates EPUB2
+    content docs against the XHTML 1.1 DTD, whose body content model is block
+    elements only, so the bare `&nbsp;` this fix shipped with never cleared
+    the error and was itself an undeclared-entity parse fatal (RSC-016) under
+    every DOCTYPE epubcheck does not resolve locally."""
+
+    def test_injects_numeric_entity_in_a_block(self):
+        out, n = fix_empty_body("<html><body></body></html>")
+        self.assertEqual(n, 1)
+        self.assertEqual(out, "<html><body><p>&#160;</p></body></html>")
+
+    def test_never_emits_the_named_entity(self):
+        # the issue #25 regression class: &nbsp; is not one of XML's five
+        # predefined entities, so it is a parse fatal under a DOCTYPE whose
+        # DTD declares no HTML entity set
+        out, _ = fix_empty_body("<body></body>")
+        self.assertNotIn("&nbsp;", out)
+
+    def test_whitespace_only_body_fires(self):
+        out, n = fix_empty_body("<body>\r</body>")
+        self.assertEqual(n, 1)
+        self.assertEqual(out, "<body>\r<p>&#160;</p></body>")
+
+    def test_body_attributes_and_leading_space_survive(self):
+        out, n = fix_empty_body('<body class="chapter">\n</body>')
+        self.assertEqual(n, 1)
+        self.assertEqual(out, '<body class="chapter">\n<p>&#160;</p></body>')
+
+    def test_case_insensitive_match(self):
+        out, n = fix_empty_body("<BODY></BODY>")
+        self.assertEqual(n, 1)
+        self.assertEqual(out, "<BODY><p>&#160;</p></BODY>")
+
+    def test_non_empty_body_untouched(self):
+        for body in ("<body><p>x</p></body>", '<body><img src="a.png"/></body>'):
+            with self.subTest(body=body):
+                out, n = fix_empty_body(body)
+                self.assertEqual((out, n), (body, 0))
+
+    def test_multiple_empty_bodies_count_individually(self):
+        # malformed (one body per document), but the count must stay honest
+        out, n = fix_empty_body("<body></body><body></body>")
+        self.assertEqual(n, 2)
+        self.assertEqual(out.count("<p>&#160;</p>"), 2)
+
+
 class TestFixNcxPlayorder(unittest.TestCase):
     def test_resequences_navpoint_attributes(self):
         ncx = (

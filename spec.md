@@ -150,8 +150,12 @@ byte-for-byte. The normal gate applies.
 Twenty-six repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
-- **`--fix-empty-body`**: `&nbsp;` inside a strictly empty `<body></body>` ("body
-  incomplete"). Adds visible content, hence opt-in like `--add-img-alt`.
+- **`--fix-empty-body`**: `<p>&#160;</p>` inside a strictly empty `<body></body>` ("body
+  incomplete"). The numeric character reference needs no DTD and the wrapping `p` is the
+  block element XHTML 1.1's body content model demands (issue #25: the `&nbsp;` this fix
+  originally injected was an undeclared-entity parse fatal under every DOCTYPE epubcheck
+  does not resolve locally, and bare character data never satisfied the content model).
+  Adds visible content, hence opt-in like `--add-img-alt`.
 - **`--fix-missing-title`**: inject `<title>Unknown</title>` when the head has no usable
   title.
 - **`--fix-id-colons`**: illegal colons in `id="X:Y"` and their matching internal

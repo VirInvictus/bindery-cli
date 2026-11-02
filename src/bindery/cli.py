@@ -1668,10 +1668,14 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
     "structural repairs: markup and nesting": [
         (
             "fix_empty_body",
-            "append &nbsp; to a strictly empty <body></body>",
-            "append &nbsp; inside a strictly empty <body></body> (the 'body "
-            "incomplete' error). Adds visible content the author never wrote; "
-            "hence opt-in.",
+            "fill a strictly empty <body></body> with <p>&#160;</p>",
+            "inject <p>&#160;</p> inside a strictly empty <body></body> (the "
+            "'body incomplete' error). The numeric character reference needs "
+            "no DTD (a named &nbsp; is an undeclared-entity parse fatal under "
+            "every DOCTYPE epubcheck does not resolve locally) and the "
+            "wrapping p is the block element XHTML 1.1's body content model "
+            "demands, which bare text never satisfied. Adds visible content "
+            "the author never wrote; hence opt-in.",
         ),
         (
             "fix_missing_title",

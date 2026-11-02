@@ -1994,7 +1994,10 @@ def repair_epub(
     With `strip_watermarks`, remove known producer watermarks (e.g. OceanofPDF).
 
     The structural repairs are all opt-in, never part of the core pass:
-    with `empty_body`, append &nbsp; to a strictly empty <body>; with `missing_title`,
+    with `empty_body`, inject the exact literal `<p>&#160;</p>` into a strictly
+    empty <body> (the numeric reference needs no DTD and the wrapping p is
+    the block epubcheck's XHTML 1.1 body content model demands — issue #25);
+    with `missing_title`,
     inject a <title>Unknown</title> fallback; with `id_colons`, translate illegal
     colons in id attributes and their #fragment references; with `block_in_inline`,
     unwrap a <span> that illegally wraps a block element; with `invalid_value`, strip

@@ -1012,6 +1012,28 @@ class TestOptInStructuralRepairs(unittest.TestCase):
         report = repair_epub(self.src, self.dst, RepairFlags(empty_body=True))
         self.assertIn("fix_empty_body", report.fixes)
 
+    def test_empty_body_injection_is_numeric_in_a_block(self):
+        # issue #25 (Space Prison #11556): the shell doc declares XHTML 1.0
+        # Strict, whose DTD epubcheck does not resolve locally, so the old
+        # bare `&nbsp;` injection was an undeclared-entity parse fatal
+        # (RSC-016) and the candidate died in the gate as a regression. The
+        # injection must be the DTD-independent numeric reference inside the
+        # block element XHTML 1.1's body content model demands.
+        self._build(
+            css="p { margin: 0 }",
+            content=(
+                '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" '
+                '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">'
+                '<html xmlns="http://www.w3.org/1999/xhtml">\r'
+                "<head><title></title>\r</head>\r<body></body>\r</html>\r"
+            ),
+        )
+        repair_epub(self.src, self.dst, RepairFlags(empty_body=True))
+        with zipfile.ZipFile(self.dst) as z:
+            c = z.read("OEBPS/c1.xhtml").decode()
+        self.assertIn("<body><p>&#160;</p></body>", c)
+        self.assertNotIn("&nbsp;", c)
+
 
 class TestPruneMissingResources(unittest.TestCase):
     """--prune-missing-resources: references to files the archive does not

@@ -631,7 +631,19 @@ def unwrap_illegal_tags(
 
 @_outside_protected
 def fix_empty_body(s: str) -> tuple[str, int]:
-    """Append `&nbsp;` to a strictly empty `<body></body>` ("body incomplete").
+    """Give a strictly empty `<body></body>` one minimal paragraph, the exact
+    literal `<p>&#160;</p>` ("body incomplete").
+
+    That literal, not the bare `&nbsp;` this fix shipped with (issue #25):
+    epubcheck validates EPUB2 content docs against the
+    with (issue #25): epubcheck validates EPUB2 content docs against the
+    XHTML 1.1 DTD, whose body content model is block elements only, so bare
+    character data never cleared the error, and `&nbsp;` is not one of XML's
+    five predefined entities, so under every DOCTYPE whose DTD epubcheck does
+    not load locally the injection was itself a parse-fatal RSC-016 ("The
+    entity "nbsp" was referenced, but not declared"). The numeric
+    character reference needs no DTD at all, and the wrapping `<p>` is the
+    block the content model demands.
 
     Opt-in (--fix-empty-body): this ADDS visible content the author never wrote,
     the same reason --add-img-alt is opt-in; it is never part of the core pass.
@@ -641,7 +653,7 @@ def fix_empty_body(s: str) -> tuple[str, int]:
     def repl(m: re.Match) -> str:
         nonlocal count
         count += 1
-        return m.group(1) + "&nbsp;" + m.group(2)
+        return m.group(1) + "<p>&#160;</p>" + m.group(2)
 
     s, n = re.subn(r"(<body[^>]*>\s*)(</body>)", repl, s, flags=re.IGNORECASE)
     return s, n
