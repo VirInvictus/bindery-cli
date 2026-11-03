@@ -1,5 +1,81 @@
 # bindery-cli Patch Notes
 
+## v0.62.0 (2026-11-03)
+
+### The observatory batch: three predicate repairs and four new flags
+
+The 2026-11-03 whole-library observatory run answered the default pass's
+`0/0/0` (nothing applies, nothing rejects) with two discoveries: twelve
+census codes had never been triaged, and the full `--all` arsenal's 322
+rejections were 283 bundles poisoned by two transforms whose firing
+predicates outran what epubcheck actually polices. This release carries the
+batch that came out of it, every piece verified against epubcheck 5.3 on
+real specimens or minimal matrices before the code moved.
+
+**The three predicate repairs** (the playOrder precedent repeating):
+
+- `fix_ncx_playorder`'s contract demanded values 1..K; the oracle polices
+  sharing, distinctness, and gaps and never the base (Age of Innocence
+  validates clean at 0..43; singleton-2, pair-2-3, and offset-5-8 verified).
+  The clause is base-free contiguous now, silencing the 107 no-op
+  renumberings the observatory measured while keeping every real fix.
+- `fix_pagelist_class` inserts the collision-checked id alongside the
+  class: class-only insertion flipped epubcheck into demanding the id on
+  the element that had just gained the class (Feel Free: bare pageList
+  validates clean, `class="pages"` alone draws RSC-005 'missing required
+  attribute "id"', id+class validates fully clean) -- the 215-rejection
+  poison. The books that used to regress now measure flat; the ones that
+  used to accept still do.
+- `fix_missing_title` fills the self-closed `<title/>`: the paired-fill
+  branch was unreachable dead code behind the no-op check, so every
+  self-closed shape fell through to injection beside the standing tag
+  (the 70-rejection poison; 84 sampled reject docs, all exactly
+  `<title/>`, each gaining RSC-005 'element "title" not allowed here').
+
+**The four new flags** (the never-triaged census lanes):
+
+- `--fix-package-version` (OPF-001, 26 books): rewrites the literal
+  `version="1.0"` on the package element to `"2.0"` -- an EPUB version
+  epubcheck cannot parse. Refuses everything else: the OEB-1.0-namespace
+  package with no version attribute is the designed refusal, and any other
+  spelling would be a guess about the producer's intent. Audition
+  validates fully clean after the bump.
+- `--fix-doctype` (HTM-004, 135 books): replaces a content document's
+  DOCTYPE when it carries a public identifier its package profile forbids
+  -- EPUB 3 requires any DOCTYPE to be `<!DOCTYPE html>` (an XHTML 1.x
+  public doctype is a spec violation), and EPUB 2's OPS content docs are
+  XHTML 1.1 (the Hound-of-the-Baskervilles shape: found 1.0 Strict,
+  expected 1.1). Both census shapes verified on facility copies. The
+  first build also inserted a DOCTYPE when absent; the whole-library
+  firing census measured that flat on ~2,400 of 2,545 firing books -- an
+  absent DOCTYPE is legal in both profiles and the oracle tolerates it --
+  so insertion was removed before release: the flag fires only where the
+  declaration exists and is wrong. A whitespace-variant of the expected
+  form is a no-op, and a DOCTYPE carrying an internal subset is never
+  touched (the subset declares entities).
+- `--prune-invalid-guide-refs` (OPF-032, 125 books): removes guide
+  `<reference>` elements whose target is declared but is not an OPS
+  content document -- the Random House `msr` guide block pointing
+  cover/thumbimage references at JPEGs is the dominant fingerprint. The
+  guide is furniture, so removal is content-neutral; a reference to an
+  undeclared file stays OPF-031 (declare-missing's lane), as do external
+  schemes and paired elements. Widdershins validates fully clean after
+  the prune.
+- `--fix-item-properties` (OPF-014, 74 books): a whole-book census reads
+  what each content document contains and merges the tokens into the
+  owning manifest item's `properties` attribute, sorted and deduplicated.
+  `scripted` from a `<script>` element, an on* handler attribute, or a
+  `<form>` -- epubcheck 5.3 demands scripted for form documents, proven
+  by tag-off bisection on the Rustonomicon's scraped GitHub page; `svg`
+  from an `<svg>` element; `remote-resources` from an absolute-scheme src
+  attribute, a remote `<link href>`, or a remote CSS url(). EPUB 3
+  packages only: the matrix proved declaring `properties` on an EPUB2
+  item draws the illegal-attribute finding while its OPF-014 demand
+  stands, so the EPUB2 carriers refuse and stay measured. The census's
+  own lane specimen (Rustonomicon) cleared its OPF-014 live.
+
+Suite: 878 tests.
+
 ## v0.61.1 (2026-11-03)
 
 ### The hex-ref href crash, and the sweep that survives it
