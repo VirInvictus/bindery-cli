@@ -304,6 +304,10 @@ class RepairFlags:
     unterminated_attr: bool = False
     unbound_prefix: bool = False
     unique_identifier: bool = False
+    package_version: bool = False
+    doctype: bool = False
+    prune_guide_refs: bool = False
+    item_properties: bool = False
 
 
 @dataclass
@@ -394,6 +398,276 @@ def fix_pagelist_class(ncx_text: str) -> tuple[str, int]:
         return f'<pageList id="{_pick_id()}" class="pages"{attrs}'
 
     return _PAGELIST_OPEN_RE.sub(_add, ncx_text), count
+
+
+# --fix-package-version: the OPF-001 lane (the 2026-11-03 triage). 25 of 26
+# carriers carry literally `version="1.0"` (an EPUB version epubcheck cannot
+# parse: "Version not supported"); the 26th is an OEB-1.0-namespace package
+# with no version attribute at all (Dying Inside, the designed refusal).
+# Only the exact literal qualifies: bumping anything else would be a guess
+# about which conformance the producer meant. The value is what the
+# EPUB2-targeted fixes' own package_version() reads (major 1 -> 2 keeps
+# their licensing identical), and the gate decides whether the profile
+# revalidation the bump unmasking-free.
+_PACKAGE_VERSION_ONE_RE = re.compile(
+    r"""(<(?:[\w.-]+:)?package\b[^>]*?\bversion\s*=\s*)(["'])1\.0\2""",
+    re.IGNORECASE,
+)
+
+
+def fix_package_version(opf_text: str) -> tuple[str, int]:
+    """Rewrite ``version="1.0"`` on the ``<package>`` element to ``"2.0"``.
+
+    An unparseable EPUB version is OPF-001 and the package falls out of
+    every version-aware check. Only the exact literal ``1.0`` (double or
+    single quoted) qualifies: a missing attribute, ``1.1``, or any other
+    spelling refuses the whole document. Everything else about the OPF is
+    untouched; the gate measures whether the 2.0 profile revalidation the
+    bump buys is a real decrease.
+    """
+    out, n = _PACKAGE_VERSION_ONE_RE.subn(r"\g<1>\g<2>2.0\g<2>", opf_text)
+    return out, n
+
+
+# --fix-doctype: the HTM-004 lane (the 2026-11-03 triage, 135 books in two
+# shapes: EPUB3 packages carrying XHTML 1.1 doctypes, EPUB2 packages carrying
+# XHTML 1.0 or none). The expected form is package-profile-driven, matching
+# epubcheck's own expectation strings verbatim.
+_XHTML11_DOCTYPE = (
+    '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" '
+    '"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
+)
+_XML_DECL_END_RE = re.compile(r"^\s*<\?xml[^>]*\?>")
+
+
+def _scan_doctype_span(text: str) -> tuple[int, int] | None:
+    """The exact (start, end) span of a DOCTYPE declaration, honouring the
+    bracketed internal subset: a naive `[^>]*` stops at the first `>`, which
+    a subset's conditional sections can carry. None when unterminated."""
+    m = re.search(r"<!DOCTYPE", text, re.IGNORECASE)
+    if m is None:
+        return None
+    depth = 0
+    i = m.end()
+    while i < len(text):
+        ch = text[i]
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        elif ch == ">" and depth <= 0:
+            return m.start(), i + 1
+        i += 1
+    return None
+
+
+def fix_doctype(text: str, major: int | None) -> tuple[str, int]:
+    """Normalize one content document's DOCTYPE to its package profile's
+    expected form, inserting it when absent (the HTM-004 repair).
+
+    EPUB3 (major >= 3) expects ``<!DOCTYPE html>``; EPUB2 expects the XHTML
+    1.1 public doctype. Whitespace-normalized equality decides no-op, so a
+    differently spaced but semantically identical declaration is untouched.
+    An existing DOCTYPE carrying an internal subset is left alone (the
+    subset declares entities; replacing it changes what the parser
+    resolves). An unknown package version licenses nothing.
+    """
+    if major is None:
+        return text, 0
+    expected = "<!DOCTYPE html>" if major >= 3 else _XHTML11_DOCTYPE
+    span = _scan_doctype_span(text)
+    if span is None:
+        decl = _XML_DECL_END_RE.search(text)
+        if decl is not None:
+            cut = decl.end()
+            return f"{text[:cut]}\n{expected}{text[cut:]}", 1
+        return f"{expected}\n{text}", 1
+    start, end = span
+    existing = text[start:end]
+    if " ".join(existing.split()) == " ".join(expected.split()):
+        return text, 0
+    if "[" in existing:
+        # an internal subset declares entities: swapping the doctype would
+        # silently change what the parser resolves (fix-cdata-terminator's
+        # neighbour). Leave measured.
+        return text, 0
+    return f"{text[:start]}{expected}{text[end:]}", 1
+
+
+# --prune-invalid-guide-refs: the OPF-032 lane (the 2026-11-03 triage, 125
+# books; one producer fingerprint dominates: the Random House `msr` guide
+# block pointing cover/thumbimage references at JPEGs). A guide reference
+# is valid only when its target resolves to a manifest item of OPS content
+# doc type; anything else epubcheck answers OPF-032. The guide is furniture
+# (never rendered content), so removal is content-neutral.
+_CONTENT_MEDIA_TYPES = frozenset(
+    {
+        "application/xhtml+xml",
+        "text/html",
+        "application/x-dtbook+xml",
+    }
+)
+_GUIDE_REF_ELEMENT_RE = re.compile(
+    r"""<reference\b[^>]*?/>|<reference\b[^>]*>.*?</reference>""",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _manifest_media_type_map(opf_text: str, opf_dir: str) -> dict[str, str]:
+    """resolved archive path -> declared media type, for the guide prune."""
+    out: dict[str, str] = {}
+    for m in _ITEM_TAG_RE.finditer(opf_text):
+        tag = m.group(0)
+        hm = _HREF_ATTR_RE.search(tag)
+        if not hm:
+            continue
+        resolved = _resolve_href(opf_dir, hm.group(2))
+        if resolved is None:
+            continue
+        tm = re.search(
+            r"""\bmedia-type\s*=\s*(["'])((?:(?!\1).)*)\1""", tag, re.IGNORECASE
+        )
+        if tm is not None:
+            out[resolved] = tm.group(2)
+    return out
+
+
+def prune_invalid_guide_refs(opf_text: str, opf_dir: str) -> tuple[str, int]:
+    """Remove guide ``<reference>`` elements whose target is declared but is
+    not an OPS content document (OPF-032).
+
+    The predicate is deliberate: a reference to an UNDECLARED file is
+    OPF-031, declare-missing's lane; an external scheme is nobody's guide;
+    a self-closed element is the only shape removed (a paired reference
+    with children is unheard of in the census, and a botched span would
+    eat the guide). Nothing else about the guide is rewritten.
+    """
+    media_types = _manifest_media_type_map(opf_text, opf_dir)
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        tag = m.group(0)
+        hm = _HREF_ATTR_RE.search(tag)
+        if hm is None:
+            return tag
+        resolved = _resolve_href(opf_dir, hm.group(2))
+        if resolved is None:
+            return tag
+        declared_type = media_types.get(resolved)
+        if declared_type is None or declared_type in _CONTENT_MEDIA_TYPES:
+            return tag
+        count += 1
+        return ""
+
+    return _GUIDE_REF_ELEMENT_RE.sub(repl, opf_text), count
+
+
+# --fix-item-properties: the OPF-014 lane (the 2026-11-03 triage, 74 books).
+# EPUB3 manifest items must declare what their documents contain: `scripted`
+# when the document carries scripting (a <script> element, an on* handler,
+# or a <form> — epubcheck 5.3 demands scripted for form documents, verified
+# on the Rustonomicon's scraped GitHub page where tag-off bisection isolated
+# the form), `svg` when the document carries an <svg>, and
+# `remote-resources` when it loads resources from outside the container
+# (src=/href= attributes and CSS url() values with an absolute scheme).
+# Declaring reality changes no content.
+_SCRIPT_TAG_RE = re.compile(r"<script\b", re.IGNORECASE)
+_FORM_TAG_RE = re.compile(r"<form\b", re.IGNORECASE)
+_HANDLER_ATTR_RE = re.compile(r"""\son[a-z]+\s*=\s*["']""", re.IGNORECASE)
+_SVG_TAG_RE = re.compile(r"<svg\b", re.IGNORECASE)
+_REMOTE_SRC_RE = re.compile(r"""\ssrc\s*=\s*(["'])https?://""", re.IGNORECASE)
+_REMOTE_LINK_HREF_RE = re.compile(
+    r"""<link\b[^>]*?\shref\s*=\s*(["'])https?://""", re.IGNORECASE
+)
+_REMOTE_CSS_URL_RE = re.compile(r"""url\(\s*["']?https?://""", re.IGNORECASE)
+_ITEM_PROPERTIES_RE = re.compile(
+    r"""((?:^|\s)properties\s*=\s*)(["'])((?:(?!\2).)*)(\2)""", re.IGNORECASE
+)
+
+
+def collect_item_properties(zin: zipfile.ZipFile) -> dict[str, frozenset[str]]:
+    """The item-properties census: resolved content-doc path -> the EPUB3
+    property tokens the document's own bytes demand. `scripted` from a
+    `<script>` element, an on* handler attribute, or a `<form>`; `svg` from
+    an `<svg>` element; `remote-resources` from an absolute-scheme src
+    attribute, a remote `<link href>`, or a remote CSS url(). Non-UTF-8
+    documents are skipped (their contents are nobody's guess)."""
+    props: dict[str, set[str]] = {}
+    for item in zin.infolist():
+        low = item.filename.lower()
+        if not low.endswith(CONTENT_SUFFIXES):
+            continue
+        try:
+            text = zin.read(item).decode("utf-8")
+        except (UnicodeDecodeError, RuntimeError):
+            continue
+        found: set[str] = set()
+        if (
+            _SCRIPT_TAG_RE.search(text)
+            or _FORM_TAG_RE.search(text)
+            or _HANDLER_ATTR_RE.search(text)
+        ):
+            found.add("scripted")
+        if _SVG_TAG_RE.search(text):
+            found.add("svg")
+        if (
+            _REMOTE_SRC_RE.search(text)
+            or _REMOTE_LINK_HREF_RE.search(text)
+            or _REMOTE_CSS_URL_RE.search(text)
+        ):
+            found.add("remote-resources")
+        if not found:
+            continue
+        # key in the same spelling _resolve_href produces for a manifest
+        # item's href (normpath of the archive path), so the patcher's
+        # lookup matches
+        props[posixpath.normpath(item.filename)] = frozenset(found)
+    return props
+
+
+def fix_manifest_item_properties(
+    opf_text: str, opf_dir: str, props_map: dict[str, frozenset[str]]
+) -> tuple[str, int]:
+    """Merge the census tokens into the owning manifest items' `properties`
+    attributes (EPUB3 packages only; the caller gates). Tokens merge sorted
+    and deduplicated, so `nav` + `scripted` reads `nav scripted`; an item
+    already carrying every token is untouched, and a doc with no manifest
+    item stays untouched (declaring an undeclared file is declare-missing's
+    lane). Returns (text, items-changed)."""
+    if not props_map:
+        return opf_text, 0
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        tag = m.group(0)
+        hm = _HREF_ATTR_RE.search(tag)
+        if hm is None:
+            return tag
+        resolved = _resolve_href(opf_dir, hm.group(2))
+        if resolved is None:
+            return tag
+        needed = props_map.get(resolved)
+        if not needed:
+            return tag
+        pm = _ITEM_PROPERTIES_RE.search(tag)
+        if pm is None:
+            merged = " ".join(sorted(needed))
+            count += 1
+            return (
+                tag[: tag.rindex(">")]
+                + f' properties="{merged}"'
+                + tag[tag.rindex(">") :]
+            )
+        existing = set(pm.group(3).split())
+        if existing >= needed:
+            return tag
+        merged = " ".join(sorted(existing | needed))
+        count += 1
+        return tag[: pm.start(3)] + merged + tag[pm.end(3) :]
+
+    return _ITEM_TAG_RE.sub(repl, opf_text), count
 
 
 # The fixed EPUB3-semantics set (issue #11): `role` and `aria-hidden` join
@@ -2276,6 +2550,9 @@ def repair_epub(
         undeclared: frozenset[str] = frozenset()
         if flags.declare_missing and opf_text is not None:
             undeclared = collect_undeclared_resources(zin, opf_text, opf_dir, present)
+        item_props: dict[str, frozenset[str]] = {}
+        if flags.item_properties:
+            item_props = collect_item_properties(zin)
 
         # --strip-stub-docs: the whole-book stub identity decision needs the
         # spine order and every spine doc's visible text, so it runs once up
@@ -2560,8 +2837,19 @@ def repair_epub(
                 or flags.strip_anchors
                 or flags.unbound_prefix
                 or flags.unique_identifier
+                or flags.package_version
+                or flags.prune_guide_refs
+                or flags.item_properties
             ):
                 opf_changed = False
+                if flags.package_version:
+                    # First in the branch: the version declaration is the
+                    # package's self-description, and every later reader of
+                    # this text should see the repaired spelling.
+                    text, n = fix_package_version(text)
+                    if n:
+                        report.add({"package_version_fixed": n})
+                        opf_changed = True
                 if flags.unbound_prefix:
                     # First in the branch: the unbound prefix makes the whole
                     # package unparseable, so the parseability scar comes off
@@ -2613,6 +2901,23 @@ def repair_epub(
                     if n:
                         report.add({"manifest_items_declared": n})
                         opf_changed = True
+                if flags.prune_guide_refs:
+                    text, n = prune_invalid_guide_refs(text, opf_dir)
+                    if n:
+                        report.add({"invalid_guide_refs_pruned": n})
+                        opf_changed = True
+                if flags.item_properties:
+                    # EPUB3 vocabulary: `properties` on a manifest item is
+                    # illegal below EPUB 3 (the same profile line the
+                    # strip-epub3-attrs gate draws), so the census result is
+                    # consumed only where it can be declared honestly.
+                    if pkg_major is not None and pkg_major >= 3:
+                        text, n = fix_manifest_item_properties(
+                            text, opf_dir, item_props
+                        )
+                        if n:
+                            report.add({"item_properties_added": n})
+                            opf_changed = True
                 if flags.strip_stub_docs and stub_hrefs:
                     text, n_items, n_refs, stub_ids = strip_stub_manifest(
                         text, opf_dir, stub_hrefs
@@ -2761,6 +3066,10 @@ def repair_epub(
                     text, n = fix_missing_title(text)
                     if n:
                         counts["fix_missing_title"] = n
+                if flags.doctype:
+                    text, n = fix_doctype(text, pkg_major)
+                    if n:
+                        counts["doctype_normalized"] = n
                 if flags.id_colons:
                     text, n = fix_id_colons(text)
                     if n:

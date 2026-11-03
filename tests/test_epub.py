@@ -13,17 +13,22 @@ from bindery.epub import (
     _decode_numeric_refs,
     _locate_opf,
     _resolve_href,
+    collect_item_properties,
     collect_undeclared_resources,
     declare_missing_manifest_items,
     downgrade_epub3_tags,
+    fix_doctype,
     fix_manifest_ids,
+    fix_manifest_item_properties,
     fix_ncx_ids,
+    fix_package_version,
     fix_pagelist_class,
     fix_unique_identifier_wiring,
     generate_container,
     ncx_uid_mismatch,
     opf_unique_id,
     package_version,
+    prune_invalid_guide_refs,
     repair_epub,
     strip_epub3_attributes,
     strip_missing_file_hrefs,
@@ -3223,3 +3228,421 @@ class TestNumericRefHrefDecode(unittest.TestCase):
         out, n = strip_missing_file_hrefs(text, "OEBPS", frozenset({"OEBPS/c1.xhtml"}))
         self.assertEqual(n, 0)
         self.assertEqual(out, text)
+
+
+class TestFixPackageVersion(unittest.TestCase):
+    """--fix-package-version (OPF-001): only the literal version="1.0"
+    qualifies; everything else refuses (the 2026-11-03 triage: 25 of 26
+    carriers are exactly this spelling, and the 26th -- an OEB-1.0-namespace
+    package with no version attribute -- is the designed refusal)."""
+
+    def test_rewrites_double_quoted_one_dot_zero(self):
+        opf = '<package xmlns="http://www.idpf.org/2007/opf" version="1.0" unique-identifier="id">'
+        out, n = fix_package_version(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('version="2.0"', out)
+
+    def test_rewrites_single_quoted_one_dot_zero(self):
+        opf = "<package version='1.0'>"
+        out, n = fix_package_version(opf)
+        self.assertEqual(n, 1)
+        self.assertIn("version='2.0'", out)
+
+    def test_namespaced_package_tag_is_matched(self):
+        opf = '<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="1.0">'
+        out, n = fix_package_version(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('version="2.0"', out)
+
+    def test_missing_attribute_refuses(self):
+        opf = '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="id">'
+        self.assertEqual(fix_package_version(opf), (opf, 0))
+
+    def test_other_values_refuse(self):
+        for v in ("1.1", "1.0.1", "2.0", "3.0", "1"):
+            opf = f'<package version="{v}">'
+            self.assertEqual(fix_package_version(opf), (opf, 0), v)
+
+    def test_package_version_reads_two_after_the_fix(self):
+        from bindery.epub import package_version
+
+        out, _ = fix_package_version('<package version="1.0">')
+        self.assertEqual(package_version(out), 2)
+
+
+class TestFixDoctype(unittest.TestCase):
+    """--fix-doctype (HTM-004): the expected form is package-profile-driven,
+    matching epubcheck's own HTM-004 expectation strings (the 2026-11-03
+    triage's two shapes: EPUB3 packages carrying XHTML 1.1 doctypes, EPUB2
+    packages carrying XHTML 1.0 or none)."""
+
+    XHTML11 = (
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" '
+        '"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
+    )
+
+    def test_epub2_missing_doctype_is_inserted_after_the_xml_decl(self):
+        text = '<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml"></html>'
+        out, n = fix_doctype(text, 2)
+        self.assertEqual(n, 1)
+        self.assertTrue(
+            out.startswith('<?xml version="1.0" encoding="utf-8"?>\n' + self.XHTML11)
+        )
+        self.assertIn("</html>", out)
+
+    def test_epub2_wrong_doctype_is_replaced(self):
+        text = (
+            '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" '
+            '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">\n<html></html>'
+        )
+        out, n = fix_doctype(text, 2)
+        self.assertEqual(n, 1)
+        self.assertTrue(out.startswith(self.XHTML11))
+        self.assertNotIn("XHTML 1.0 Strict", out)
+
+    def test_epub3_legacy_doctype_becomes_html(self):
+        text = f"{self.XHTML11}\n<html></html>"
+        out, n = fix_doctype(text, 3)
+        self.assertEqual(n, 1)
+        self.assertTrue(out.startswith("<!DOCTYPE html>\n<html>"))
+
+    def test_epub3_missing_doctype_is_inserted(self):
+        text = "<html></html>"
+        out, n = fix_doctype(text, 3)
+        self.assertEqual(n, 1)
+        self.assertTrue(out.startswith("<!DOCTYPE html>\n<html>"))
+
+    def test_matching_doctype_is_a_noop(self):
+        text = f"{self.XHTML11}\n<html></html>"
+        self.assertEqual(fix_doctype(text, 2), (text, 0))
+
+    def test_whitespace_variant_of_the_expected_form_is_a_noop(self):
+        text = (
+            '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"\n '
+            '"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">\n<html></html>'
+        )
+        self.assertEqual(fix_doctype(text, 2), (text, 0))
+
+    def test_internal_subset_is_left_alone(self):
+        text = '<!DOCTYPE html [ <!ENTITY custom "x"> ]>\n<html></html>'
+        self.assertEqual(fix_doctype(text, 2), (text, 0))
+
+    def test_unknown_version_licenses_nothing(self):
+        text = "<html></html>"
+        self.assertEqual(fix_doctype(text, None), (text, 0))
+
+
+class TestPruneInvalidGuideRefs(unittest.TestCase):
+    """--prune-invalid-guide-refs (OPF-032): a guide reference whose target
+    is declared but is not an OPS content document is removed; the guide is
+    furniture, so removal is content-neutral. Undeclared targets (OPF-031,
+    declare-missing's lane) and external schemes are left alone."""
+
+    OPF = (
+        '<?xml version="1.0"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+        'unique-identifier="id"><metadata/>'
+        "<manifest>"
+        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+        '<item id="cover" href="images/cover.jpg" media-type="image/jpeg"/>'
+        '<item id="css" href="style.css" media-type="text/css"/>'
+        "</manifest>"
+        "<spine><itemref idref='c1'/></spine>"
+        "<guide>"
+        '<reference type="cover" title="Cover" href="images/cover.jpg"/>'
+        '<reference type="text" title="Chapter" href="c1.xhtml"/>'
+        '<reference type="other.ms-thumbimage-standard" title="T" '
+        'href="images/cover.jpg"/>'
+        '<reference type="toc" title="Toc" href="style.css"/>'
+        "</guide></package>"
+    )
+
+    def test_non_content_doc_references_are_removed(self):
+        out, n = prune_invalid_guide_refs(self.OPF, "OEBPS")
+        # cover.jpg x2 removed; c1.xhtml kept; style.css removed (a CSS item
+        # is declared but not a content doc)
+        self.assertEqual(n, 3)
+        self.assertNotIn('type="cover"', out)
+        self.assertNotIn("other.ms-thumbimage-standard", out)
+        self.assertNotIn('title="Toc"', out)
+        self.assertIn('href="c1.xhtml"', out)
+
+    def test_undeclared_target_is_left_alone(self):
+        opf = self.OPF.replace(
+            "</guide>",
+            '<reference type="start" title="S" href="ghost.xhtml"/></guide>',
+        )
+        out, n = prune_invalid_guide_refs(opf, "OEBPS")
+        self.assertEqual(n, 3)
+        self.assertIn('href="ghost.xhtml"', out)
+
+    def test_external_scheme_is_left_alone(self):
+        opf = self.OPF.replace(
+            "</guide>",
+            '<reference type="web" title="W" href="https://example.com/x.jpg"/>'
+            "</guide>",
+        )
+        out, n = prune_invalid_guide_refs(opf, "OEBPS")
+        self.assertEqual(n, 3)
+        self.assertIn("https://example.com/x.jpg", out)
+
+
+class TestFixItemProperties(unittest.TestCase):
+    """--fix-item-properties (OPF-014): the census reads what each content
+    document contains and the patcher merges the tokens into the owning
+    manifest item. EPUB 3 vocabulary only (the caller gates on the package
+    version)."""
+
+    def _book(self, td, *, scripted=True, remote=False, version="3.0"):
+        src = Path(td) / "in.epub"
+        props = ' properties="nav"' if version == "3.0" else ""
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            f'version="{version}" unique-identifier="id"><metadata/>'
+            "<manifest>"
+            '<item id="nav" href="nav.xhtml" '
+            'media-type="application/xhtml+xml"'
+            f"{props}/>"
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            "<spine><itemref idref='c1'/></spine></package>"
+        )
+        doc = '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body><p>x</p></body></html>'
+        nav = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>n</title>'
+            + ("<script>1</script>" if scripted else "")
+            + (
+                '<link href="https://example.com/x.css" rel="stylesheet"/>'
+                if remote
+                else ""
+            )
+            + '</head><body><nav epub:type="toc"><ul><li><a href="c1.xhtml">c</a></li></ul></nav></body></html>'
+        )
+        with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/nav.xhtml", nav)
+            z.writestr("OEBPS/c1.xhtml", doc)
+        return src, opf
+
+    def test_scripted_nav_gains_the_token_merged_sorted(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, opf = self._book(td, scripted=True)
+            with zipfile.ZipFile(src) as z:
+                props = collect_item_properties(z)
+            self.assertEqual(props, {"OEBPS/nav.xhtml": frozenset({"scripted"})})
+            out, n = fix_manifest_item_properties(opf, "OEBPS", props)
+            self.assertEqual(n, 1)
+            self.assertIn('properties="nav scripted"', out)
+
+    def test_remote_resources_detected_from_link_and_src(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, opf = self._book(td, scripted=True, remote=True)
+            with zipfile.ZipFile(src) as z:
+                props = collect_item_properties(z)
+            self.assertEqual(
+                props["OEBPS/nav.xhtml"], frozenset({"scripted", "remote-resources"})
+            )
+            out, _ = fix_manifest_item_properties(opf, "OEBPS", props)
+            self.assertIn('properties="nav remote-resources scripted"', out)
+
+    def test_item_already_carrying_the_token_is_untouched(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, opf = self._book(td, scripted=True)
+            with zipfile.ZipFile(src) as z:
+                props = collect_item_properties(z)
+            patched, _ = fix_manifest_item_properties(opf, "OEBPS", props)
+            out, n = fix_manifest_item_properties(patched, "OEBPS", props)
+            self.assertEqual(n, 0)
+
+    def test_content_doc_without_findings_is_untouched(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, _ = self._book(td, scripted=False)
+            with zipfile.ZipFile(src) as z:
+                self.assertEqual(collect_item_properties(z), {})
+
+    def test_form_and_svg_earn_their_tokens(self):
+        # epubcheck 5.3 demands scripted for form documents (tag-off bisection
+        # on the Rustonomicon's scraped GitHub page isolated the form) and
+        # svg for documents carrying an <svg>; both are the same declare-
+        # reality move
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            opf = (
+                '<?xml version="1.0"?><package '
+                'xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+                'unique-identifier="id"><metadata/><manifest>'
+                '<item id="c1" href="c1.xhtml" '
+                'media-type="application/xhtml+xml"/></manifest>'
+                "<spine><itemref idref='c1'/></spine></package>"
+            )
+            doc = (
+                '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t'
+                "</title></head><body>"
+                '<form action="x"><input/></form>'
+                '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>'
+                "</body></html>"
+            )
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", doc)
+            with zipfile.ZipFile(src) as z:
+                props = collect_item_properties(z)
+        self.assertEqual(props, {"OEBPS/c1.xhtml": frozenset({"scripted", "svg"})})
+
+
+class TestFlagPackageVersionEndToEnd(unittest.TestCase):
+    """--fix-package-version through the real repair: the OPF-001 carrier
+    (version="1.0") gets the 2.0 spelling and the count lands in fixes."""
+
+    def test_repair_epub_rewrites_the_version(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" version="1.0" '
+            'unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="id">x</dc:identifier>'
+            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
+            '<manifest><item id="c1" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest>'
+            "<spine><itemref idref='c1'/></spine></package>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            s, d = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr(
+                    "OEBPS/c1.xhtml",
+                    '<html xmlns="http://www.w3.org/1999/xhtml">'
+                    "<head><title>t</title></head><body><p>x</p></body></html>",
+                )
+            report = repair_epub(s, d, RepairFlags(package_version=True))
+            self.assertEqual(report.fixes.get("package_version_fixed"), 1)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/content.opf").decode()
+        self.assertIn('version="2.0"', out)
+        ET.fromstring(out)
+
+
+class TestFlagDoctypeEndToEnd(unittest.TestCase):
+    """--fix-doctype through the real repair: an EPUB2 doc with no DOCTYPE
+    gains the XHTML 1.1 declaration, keyed off the package version."""
+
+    def test_repair_epub_inserts_the_epub2_doctype(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+            'unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="id">x</dc:identifier>'
+            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
+            '<manifest><item id="c1" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest>'
+            "<spine><itemref idref='c1'/></spine></package>"
+        )
+        doc = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml">'
+            "<head><title>t</title></head><body><p>x</p></body></html>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            s, d = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", doc)
+            report = repair_epub(s, d, RepairFlags(doctype=True))
+            self.assertEqual(report.fixes.get("doctype_normalized"), 1)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/c1.xhtml").decode()
+        self.assertIn('"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"', out)
+
+
+class TestFlagGuidePruneEndToEnd(unittest.TestCase):
+    """--prune-invalid-guide-refs through the real repair: the Random House
+    msr shape (a guide cover reference to a declared JPEG) is removed."""
+
+    def test_repair_epub_prunes_the_jpeg_guide_ref(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+            'unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="id">x</dc:identifier>'
+            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
+            "<manifest>"
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="cover" href="cover.jpg" media-type="image/jpeg"/>'
+            "</manifest>"
+            "<spine><itemref idref='c1'/></spine>"
+            "<guide>"
+            '<reference type="other.ms-coverimage-standard" title="Cover" '
+            'href="cover.jpg"/>'
+            '<reference type="toc" title="T" href="c1.xhtml"/>'
+            "</guide></package>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            s, d = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/cover.jpg", b"\xff\xd8\xff\xe0")
+                z.writestr(
+                    "OEBPS/c1.xhtml",
+                    '<html xmlns="http://www.w3.org/1999/xhtml">'
+                    "<head><title>t</title></head><body><p>x</p></body></html>",
+                )
+            report = repair_epub(s, d, RepairFlags(prune_guide_refs=True))
+            self.assertEqual(report.fixes.get("invalid_guide_refs_pruned"), 1)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/content.opf").decode()
+        self.assertIn('href="c1.xhtml"', out)
+        self.assertNotIn("ms-coverimage-standard", out)
+
+
+class TestFlagItemPropertiesEndToEnd(unittest.TestCase):
+    """--fix-item-properties through the real repair: an EPUB3 nav with a
+    script gains `scripted` beside `nav`; the same defect on an EPUB2
+    package refuses (properties is EPUB3 vocabulary)."""
+
+    def _book(self, td, version):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            f'version="{version}" unique-identifier="id">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="id">x</dc:identifier>'
+            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
+            "<manifest>"
+            '<item id="nav" href="nav.xhtml" '
+            'media-type="application/xhtml+xml" properties="nav"/>'
+            "</manifest>"
+            "<spine><itemref idref='nav'/></spine></package>"
+        )
+        nav = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>n</title>'
+            "<script>1</script></head><body><p>x</p></body></html>"
+        )
+        s, d = Path(td) / "in.epub", Path(td) / "out.epub"
+        with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/nav.xhtml", nav)
+        return s, d
+
+    def test_epub3_nav_gains_scripted(self):
+        with tempfile.TemporaryDirectory() as td:
+            s, d = self._book(td, "3.0")
+            report = repair_epub(s, d, RepairFlags(item_properties=True))
+            self.assertEqual(report.fixes.get("item_properties_added"), 1)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/content.opf").decode()
+        self.assertIn('properties="nav scripted"', out)
+
+    def test_epub2_package_refuses(self):
+        with tempfile.TemporaryDirectory() as td:
+            s, d = self._book(td, "2.0")
+            report = repair_epub(s, d, RepairFlags(item_properties=True))
+            self.assertNotIn("item_properties_added", report.fixes)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/content.opf").decode()
+        self.assertIn('properties="nav"', out)
+        self.assertNotIn("scripted", out)

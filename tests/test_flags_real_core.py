@@ -465,6 +465,68 @@ def _fixtures() -> dict:
             },
             "unbound_prefixes_bound",
         ),
+        "--fix-package-version": (
+            {
+                "OEBPS/content.opf": (
+                    '<?xml version="1.0"?>'
+                    '<package xmlns="http://www.idpf.org/2007/opf" '
+                    'version="1.0" unique-identifier="id">'
+                    '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                    "<dc:title>t</dc:title><dc:language>en</dc:language>"
+                    '<dc:identifier id="id">x</dc:identifier></metadata>'
+                    f"<manifest>{c1}</manifest><spine>{r1}</spine></package>"
+                ),
+                "OEBPS/c1.xhtml": plain,
+            },
+            "package_version_fixed",
+        ),
+        "--fix-doctype": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": (
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml">'
+                    "<head><title>t</title></head><body><p>x</p></body></html>"
+                ),
+            },
+            "doctype_normalized",
+        ),
+        "--prune-invalid-guide-refs": (
+            {
+                "OEBPS/content.opf": _opf(
+                    [c1, _item("cover", "cover.jpg", "image/jpeg")],
+                    [r1],
+                    guide=(
+                        '<reference type="other.ms-coverimage-standard" '
+                        'title="Cover" href="cover.jpg"/>'
+                        '<reference type="toc" title="T" href="c1.xhtml"/>'
+                    ),
+                ),
+                "OEBPS/c1.xhtml": plain,
+                "OEBPS/cover.jpg": b"\xff\xd8\xff\xe0",
+            },
+            "invalid_guide_refs_pruned",
+        ),
+        "--fix-item-properties": (
+            {
+                # EPUB 3 only: properties is EPUB3 vocabulary and the repair
+                # gates on the package version
+                "OEBPS/content.opf": _opf(
+                    [
+                        '<item id="nav" href="nav.xhtml" '
+                        'media-type="application/xhtml+xml" properties="nav"/>'
+                    ],
+                    [_ref("nav")],
+                    version="3.0",
+                ),
+                "OEBPS/nav.xhtml": (
+                    '<html xmlns="http://www.w3.org/1999/xhtml">'
+                    "<head><title>n</title><script>1</script></head>"
+                    "<body><p>x</p></body></html>"
+                ),
+            },
+            "item_properties_added",
+        ),
     }
 
 
@@ -672,6 +734,27 @@ class FlagEndToEndTests(unittest.TestCase):
     def test_fix_unbound_prefix(self):
         self.assertGreaterEqual(
             self._fixes_for("--fix-unbound-prefix")["unbound_prefixes_bound"], 1
+        )
+
+    def test_fix_package_version(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-package-version")["package_version_fixed"], 1
+        )
+
+    def test_fix_doctype(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-doctype")["doctype_normalized"], 1
+        )
+
+    def test_prune_invalid_guide_refs(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--prune-invalid-guide-refs")["invalid_guide_refs_pruned"],
+            1,
+        )
+
+    def test_fix_item_properties(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-item-properties")["item_properties_added"], 1
         )
 
 

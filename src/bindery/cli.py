@@ -109,6 +109,10 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         unterminated_attr=args.fix_unterminated_attr or all_,
         unbound_prefix=args.fix_unbound_prefix or all_,
         unique_identifier=args.fix_unique_identifier or all_,
+        package_version=args.fix_package_version or all_,
+        doctype=args.fix_doctype or all_,
+        prune_guide_refs=args.prune_invalid_guide_refs or all_,
+        item_properties=args.fix_item_properties or all_,
     )
 
 
@@ -1976,6 +1980,55 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "namespace for a dc: element name); anything else refuses the "
             "document untouched. Content documents are not touched (their "
             "unbound prefixes have the --strip-bad-attrs drop).",
+        ),
+        (
+            "fix_package_version",
+            'rewrite package version="1.0" to "2.0" (OPF-001)',
+            "rewrite a <package> element whose version attribute is the "
+            "literal 1.0 -- an EPUB version epubcheck cannot parse (OPF-001 "
+            "'error when parsing the EPUB version') -- to 2.0, the conformance "
+            "the 2026-11-03 census's 25 carriers were all written to. Refuses "
+            "everything else: a missing attribute (an OEB-1.0-namespace "
+            "package needs a migration, not an attribute bump) or any other "
+            "spelling. The gate decides whether the profile revalidation is "
+            "a real decrease.",
+        ),
+        (
+            "fix_doctype",
+            "rewrite/insert the package profile's expected DOCTYPE (HTM-004)",
+            "normalize each content document's DOCTYPE to the form epubcheck "
+            "expects for the package profile: <!DOCTYPE html> on EPUB 3, the "
+            "XHTML 1.1 public doctype on EPUB 2 (the 2026-11-03 census's two "
+            "HTM-004 shapes: EPUB3 packages carrying XHTML 1.1 doctypes, "
+            "EPUB2 packages carrying 1.0 or none). A semantically identical "
+            "declaration with different spacing is untouched, and a DOCTYPE "
+            "carrying an internal subset is left alone (the subset declares "
+            "entities; swapping it would change what the parser resolves).",
+        ),
+        (
+            "prune_invalid_guide_refs",
+            "remove guide references whose target is not a content doc (OPF-032)",
+            "remove guide <reference> elements whose href resolves to a "
+            "manifest item that exists but is not an OPS content document "
+            "(the 2026-11-03 census's 125-book lane: the Random House msr "
+            "guide block pointing cover/thumbimage references at JPEGs). The "
+            "guide is furniture, so removal is content-neutral. A reference "
+            "to an UNDECLARED file is OPF-031 (--declare-missing-items' "
+            "lane) and is left alone, as are external schemes and paired "
+            "elements.",
+        ),
+        (
+            "fix_item_properties",
+            "declare scripted/remote-resources on EPUB3 manifest items (OPF-014)",
+            "scan every content document for what epubcheck wants declared "
+            "(OPF-014 'The property X should be declared in the OPF'): a "
+            "<script> element earns `scripted`, an absolute-scheme src, "
+            "remote <link href>, or remote CSS url() earns "
+            "`remote-resources` -- and merge the tokens into the owning "
+            "manifest item's properties attribute, sorted and deduplicated. "
+            "EPUB 3 packages only (properties is EPUB3 vocabulary; below 3 "
+            "the attribute is itself a finding). Declares reality; changes "
+            "no content.",
         ),
     ],
     "lossy strips (these delete converter-injected content; accepted on a no-worse bar)": [
