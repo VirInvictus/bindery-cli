@@ -1,5 +1,38 @@
 # bindery-cli Patch Notes
 
+## v0.61.1 (2026-11-03)
+
+### The hex-ref href crash, and the sweep that survives it
+
+The first whole-library `--all` dry run (the 2026-11-03 observe lane)
+crashed with exit 1 forty minutes in: `_decode_numeric_refs` raised
+`ValueError: invalid literal for int() with base 16: 'x2013'` inside the
+prune's content-doc pass, and the exception escaped the sweep's repair
+loop, killing the run and its report.
+
+Two fixes:
+
+- **The decoder** (epub.py): `_NUMERIC_REF_RE` captured the hex ref's `x`
+  into the digits group (`&#x2013;` -> `'x2013'`) and the repl fed the
+  whole capture to `int(_, 16)`. XML spells hex character references with
+  a lowercase x only, so the regex was right and the int call ate the x;
+  the fix strips the prefix before the int. The bug sat dormant since
+  v0.58.0 shipped the decode because the resolver runs only on the opt-in
+  paths (prune, anchor strip), so the default pass never met it. Library
+  census: 36 hex-ref hrefs across 5 books, every one an external URL
+  (en-dashes and ampersands in macmillan/tor/techcrunch query strings)
+  that the decode reaches before the scheme check discards it. Five new
+  tests pin the decode, the internal-href contract extended to hex, and
+  the crash shape end-to-end through `strip_missing_file_hrefs`.
+- **The sweep crash guard** (cli.py): an unexpected per-book exception is
+  now that book's `error` verdict (`crash (ValueError): ...; not
+  applied`), counted in the existing errors tally and flowing to --json
+  like every other record, instead of a run-killing traceback. The
+  unified trouble exit contract is unchanged. The single-file repair
+  verb keeps its traceback: there an operator is watching one book.
+
+Suite: 838 tests.
+
 ## v0.61.0 (2026-11-02)
 
 ### Issue #25: fix-empty-body injects `<p>&#160;</p>`, not bare `&nbsp;`
