@@ -348,14 +348,40 @@ _PAGELIST_OPEN_RE = re.compile(r"<pageList(?=[\s/>])([^>]*)")
 
 
 def fix_pagelist_class(ncx_text: str) -> tuple[str, int]:
-    """Add ``class="pages"`` to ``<pageList>`` elements missing the attribute.
+    """Add ``id`` and ``class="pages"`` to ``<pageList>`` elements missing
+    the class attribute.
 
     NCX 2.x requires ``class`` on ``<pageList>``; older conversions leave it
     out and epubcheck answers RSC-005 'missing required attribute "class"'.
     ``class="pages"`` is the value upstream's own tooling emits, and a
     pageList that already carries a class is left untouched.
+
+    The ``id`` rides along (v0.62.0): the 2026-11-03 whole-library dry run
+    measured class-only insertion flipping epubcheck into demanding ``id``
+    on the very element that just gained the class (Feel Free: bare
+    pageList validates clean, ``class="pages"`` alone draws RSC-005
+    'missing required attribute "id"', ``id`` + ``class`` validates fully
+    clean). Adding both is clean in both contexts, so the books that used
+    to regress now measure flat and the ones that used to accept still do.
+
+    The id is ``bindery-pagelist``, suffixed -2/-3/... if taken anywhere in
+    the document (the declare-missing id discipline): NCX ids must be
+    unique, and a collision would be a new finding of our own making.
     """
     count = 0
+    taken: set[str] = {
+        m.group(1) for m in re.finditer(r'\bid\s*=\s*["\']([^"\']+)["\']', ncx_text)
+    }
+
+    def _pick_id() -> str:
+        base = "bindery-pagelist"
+        candidate = base
+        n = 2
+        while candidate in taken:
+            candidate = f"{base}-{n}"
+            n += 1
+        taken.add(candidate)
+        return candidate
 
     def _add(m: re.Match) -> str:
         nonlocal count
@@ -363,7 +389,9 @@ def fix_pagelist_class(ncx_text: str) -> tuple[str, int]:
         if re.search(r"\bclass\s*=", attrs, re.IGNORECASE):
             return m.group(0)
         count += 1
-        return f'<pageList class="pages"{attrs}'
+        if re.search(r"\bid\s*=", attrs, re.IGNORECASE):
+            return f'<pageList class="pages"{attrs}'
+        return f'<pageList id="{_pick_id()}" class="pages"{attrs}'
 
     return _PAGELIST_OPEN_RE.sub(_add, ncx_text), count
 

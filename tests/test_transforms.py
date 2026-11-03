@@ -550,6 +550,40 @@ class TestStructuralRepairsAreOptIn(unittest.TestCase):
                 self.assertGreaterEqual(n, 1)
 
 
+class TestFixMissingTitleSelfClosed(unittest.TestCase):
+    """v0.62.0: a self-closed `<title/>` counts as a title present, so the
+    fill branch rewrites it instead of letting the injection branch run.
+    The 2026-11-03 dry run measured 70 rejections (84 sampled docs, all
+    exactly this shape) where the old detector treated `<title/>` as no
+    title at all, injected beside it, and epubcheck answered with RSC-005
+    'element "title" not allowed here' -- one more error than before."""
+
+    def test_self_closed_title_is_filled_not_duplicated(self):
+        doc = "<html><head><title/></head><body><p>x</p></body></html>"
+        out, n = fix_missing_title(doc)
+        self.assertEqual(n, 1)
+        self.assertEqual(
+            out, "<html><head><title>Unknown</title></head><body><p>x</p></body></html>"
+        )
+        self.assertEqual(out.count("<title"), 1)
+
+    def test_empty_paired_title_is_still_filled(self):
+        doc = "<html><head><title></title></head><body><p>x</p></body></html>"
+        out, n = fix_missing_title(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("<title>Unknown</title>", out)
+
+    def test_absent_title_still_injects_into_head(self):
+        doc = "<html><head></head><body><p>x</p></body></html>"
+        out, n = fix_missing_title(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("<head>\n<title>Unknown</title>", out)
+
+    def test_real_title_still_means_noop(self):
+        doc = "<html><head><title>Chapter</title></head><body><p>x</p></body></html>"
+        self.assertEqual(fix_missing_title(doc), (doc, 0))
+
+
 class TestFixEmptyBody(unittest.TestCase):
     """The injection is `<p>&#160;</p>` (issue #25): epubcheck validates EPUB2
     content docs against the XHTML 1.1 DTD, whose body content model is block
@@ -611,15 +645,20 @@ class TestFixNcxPlayorder(unittest.TestCase):
 
     def test_nav_label_text_is_not_rewritten(self):
         # reported 2026-09-08: the unanchored pattern rewrote the words
-        # playOrder="3" inside a nav label's visible text
+        # playOrder="3" inside a nav label's visible text. The fixture carries
+        # a real violation ({5, 9}: distinct targets, a gap) so the transform
+        # fires; a lone playOrder="5" is contract-clean under the v0.62.0
+        # base-free clause and would not.
         ncx = (
             '<navPoint id="a" playOrder="5"><navLabel>'
             '<text>Chapter playOrder="3" text</text></navLabel>'
             '<content src="c.xhtml"/></navPoint>'
+            '<navPoint id="b" playOrder="9"><content src="d.xhtml"/></navPoint>'
         )
         out, n = fix_ncx_playorder(ncx)
-        self.assertEqual(n, 1)  # the attribute, not the label text
+        self.assertEqual(n, 2)  # the attributes, not the label text
         self.assertEqual(out.count('playOrder="1"'), 1)
+        self.assertEqual(out.count('playOrder="2"'), 1)
         self.assertIn("Chapter playOrder=", out)
 
     def test_already_sequential_playorder_is_not_counted_as_fixes(self):
@@ -704,6 +743,39 @@ class TestFixNcxPlayorder(unittest.TestCase):
         self.assertEqual(out.count('playOrder="1"'), 2)
         self.assertIn('playOrder="2"', out)
         self.assertNotIn('playOrder="3"', out)
+
+    def test_zero_based_contiguous_run_is_untouched(self):
+        # v0.62.0 tightening: epubcheck 5.3 polices sharing, distinctness, and
+        # gaps, never the run's base (the 2026-11-03 observatory run measured
+        # 107 whole-library firings that renumbered 0-based runs to 1-based
+        # for zero measured change; Age of Innocence 0..43 validates clean)
+        ncx = "".join(
+            f'<navPoint playOrder="{i}"><content src="c{i}.xhtml"/></navPoint>'
+            for i in range(0, 4)
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_offset_contiguous_run_is_untouched(self):
+        # the base is free: 5..8 is as contract-clean as 1..4
+        ncx = "".join(
+            f'<navPoint playOrder="{i}"><content src="c{i}.xhtml"/></navPoint>'
+            for i in range(5, 9)
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_contiguous_run_with_a_gap_still_fires(self):
+        # the chronomancy clause survives the tightening: gaps are policed
+        ncx = (
+            '<navPoint playOrder="0"><content src="a.xhtml"/></navPoint>'
+            '<navPoint playOrder="1"><content src="b.xhtml"/></navPoint>'
+            '<navPoint playOrder="9"><content src="c.xhtml"/></navPoint>'
+        )
+        out, n = fix_ncx_playorder(ncx)
+        self.assertEqual(n, 3)
+        self.assertIn('playOrder="2"', out)
+        self.assertNotIn('playOrder="9"', out)
 
     def test_nested_navpoints_with_parent_content_first_are_untouched(self):
         ncx = (

@@ -327,10 +327,31 @@ class TestPageMap(unittest.TestCase):
         self.assertEqual((out, n), (opf, 0))
 
     def test_pagelist_class_injected(self):
+        # v0.62.0: the id rides along with the class -- class-only insertion
+        # flipped epubcheck into demanding id on the element that just gained
+        # the class (the Feel Free finding), while id + class validates clean
+        # in both contexts
         ncx = "<pageList><pageTarget/></pageList>"
         out, n = fix_pagelist_class(ncx)
         self.assertEqual(n, 1)
-        self.assertEqual(out, '<pageList class="pages"><pageTarget/></pageList>')
+        self.assertEqual(
+            out,
+            '<pageList id="bindery-pagelist" class="pages"><pageTarget/></pageList>',
+        )
+
+    def test_pagelist_id_collision_gets_a_suffix(self):
+        ncx = '<navPoint id="bindery-pagelist"/><pageList><pageTarget/></pageList>'
+        out, n = fix_pagelist_class(ncx)
+        self.assertEqual(n, 1)
+        self.assertIn('id="bindery-pagelist-2"', out)
+
+    def test_pagelist_with_existing_id_gains_only_the_class(self):
+        ncx = '<pageList id="pl"><pageTarget/></pageList>'
+        out, n = fix_pagelist_class(ncx)
+        self.assertEqual(n, 1)
+        self.assertEqual(
+            out, '<pageList class="pages" id="pl"><pageTarget/></pageList>'
+        )
 
     def test_pagelist_with_existing_class_untouched(self):
         ncx = '<pageList class="pages" id="pl"><pageTarget/></pageList>'
@@ -339,7 +360,9 @@ class TestPageMap(unittest.TestCase):
 
     def test_self_closing_pagelist(self):
         out, n = fix_pagelist_class("<pageList/>")
-        self.assertEqual((out, n), ('<pageList class="pages"/>', 1))
+        self.assertEqual(
+            (out, n), ('<pageList id="bindery-pagelist" class="pages"/>', 1)
+        )
 
     def test_opt_in_via_repair_epub(self):
         opf = (
@@ -372,7 +395,7 @@ class TestPageMap(unittest.TestCase):
                 opf_out = z.read("OEBPS/content.opf").decode()
                 ncx_out = z.read("OEBPS/toc.ncx").decode()
         self.assertNotIn("page-map", opf_out)
-        self.assertIn('<pageList class="pages">', ncx_out)
+        self.assertIn('<pageList id="bindery-pagelist" class="pages">', ncx_out)
 
 
 class TestStripEpub3Attrs(unittest.TestCase):
@@ -1696,8 +1719,14 @@ class TestPruneDanglingNcxTargets(unittest.TestCase):
 
     def test_repair_epub_prunes_and_resequences_playorder(self):
         # the issue #23 shape end to end: the dead Cover navPoint carries
-        # playOrder 1, so the survivors' values start at 2 until the
-        # contract-gated re-run heals them in the same pass
+        # the issue #23 shape end to end: the dead navPoint sits BETWEEN two
+        # live ones (playOrder 2 of 1..3), so pruning it leaves the survivors
+        # gapped ({1, 3}) and the contract-gated re-run heals the gap in the
+        # same pass. (A surviving singleton or contiguous run with a non-1
+        # base is contract-clean under the v0.62.0 base-free clause and heals
+        # nothing: the oracle polices sharing, distinctness, and gaps, never
+        # the base -- verified against epubcheck 5.3 on singleton-2, pair-2-3,
+        # and offset-5-8 shapes.)
         opf = (
             '<?xml version="1.0"?>'
             '<package xmlns="http://www.idpf.org/2007/opf" '
@@ -1707,6 +1736,7 @@ class TestPruneDanglingNcxTargets(unittest.TestCase):
             "</metadata>"
             "<manifest>"
             '<item href="a.xhtml" id="a" media-type="application/xhtml+xml"/>'
+            '<item href="b.xhtml" id="b" media-type="application/xhtml+xml"/>'
             '<item href="toc.ncx" id="ncx" media-type="application/x-dtbncx+xml"/>'
             "</manifest>"
             '<spine><itemref idref="a"/></spine>'
@@ -1720,10 +1750,12 @@ class TestPruneDanglingNcxTargets(unittest.TestCase):
             "</head>"
             "<docTitle><text>t</text></docTitle>"
             "<navMap>"
-            '<navPoint id="nav0" playOrder="1"><navLabel><text>Cover</text></navLabel>'
-            '<content src="c0.xhtml"/></navPoint>'
-            '<navPoint id="nav1" playOrder="2"><navLabel><text>A</text></navLabel>'
+            '<navPoint id="nav0" playOrder="1"><navLabel><text>A</text></navLabel>'
             '<content src="a.xhtml"/></navPoint>'
+            '<navPoint id="nav1" playOrder="2"><navLabel><text>Cover</text></navLabel>'
+            '<content src="c0.xhtml"/></navPoint>'
+            '<navPoint id="nav2" playOrder="3"><navLabel><text>B</text></navLabel>'
+            '<content src="b.xhtml"/></navPoint>'
             "</navMap></ncx>"
         )
         with tempfile.TemporaryDirectory() as td:
@@ -1737,16 +1769,25 @@ class TestPruneDanglingNcxTargets(unittest.TestCase):
                     '<html xmlns="http://www.w3.org/1999/xhtml">'
                     "<head><title>t</title></head><body><p>x</p></body></html>",
                 )
+                z.writestr(
+                    "OEBPS/b.xhtml",
+                    '<?xml version="1.0"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml">'
+                    "<head><title>b</title></head><body><p>x</p></body></html>",
+                )
                 z.writestr("OEBPS/toc.ncx", ncx)
             report = repair_epub(src, dst, RepairFlags(prune_ncx_targets=True))
             self.assertEqual(report.fixes.get("ncx_dangling_targets_pruned"), 1)
             self.assertGreater(report.fixes.get("fix_ncx_playorder", 0), 0)
             with zipfile.ZipFile(dst) as z:
                 out = z.read("OEBPS/toc.ncx").decode()
-        self.assertNotIn('id="nav0"', out)
+        self.assertNotIn('id="nav1"', out)
         self.assertNotIn("c0.xhtml", out)
-        self.assertIn('playOrder="1"', out)
-        self.assertNotIn('playOrder="2"', out)
+        # the gap healed: the dead middle slot is gone, its successor's
+        # playOrder moved down to 2
+        self.assertIn('id="nav0" playOrder="1"', out)
+        self.assertIn('id="nav2" playOrder="2"', out)
+        self.assertNotIn('playOrder="3"', out)
         ET.fromstring(out)
 
 

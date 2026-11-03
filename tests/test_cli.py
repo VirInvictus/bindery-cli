@@ -447,11 +447,11 @@ class TestStructuredFixRecord(unittest.TestCase):
         self.assertEqual(rc, 0)
         (rec,) = data["books"]
         self.assertEqual(rec["status"], "unvalidated")
-        self.assertEqual(rec["fixes"], {"fix_ncx_playorder": 1})
+        self.assertEqual(rec["fixes"], {"fix_ncx_playorder": 2})
         self.assertFalse(rec["ncx_uid_synced"])
         self.assertEqual(rec["watermark_refusals"], 0)
         # the rendered summary stays for human eyes
-        self.assertIn("fix_ncx_playorder:1", rec["summary"])
+        self.assertIn("fix_ncx_playorder:2", rec["summary"])
 
     def test_repair_json_record_carries_fix_breakdown(self):
         with tempfile.TemporaryDirectory() as td:
@@ -466,7 +466,7 @@ class TestStructuredFixRecord(unittest.TestCase):
             data = json.loads(jout.read_text())
         self.assertEqual(rc, 0)
         self.assertEqual(data["status"], "unvalidated")
-        self.assertEqual(data["fixes"], {"fix_ncx_playorder": 1})
+        self.assertEqual(data["fixes"], {"fix_ncx_playorder": 2})
         self.assertFalse(data["ncx_uid_synced"])
         self.assertEqual(data["watermark_refusals"], 0)
 
@@ -964,7 +964,7 @@ class TestApplyFailureIsolation(unittest.TestCase):
         # and must survive the apply failure (the record contract promises
         # the structured fields on every outcome)
         (rec,) = data["books"]
-        self.assertEqual(rec["fixes"], {"fix_ncx_playorder": 1})
+        self.assertEqual(rec["fixes"], {"fix_ncx_playorder": 2})
         self.assertEqual(rc, 2)
 
     def test_backup_dir_inside_library_root_is_refused(self):
@@ -1307,7 +1307,10 @@ def _phase1_book(path: Path, broken: bool, real_fix: bool = False) -> None:
     <p> that only --reserialize can repair (epubcheck fatal, audit-clean).
     `real_fix` writes a genuinely unordered NCX playOrder so the default pass
     reports a real fix (the 2026-09-12 playOrder counter fix made a clean
-    book a true noop, so tests exercising the apply path need this)."""
+    book a true noop, so tests exercising the apply path need this). Under
+    the v0.62.0 base-free contract a singleton at any value is clean, so the
+    real fix is two distinct targets sharing one value -- the distinctness
+    clause epubcheck actually polices."""
     container = (
         '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
         '<rootfiles><rootfile full-path="content.opf" '
@@ -1324,12 +1327,22 @@ def _phase1_book(path: Path, broken: bool, real_fix: bool = False) -> None:
         '</manifest><spine toc="ncx"><itemref idref="c1"/></spine></package>'
     )
     playorder_attr = 'playOrder="7"' if real_fix else 'playOrder="1"'
+    navpoints = (
+        f'<navPoint id="n1" {playorder_attr}><navLabel><text>C1</text></navLabel>'
+        '<content src="t.xhtml"/></navPoint>'
+    )
+    if real_fix:
+        # two distinct targets sharing one value: the distinctness violation
+        # the tightened contract (and epubcheck) still police
+        navpoints += (
+            '<navPoint id="n2" playOrder="7"><navLabel><text>C2</text></navLabel>'
+            '<content src="t2.xhtml"/></navPoint>'
+        )
     ncx = (
         '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
         '<head><meta name="dtb:uid" content="x"/></head>'
         "<docTitle><text>T</text></docTitle><navMap>"
-        f'<navPoint id="n1" {playorder_attr}><navLabel><text>C1</text></navLabel>'
-        '<content src="t.xhtml"/></navPoint></navMap></ncx>'
+        f"{navpoints}</navMap></ncx>"
     )
     if broken:
         body = (

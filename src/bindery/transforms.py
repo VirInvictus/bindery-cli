@@ -336,8 +336,9 @@ def drop_duplicate_xmlns(s: str) -> tuple[str, int]:
 
 # The playOrder contract epubcheck enforces (the RSC-005 playOrder findings):
 # elements whose <content src> point at the SAME target share one value,
-# distinct targets carry distinct values, and the value set is contiguous
-# 1..K across navPoint + navTarget + pageTarget elements together.
+# distinct targets carry distinct values, and the value set is one contiguous
+# run (any base; the oracle never demands it start at 1) across navPoint +
+# navTarget + pageTarget elements together.
 _PLAYORDER_EL_RE = re.compile(
     r"<(?:navPoint|navTarget|pageTarget)\b[^>]*>", re.IGNORECASE
 )
@@ -414,7 +415,12 @@ def fix_ncx_playorder(s: str) -> tuple[str, int]:
         groups.setdefault(key_of(el), []).append(el)
 
     # Contract check: every target group carries exactly one integer value,
-    # groups never share a value, and the value set is exactly 1..len(groups).
+    # groups never share a value, and the value set is one contiguous run.
+    # The run's BASE is free (v0.62.0 tightening): the 2026-11-03 observatory
+    # run measured 107 whole-library firings that renumbered 0-based runs to
+    # 1-based for zero measured change -- epubcheck 5.3 polices sharing,
+    # distinctness, and gaps (the 2026-10-24 chronomancy evidence), never the
+    # base (Age of Innocence 0..43 validates clean).
     used: set[int] = set()
     contract_ok = True
     for members in groups.values():
@@ -429,8 +435,10 @@ def fix_ncx_playorder(s: str) -> tuple[str, int]:
             contract_ok = False
             break
         used |= vals
-    if contract_ok and used == set(range(1, len(groups) + 1)):
-        return s, 0
+    if contract_ok and used and len(used) == len(groups):
+        lo = min(used)
+        if used == set(range(lo, lo + len(used))):
+            return s, 0
 
     # Violating: re-sequence by first appearance of each target.
     assigned: dict[str, int] = {}
@@ -661,25 +669,37 @@ def fix_empty_body(s: str) -> tuple[str, int]:
 
 @_outside_protected
 def fix_missing_title(s: str) -> tuple[str, int]:
-    """Inject `<title>Unknown</title>` when a document has no usable title.
+    """Fill an empty title or inject `<title>Unknown</title>` when a document
+    has no title element at all.
 
     Opt-in (--fix-missing-title): it fabricates content the author never wrote,
     so it is never part of the core pass. An existing non-empty <title> anywhere
     in the document means no-op.
+
+    The empty-title fill runs FIRST and covers both spellings -- self-closed
+    `<title/>` and the paired-empty `<title></title>` -- so the injection
+    branch never duplicates an existing element (v0.62.0: the old paired-fill
+    branch was unreachable dead code behind the no-op check, so every
+    self-closed shape fell through to injection beside the standing tag; the
+    2026-11-03 dry run measured 70 such rejections, 84 sampled docs all
+    exactly `<title/>`, each drawing RSC-005 'element "title" not allowed
+    here').
     """
     count = 0
-    if re.search(r"<title\b[^>]*>.*?</title>", s, re.IGNORECASE | re.DOTALL):
-        return s, 0
 
-    # Check for empty self-closing title
     def repl(m: re.Match) -> str:
         nonlocal count
         count += 1
         return "<title>Unknown</title>"
 
-    s, n = re.subn(r"<title\b[^>]*>\s*</title>", repl, s, flags=re.IGNORECASE)
+    s, n = re.subn(
+        r"<title\b[^>]*/>|<title\b[^>]*>\s*</title>", repl, s, flags=re.IGNORECASE
+    )
     if n > 0:
         return s, n
+
+    if re.search(r"<title\b[^>]*>.*?</title>", s, re.IGNORECASE | re.DOTALL):
+        return s, 0
 
     # No title tag at all, inject into head
     def repl_head(m: re.Match) -> str:
