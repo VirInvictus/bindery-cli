@@ -1995,15 +1995,19 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
         ),
         (
             "fix_doctype",
-            "rewrite/insert the package profile's expected DOCTYPE (HTM-004)",
-            "normalize each content document's DOCTYPE to the form epubcheck "
-            "expects for the package profile: <!DOCTYPE html> on EPUB 3, the "
-            "XHTML 1.1 public doctype on EPUB 2 (the 2026-11-03 census's two "
-            "HTM-004 shapes: EPUB3 packages carrying XHTML 1.1 doctypes, "
-            "EPUB2 packages carrying 1.0 or none). A semantically identical "
-            "declaration with different spacing is untouched, and a DOCTYPE "
-            "carrying an internal subset is left alone (the subset declares "
-            "entities; swapping it would change what the parser resolves).",
+            "replace a forbidden DOCTYPE with the profile's expected form (HTM-004)",
+            "replace each content document's DOCTYPE when it carries a public "
+            "identifier its package profile forbids: EPUB 3 requires any "
+            "DOCTYPE to be <!DOCTYPE html> (an XHTML 1.x public doctype is a "
+            "spec violation), and EPUB 2's OPS content docs are XHTML 1.1 (an "
+            "XHTML 1.0 public doctype is the census's second flagged shape). "
+            "A semantically identical declaration with different spacing is "
+            "untouched, an ABSENT DOCTYPE is legal in both profiles and left "
+            "alone (the first whole-library firing census measured insertion "
+            "flat on ~2,400 of 2,545 firing books -- it never converges, "
+            "since an equal book never applies), and a DOCTYPE carrying an "
+            "internal subset is never touched (the subset declares entities; "
+            "swapping it would change what the parser resolves).",
         ),
         (
             "prune_invalid_guide_refs",

@@ -3271,24 +3271,19 @@ class TestFixPackageVersion(unittest.TestCase):
 
 
 class TestFixDoctype(unittest.TestCase):
-    """--fix-doctype (HTM-004): the expected form is package-profile-driven,
-    matching epubcheck's own HTM-004 expectation strings (the 2026-11-03
-    triage's two shapes: EPUB3 packages carrying XHTML 1.1 doctypes, EPUB2
-    packages carrying XHTML 1.0 or none)."""
+    """--fix-doctype (HTM-004): only a PRESENT-but-forbidden declaration
+    fires -- EPUB 3 requires any DOCTYPE to be <!DOCTYPE html>, and EPUB
+    2's OPS content docs are XHTML 1.1, so an XHTML 1.x public doctype in
+    the other profile is the census's two flagged shapes. An ABSENT
+    DOCTYPE is legal in both profiles and the oracle tolerates it: the
+    first whole-library firing census measured insertion flat on ~2,400
+    of 2,545 firing books (never converging, since an equal book never
+    applies), so insertion was removed before release."""
 
     XHTML11 = (
         '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" '
         '"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
     )
-
-    def test_epub2_missing_doctype_is_inserted_after_the_xml_decl(self):
-        text = '<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml"></html>'
-        out, n = fix_doctype(text, 2)
-        self.assertEqual(n, 1)
-        self.assertTrue(
-            out.startswith('<?xml version="1.0" encoding="utf-8"?>\n' + self.XHTML11)
-        )
-        self.assertIn("</html>", out)
 
     def test_epub2_wrong_doctype_is_replaced(self):
         text = (
@@ -3306,11 +3301,22 @@ class TestFixDoctype(unittest.TestCase):
         self.assertEqual(n, 1)
         self.assertTrue(out.startswith("<!DOCTYPE html>\n<html>"))
 
-    def test_epub3_missing_doctype_is_inserted(self):
-        text = "<html></html>"
+    def test_epub3_xhtml10_doctype_is_also_forbidden(self):
+        text = (
+            '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" '
+            '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">\n'
+            "<html></html>"
+        )
         out, n = fix_doctype(text, 3)
         self.assertEqual(n, 1)
         self.assertTrue(out.startswith("<!DOCTYPE html>\n<html>"))
+
+    def test_missing_doctype_is_a_noop(self):
+        # legal in both profiles; the oracle tolerates it and insertion
+        # measured flat on the whole first firing census
+        text = '<?xml version="1.0" encoding="utf-8"?>\n<html></html>'
+        self.assertEqual(fix_doctype(text, 2), (text, 0))
+        self.assertEqual(fix_doctype(text, 3), (text, 0))
 
     def test_matching_doctype_is_a_noop(self):
         text = f"{self.XHTML11}\n<html></html>"
@@ -3328,7 +3334,7 @@ class TestFixDoctype(unittest.TestCase):
         self.assertEqual(fix_doctype(text, 2), (text, 0))
 
     def test_unknown_version_licenses_nothing(self):
-        text = "<html></html>"
+        text = f"{self.XHTML11}\n<html></html>"
         self.assertEqual(fix_doctype(text, None), (text, 0))
 
 
@@ -3525,10 +3531,11 @@ class TestFlagPackageVersionEndToEnd(unittest.TestCase):
 
 
 class TestFlagDoctypeEndToEnd(unittest.TestCase):
-    """--fix-doctype through the real repair: an EPUB2 doc with no DOCTYPE
-    gains the XHTML 1.1 declaration, keyed off the package version."""
+    """--fix-doctype through the real repair: an EPUB2 doc carrying the
+    forbidden XHTML 1.0 Strict declaration gains the XHTML 1.1 one, keyed
+    off the package version."""
 
-    def test_repair_epub_inserts_the_epub2_doctype(self):
+    def test_repair_epub_replaces_the_epub2_doctype(self):
         opf = (
             '<?xml version="1.0"?>'
             '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
@@ -3541,6 +3548,8 @@ class TestFlagDoctypeEndToEnd(unittest.TestCase):
         )
         doc = (
             '<?xml version="1.0" encoding="utf-8"?>'
+            '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" '
+            '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">'
             '<html xmlns="http://www.w3.org/1999/xhtml">'
             "<head><title>t</title></head><body><p>x</p></body></html>"
         )
@@ -3555,6 +3564,7 @@ class TestFlagDoctypeEndToEnd(unittest.TestCase):
             with zipfile.ZipFile(d) as z:
                 out = z.read("OEBPS/c1.xhtml").decode()
         self.assertIn('"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"', out)
+        self.assertNotIn("XHTML 1.0 Strict", out)
 
 
 class TestFlagGuidePruneEndToEnd(unittest.TestCase):

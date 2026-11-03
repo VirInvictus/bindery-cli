@@ -437,7 +437,6 @@ _XHTML11_DOCTYPE = (
     '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" '
     '"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
 )
-_XML_DECL_END_RE = re.compile(r"^\s*<\?xml[^>]*\?>")
 
 
 def _scan_doctype_span(text: str) -> tuple[int, int] | None:
@@ -462,26 +461,35 @@ def _scan_doctype_span(text: str) -> tuple[int, int] | None:
 
 
 def fix_doctype(text: str, major: int | None) -> tuple[str, int]:
-    """Normalize one content document's DOCTYPE to its package profile's
-    expected form, inserting it when absent (the HTM-004 repair).
+    """Replace one content document's DOCTYPE when it carries a public
+    identifier its package profile forbids (the HTM-004 repair).
 
-    EPUB3 (major >= 3) expects ``<!DOCTYPE html>``; EPUB2 expects the XHTML
-    1.1 public doctype. Whitespace-normalized equality decides no-op, so a
-    differently spaced but semantically identical declaration is untouched.
-    An existing DOCTYPE carrying an internal subset is left alone (the
-    subset declares entities; replacing it changes what the parser
-    resolves). An unknown package version licenses nothing.
+    EPUB 3 requires any DOCTYPE to be ``<!DOCTYPE html>`` -- an XHTML 1.x
+    public doctype on an EPUB3 document is a spec violation and an oracle
+    finding. EPUB 2's OPS content docs are XHTML 1.1; an XHTML 1.0 public
+    doctype there is the census's second flagged shape (Hound of the
+    Baskervilles: found 1.0 Strict, expected XHTML 1.1). Whitespace-
+    normalized equality decides no-op, and an internal subset is left
+    alone (the subset declares entities; replacing it changes what the
+    parser resolves). An unknown package version licenses nothing.
+
+    An ABSENT doctype is deliberately not filled in (v0.62.0 tightening,
+    after the first whole-library firing census): a missing DOCTYPE is
+    legal in both profiles and epubcheck tolerates it -- the census's
+    found-"" carriers are a minority the oracle flags for its own reasons
+    no byte predicate can predict -- so insertion measured flat on ~2,400
+    of the 2,545 books the first firing swept, never converged (an equal
+    book never applies, so every future sweep refired), and risked
+    unmasking by licensing the strict DTD on docs that parsed loosely.
+    Fires only where the declaration exists and is wrong.
     """
     if major is None:
         return text, 0
     expected = "<!DOCTYPE html>" if major >= 3 else _XHTML11_DOCTYPE
     span = _scan_doctype_span(text)
     if span is None:
-        decl = _XML_DECL_END_RE.search(text)
-        if decl is not None:
-            cut = decl.end()
-            return f"{text[:cut]}\n{expected}{text[cut:]}", 1
-        return f"{expected}\n{text}", 1
+        # absent: legal in both profiles; see the docstring
+        return text, 0
     start, end = span
     existing = text[start:end]
     if " ".join(existing.split()) == " ".join(expected.split()):
