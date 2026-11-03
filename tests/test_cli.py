@@ -160,6 +160,39 @@ class TestLibrarySurvivesCorruptEpub(unittest.TestCase):
         self.assertIn("cannot read", err.getvalue())
 
 
+class TestLibrarySurvivesUnexpectedCrash(unittest.TestCase):
+    def test_sweep_converts_a_crashing_book_to_an_error_verdict(self):
+        # v0.61.1's crash guard: an unexpected exception inside the per-book
+        # repair used to escape as a run-killing traceback (the 2026-11-03
+        # hex-ref href crash cost a whole-library --all sweep its report).
+        # One book's bug is that book's error verdict, not the run's.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            crasher = root / "Author" / "Crash (1)" / "crash.epub"
+            crasher.parent.mkdir(parents=True)
+            build(crasher)
+            good = root / "Author" / "Book (2)" / "book.epub"
+            good.parent.mkdir(parents=True)
+            build(good)
+            real = process_book
+
+            def flaky(src, *a, **k):
+                if src.name == "crash.epub":
+                    raise ValueError("int('x2013', 16)")
+                return real(src, *a, **k)
+
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("bindery.cli.process_book", side_effect=flaky),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                rc = main(["library", td, "--no-validate"])
+        self.assertEqual(rc, 2)
+        self.assertIn("crash (ValueError)", out.getvalue())
+        self.assertIn("ACCEPT", out.getvalue())
+
+
 class TestRepairPartialLabel(unittest.TestCase):
     def test_partial_output_is_labeled_not_repaired(self):
         # The file is worth writing (fewer fatals), but the old "repaired:" line read

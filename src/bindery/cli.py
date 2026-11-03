@@ -843,6 +843,26 @@ def run_library(args) -> int:
                 )
                 tqdm.write(f"  ERROR   {rel}\n            unreadable ({reason}): {e}")
                 continue
+            except Exception as e:
+                # The crash guard (v0.61.1): an unexpected per-book exception (a
+                # transform meeting an input shape no test imagined) used to
+                # escape as a run-killing traceback that cost a multi-hour sweep
+                # its whole report (the 2026-11-03 hex-ref href crash). One
+                # book's bug is that book's error verdict, not the run's.
+                errors += 1
+                records.append(
+                    Outcome(
+                        epub,
+                        "error",
+                        None,
+                        None,
+                        f"crash ({type(e).__name__}): {e}; not applied",
+                    )
+                )
+                tqdm.write(
+                    f"  ERROR   {rel}\n            crash ({type(e).__name__}): {e}; not applied"
+                )
+                continue
             records.append(o)
             if o.status == "nochange":
                 nochange += 1
