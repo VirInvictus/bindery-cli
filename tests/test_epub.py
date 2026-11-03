@@ -10,7 +10,9 @@ from xml.etree import ElementTree as ET
 
 from bindery.epub import (
     RepairFlags,
+    _decode_numeric_refs,
     _locate_opf,
+    _resolve_href,
     collect_undeclared_resources,
     declare_missing_manifest_items,
     downgrade_epub3_tags,
@@ -24,6 +26,7 @@ from bindery.epub import (
     package_version,
     repair_epub,
     strip_epub3_attributes,
+    strip_missing_file_hrefs,
     strip_ncx_dangling_targets,
     strip_page_map,
     sync_ncx_uid,
@@ -3142,3 +3145,40 @@ class TestUnboundPrefix(unittest.TestCase):
             src, dst = self._build_embed_scar(td)
             report = repair_epub(src, dst)
         self.assertNotIn("unbound_prefixes_bound", report.fixes)
+
+
+class TestNumericRefHrefDecode(unittest.TestCase):
+    """The hex branch of the issue #20 decode: the regex captured the x into
+    the digits group and int('x2013', 16) raised ValueError on the first href
+    carrying &#x2013;, killing the whole-library --all sweep (2026-11-03; 36
+    hrefs across 5 books, every one an external URL the decode reaches before
+    the scheme check). XML spells hex refs with a lowercase x only; the regex
+    was right, the int call ate the x."""
+
+    def test_hex_ref_decodes(self):
+        self.assertEqual(_decode_numeric_refs("8&#x2013;5-million"), "8–5-million")
+
+    def test_decimal_ref_unchanged(self):
+        self.assertEqual(_decode_numeric_refs("K&#38;C.png"), "K&C.png")
+
+    def test_out_of_range_ref_stays_encoded(self):
+        self.assertEqual(_decode_numeric_refs("a&#x110000;b"), "a&#x110000;b")
+
+    def test_internal_hex_ref_href_resolves_to_its_entry(self):
+        # the issue #20 contract extended to hex: href="a&#x2013;b.xhtml"
+        # names the raw entry a–b.xhtml
+        self.assertEqual(_resolve_href("OEBPS", "a&#x2013;b.xhtml"), "OEBPS/a–b.xhtml")
+
+    def test_external_hex_ref_href_survives_the_anchor_prune(self):
+        # the crash shape end-to-end: an <a> href carrying &#x2013; (an
+        # external URL) went through _resolve_href inside
+        # strip_missing_file_hrefs and raised, killing the sweep
+        text = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>'
+            '<a href="http://techcrunch.com/2011/02/01kleiner-perkins-leads'
+            '-8&#x2013;5-million-round-for-path/">x</a>'
+            "</p></body></html>"
+        )
+        out, n = strip_missing_file_hrefs(text, "OEBPS", frozenset({"OEBPS/c1.xhtml"}))
+        self.assertEqual(n, 0)
+        self.assertEqual(out, text)

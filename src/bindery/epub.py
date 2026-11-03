@@ -753,7 +753,10 @@ def _decode_numeric_refs(s: str) -> str:
 
     def repl(m: re.Match) -> str:
         digits = m.group(1)
-        cp = int(digits, 16 if digits[0] in "xX" else 10)
+        # The hex alternative captures its lowercase x (XML's only spelling):
+        # strip it here. Feeding it to int() raised ValueError on the first
+        # href carrying &#x2013; and killed the whole-library sweep (2026-11-03).
+        cp = int(digits[1:], 16) if digits[0] in "xX" else int(digits, 10)
         return chr(cp) if 0 < cp <= 0x10FFFF else m.group(0)
 
     return _NUMERIC_REF_RE.sub(repl, s)
