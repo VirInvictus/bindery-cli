@@ -675,3 +675,24 @@ rejection is package-profile-driven, not DOCTYPE-driven (7 EPUB3 packages
 carrying XHTML 1.1 doctypes: zero attribute findings; every role/
 aria-hidden carrier is version="2.0"), so `package_version()` gating is
 correct as built and only the set grew (`role`, `aria-hidden`).
+
+## The Wandering Inn shells: documented, detected, handled manually (2026-11-04)
+
+The two Pirateaba serial compilations (Book 18, Book 19) are the library's
+RSC-001 mass: 738 and 736 of their 755/752 manifest items name files the
+archive never carried (98% of the manifest; verified by content walk, NOT a
+spelling mismatch — the 2026-10-25 "different spelling" hypothesis is
+falsified for these two). The archive is a shell: the converter wrote the
+series-wide manifest and shipped a sliver. The spine guard was CORRECT to
+refuse — a repair cannot fabricate 738 files, and dropping the dead spine
+positions would remove the errors from the measurement while the reader
+loses nothing it ever had. Brandon's ruling: these are the best copies
+available; handle manually, document the signature, detect future shells.
+
+The detector ships as the audit battery's `shell` analyzer (v0.63.0):
+spine-missing fraction at or over 50% reads `SHELL: re-source, never
+repair`, advisory by contract. Live: `bindery audit all --id 8889` names
+the shell. Known display quirk: the percentage divides by the RESOLVED
+spine count (14), not resolved+missing (752), so shells read over 100%
+— cosmetic, the verdict fires correctly. Manual handling pending:
+re-source both books when a better copy surfaces.
