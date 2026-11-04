@@ -70,6 +70,9 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
       gate refuses a book that is otherwise repaired. Needs the same
       entry-and-reference coordination as the space renames, with the
       decode-before-lookup epubcheck rule verified per character class.
+      *v0.63.0 narrowed this: `--encode-ref-brackets` ships the bracket
+      slice (the decode-before-lookup rule verified for `%5B`/`%5D`); the
+      comma and remaining classes stay open.*
       *(Narrowed v0.58.0: renamed references now percent-encode `[`/`]`
       (issue #19), so a book whose bracket-named entries carry spaces
       repairs cleanly. The no-rename shape remains: entries with brackets
