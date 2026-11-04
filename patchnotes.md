@@ -1,5 +1,26 @@
 # bindery-cli Patch Notes
 
+## v0.63.1 (2026-11-04)
+
+### Two single-flag live-verification catches
+
+Running each v0.63.0 flag alone against its real carriers caught two
+wiring slips the --all-sized sweeps could never see:
+
+- **`--encode-ref-brackets` alone was a silent no-op**: the encode reads
+  `present` (the archive existence set), but `present` only fills when
+  one of the prune/anchors/media-types/declare/prune-NCX flags asked for
+  it -- the new flag wasn't in that guard, so the set stayed empty, every
+  reference resolved to nothing, and the flag answered "no applicable
+  fixes" on a book whose NCX carries 59 bracket srcs (The Given Day:
+  `Dennis_Lehane_-_The_Given_Day_[html]_split_000.html`). The guard now
+  includes the flag; the live apply encodes 59 NCX srcs, zero raw left.
+- **The audit CLI's `--only` choices lacked `shell`**: the analyzer
+  shipped in v0.63.0 but `bindery audit --only shell` died at argparse
+  (invalid choice). The choice is registered.
+
+Suite: 913 tests.
+
 ## v0.63.0 (2026-11-04)
 
 ### The harvest census: two new flags, the id scope, and the shell detector

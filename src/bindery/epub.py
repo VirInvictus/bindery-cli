@@ -2531,6 +2531,7 @@ def repair_epub(
             or flags.fix_media_types
             or flags.declare_missing
             or flags.prune_ncx_targets
+            or flags.encode_ref_brackets
         ):
             for n in zin.namelist():
                 norm_to_raw.setdefault(_norm_path(space_renames.get(n, n)), n)

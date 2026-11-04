@@ -2484,6 +2484,7 @@ def build_parser() -> argparse.ArgumentParser:
             "cover",
             "tocdrift",
             "contamination",
+            "shell",
             "all",
         ),
         help="which audit to run",
