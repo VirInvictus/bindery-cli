@@ -1,5 +1,37 @@
 # bindery-cli Patch Notes
 
+## v0.62.1 (2026-11-04)
+
+### --fix-double-colon-tags: the pseudo-tag escape, and the last fatal's repair
+
+An XML name can carry at most one colon (the QName production is
+`(NCName ':')? NCName`), so a pseudo-tag whose name contains `::` is
+never markup -- every occurrence is unescaped author text, and the
+parser dies on it with a fatal RSC-016. The Book of Debugging's C++
+code samples carried exactly that: `std::vector<std::shared_ptr>` with
+the template's closing bracket escaped as `&gt;` but the pseudo-tag
+itself raw, at `EPUB/xhtml/part3.xhtml:399`. It was the library's one
+remaining fatal after the 2026-11-03 wave.
+
+The new opt-in flag escapes both ends of the construct, restoring
+exactly the text the author wrote. Real markup is unreachable by
+construction: the double colon lives in the name grammar itself, so no
+legal tag can match, and prose comparisons (`a < b`) never form the
+shape. Nested templates escape inner-first until stable, and the
+trailing `>`s of a fully-escaped nesting stay raw -- legal text that
+renders as `>`. Live on the facility specimen: `1f/15e/0w -> 0f/14e/0w`,
+the gate accepts, and the book opens again. The unmasked residue
+(the OPF-030/048 uid-empty family, the XHTML 1.1 strictness findings
+the fatal was masking, and the `<int>`/`<dbghelp.h>` header-name
+pseudo-tags, which are legal QNames and ride the content-model lane
+rather than this one) is the manual list the observatory tracks.
+
+Also closes a spec.md drift the release audit noted: the four v0.62.0
+flags join the structural-repairs inventory (now thirty) and this flag
+joins the safe opt-ins (now five).
+
+Suite: 887 tests.
+
 ## v0.62.0 (2026-11-03)
 
 ### The observatory batch: three predicate repairs and four new flags
