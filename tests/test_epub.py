@@ -17,6 +17,8 @@ from bindery.epub import (
     collect_undeclared_resources,
     declare_missing_manifest_items,
     downgrade_epub3_tags,
+    encode_bracket_refs,
+    encode_bracket_refs_css,
     fix_doctype,
     fix_manifest_ids,
     fix_manifest_item_properties,
@@ -34,6 +36,7 @@ from bindery.epub import (
     strip_missing_file_hrefs,
     strip_ncx_dangling_targets,
     strip_page_map,
+    strip_presentational_attrs,
     sync_ncx_uid,
 )
 
@@ -3709,3 +3712,97 @@ class TestItemPropertiesInsertionBranch(unittest.TestCase):
     def test_doctype_unterminated_declaration_is_left_alone(self):
         text = "<!DOCTYPE html\n<html></html>"
         self.assertEqual(fix_doctype(text, 2), (text, 0))
+
+
+class TestStripPresentationalAttrs(unittest.TestCase):
+    """--strip-presentational-attrs (the 2026-11-04 census's largest
+    attribute family): deprecated presentational hints stripped from real
+    start tags, element-scoped where the name is legal elsewhere, and the
+    honest caveat that readers honoring the hints render differently."""
+
+    def test_element_agnostic_family_is_stripped(self):
+        doc = (
+            '<html><body><table border="1" bgcolor="#fff" align="center">'
+            '<td valign="top" hspace="2" vspace="3" compact="compact">x</td>'
+            "</table></body></html>"
+        )
+        out, n = strip_presentational_attrs(doc)
+        # attribute-counted (strip_epub3_attributes' convention)
+        self.assertEqual(n, 7)
+        self.assertNotIn("border=", out)
+        self.assertNotIn("bgcolor=", out)
+        self.assertNotIn("align=", out)
+        self.assertNotIn("valign=", out)
+        self.assertNotIn("compact", out)
+
+    def test_body_color_family_is_body_scoped(self):
+        doc = (
+            '<html><body link="#00f" vlink="#f0f" alink="#ff0" text="#000">'
+            "<p>x</p></body></html>"
+        )
+        out, n = strip_presentational_attrs(doc)
+        self.assertEqual(n, 4)
+        self.assertNotIn("link=", out)
+        self.assertNotIn("vlink=", out)
+
+    def test_link_attr_off_body_survives(self):
+        # `link` on anything but <body> is a different attribute class
+        doc = "<html><body><p><link>z</link></p></body></html>"
+        self.assertEqual(strip_presentational_attrs(doc), (doc, 0))
+
+    def test_list_type_is_stripped_but_style_type_survives(self):
+        doc = (
+            '<html><head><style type="text/css"></style></head><body>'
+            '<ol type="1"><li>x</li></ol></body></html>'
+        )
+        out, n = strip_presentational_attrs(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('<style type="text/css">', out)
+        self.assertNotIn("<ol type=", out)
+
+    def test_amazon_junk_is_stripped(self):
+        doc = '<html><body><p data-AmznRemoved="y" data-AmznRemoved-M8="z">x</p></body></html>'
+        out, n = strip_presentational_attrs(doc)
+        self.assertEqual(n, 2)
+        self.assertNotIn("data-AmznRemoved", out)
+
+    def test_prose_mentions_survive(self):
+        doc = "<p>the align=&quot;center&quot; hint is deprecated</p>"
+        self.assertEqual(strip_presentational_attrs(doc), (doc, 0))
+
+
+class TestEncodeRefBrackets(unittest.TestCase):
+    """--encode-ref-brackets: raw [ ] in the PATH portion of internal
+    references whose target exists are percent-encoded (the issue #19
+    mechanism); fragments and queries are untouched; entry names stay raw."""
+
+    def test_path_brackets_encode(self):
+        doc = '<html><body><a href="x[1].html#frag">x</a></body></html>'
+        out, n = encode_bracket_refs(doc, "", frozenset({"x[1].html"}))
+        self.assertEqual(n, 1)
+        self.assertIn('href="x%5B1%5D.html#frag"', out)
+
+    def test_fragment_brackets_stay_raw(self):
+        # a clean path with brackets only in the fragment is not an
+        # RSC-020 finding: nothing encodes, nothing counts
+        doc = '<html><body><a href="x.html#f[1]">x</a></body></html>'
+        self.assertEqual(encode_bracket_refs(doc, "", frozenset({"x.html"})), (doc, 0))
+
+    def test_query_brackets_stay_raw(self):
+        doc = '<html><body><a href="x.html?a=[1]">x</a></body></html>'
+        self.assertEqual(encode_bracket_refs(doc, "", frozenset({"x.html"})), (doc, 0))
+
+    def test_unresolvable_target_stays(self):
+        doc = '<html><body><a href="ghost[1].html">x</a></body></html>'
+        self.assertEqual(encode_bracket_refs(doc, "", frozenset({"x.html"})), (doc, 0))
+
+    def test_external_scheme_stays(self):
+        doc = '<html><body><a href="https://e.com/a[1]">x</a></body></html>'
+        self.assertEqual(encode_bracket_refs(doc, "", frozenset()), (doc, 0))
+
+    def test_css_url_variant_encodes(self):
+        out, n = encode_bracket_refs_css(
+            "a { background: url(img[3].png) }", "", frozenset({"img[3].png"})
+        )
+        self.assertEqual(n, 1)
+        self.assertIn("url(img%5B3%5D.png)", out)

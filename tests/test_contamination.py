@@ -17,7 +17,12 @@ import unittest
 import zipfile
 
 from bindery import audit
-from bindery.audit import analyze_contamination, load_book
+from bindery.audit import (
+    _shell_dir,
+    analyze_contamination,
+    analyze_shell,
+    load_book,
+)
 
 CONTAINER = (
     '<?xml version="1.0"?><container version="1.0" '
@@ -394,3 +399,39 @@ class ContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShellAnalyzer(unittest.TestCase):
+    """The shell-book detector (the 2026-11-04 Wandering Inn diagnosis):
+    a manifest whose content hrefs mostly name files the archive never
+    carried is a re-source, and the audit now says so by name."""
+
+    def test_shell_shape_is_named(self):
+        # the Wandering Inn shape: 4 manifest items, only one file shipped
+        files = {"s1.xhtml": _doc("Chapter One")}
+        opf = _opf(
+            [
+                ("s1", "s1.xhtml"),
+                ("c2", "s2.xhtml"),
+                ("c3", "s3.xhtml"),
+                ("c4", "s4.xhtml"),
+            ],
+            "A Shell Book",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            book = load_book(_epub(tmp, opf, files))
+        r = analyze_shell(book)
+        self.assertGreaterEqual(r["missing_frac"], 0.5)
+        _p, status, lines = _shell_dir(r)
+        self.assertIn("SHELL", status)
+        self.assertIn("re-source", status)
+
+    def test_healthy_book_is_ok(self):
+        files = {"s1.xhtml": _doc("Chapter One")}
+        opf = _opf([("s1", "s1.xhtml")], "A Real Book")
+        with tempfile.TemporaryDirectory() as tmp:
+            book = load_book(_epub(tmp, opf, files))
+        r = analyze_shell(book)
+        self.assertEqual(r["missing_frac"], 0.0)
+        _p, status, _lines = _shell_dir(r)
+        self.assertEqual(status, "OK")

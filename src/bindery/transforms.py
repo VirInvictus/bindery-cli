@@ -787,10 +787,50 @@ def fix_double_colon_tags(s: str) -> tuple[str, int]:
     return s, count
 
 
+# The XML NCName check and rename scheme, shared with epub.py's manifest half
+# (`fix_manifest_ids` uses the same predicate and the same id_ base): an id
+# must be an NCName -- no colon, every char a NameChar, first char a letter
+# or underscore. The message epubcheck prints names only colons, which is
+# how the apostrophe-bearing calibre ids and the digit-led scraped shapes
+# (`<body id="0-25c...">`) hid from colon-only checks (issue #3, 2026-10-06).
+_XML_NAMECHAR_RE = re.compile(
+    r"[\w.\-\u00B7\u00C0-\u00D6\u00D8-\u00F6\u02FF-\u037D\u037F-\u1FFF\u200C\u200D\u203F-\u2040\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]+"
+)
+
+
+def _is_invalid_ncname(s: str) -> bool:
+    """True if `s` cannot be an XML id (NCName): empty, containing a colon,
+    or carrying any character outside the XML NameChar set at any position,
+    or not starting with a letter or underscore."""
+    if not s:
+        return True
+    if ":" in s:
+        return True
+    return not (s[0].isalpha() or s[0] == "_") or not _XML_NAMECHAR_RE.fullmatch(s)
+
+
+def _sanitize_ncname(old: str) -> str:
+    """The rename base for an invalid id: every character the id could not
+    keep becomes `_`. Callers that need a name-legal START add their own
+    prefix (`_plan_renames` and the content-doc half use `id_`); this
+    function deliberately does not, so the manifest scheme stays
+    single-prefixed."""
+    return "".join(ch if _XML_NAMECHAR_RE.fullmatch(ch) else "_" for ch in old)
+
+
+def _ncname_rename(old: str) -> str:
+    """The content-doc half's full rename: sanitize, then the `id_` prefix
+    when the result could not START a name (the digit-led scraped shape)."""
+    new = _sanitize_ncname(old)
+    if not (new[:1].isalpha() or new[:1] == "_"):
+        new = "id_" + new
+    return new
+
+
 @_outside_protected
 def fix_id_colons(s: str) -> tuple[str, int]:
-    """Translate illegal colons in `id="X:Y"` and matching internal `#X:Y`
-    fragments to `_`.
+    """Rename content-document `id` values that cannot be XML NCNames, and
+    sync the matching internal `#fragment` references.
 
     Opt-in (--fix-id-colons): it rewrites id-bearing attributes and internal
     fragment references, so it stays out of the core pass despite being
@@ -800,18 +840,29 @@ def fix_id_colons(s: str) -> tuple[str, int]:
     fragment is translated only in an internal reference: the fragment of an
     external URL (`http://example.com/page#sec:1`) names a position in that
     other document, so it must survive verbatim.
+
+    v0.63.0 broadened the predicate from colon-bearing to every value
+    `_is_invalid_ncname` rejects -- digit-led scraped ids
+    (`<body id="0-25c121ec...">`, apostrophe-bearing calibre ids), not just
+    colons -- with the rename base the manifest half's `_plan_renames` uses
+    (`id_` + sanitized), so both halves of a book agree. A fragment is
+    normalized by the same function when its target is internal, so the two
+    sides stay in sync whatever the defect was.
     """
     count = 0
 
     def repl_id(m: re.Match) -> str:
         nonlocal count
-        if ":" not in m.group(2):
-            return m.group(0)  # no colon, no rename, no phantom count
+        if not _is_invalid_ncname(m.group(3)):
+            return m.group(0)  # a valid NCName: no rename, no phantom count
         count += 1
-        return m.group(1) + m.group(2).replace(":", "_") + m.group(3)
+        return m.group(1) + m.group(2) + _ncname_rename(m.group(3)) + m.group(4)
 
     s, _ = re.subn(
-        r'\b(?<![\w:.-])(id\s*=\s*["\'])([^"\']+)(["\'])',
+        # the tempered value charset (issue #3's shape): an apostrophe
+        # inside a double-quoted id (`id="Lisey's_story"`) is XML-legal and
+        # NCName-invalid, and a `[^"']+` value can never hold it
+        r'\b(?<![\w:.-])(id\s*=\s*)(["\'])((?:(?!\2).)+)(\2)',
         repl_id,
         s,
         flags=re.IGNORECASE,
@@ -819,10 +870,10 @@ def fix_id_colons(s: str) -> tuple[str, int]:
 
     def repl_href(m: re.Match) -> str:
         nonlocal count
-        if ":" not in m.group(3) or _EXTERNAL_TARGET_RE.match(m.group(2)):
+        if _EXTERNAL_TARGET_RE.match(m.group(2)) or not _is_invalid_ncname(m.group(3)):
             return m.group(0)
         count += 1
-        return m.group(1) + m.group(2) + "#" + m.group(3).replace(":", "_") + m.group(4)
+        return m.group(1) + m.group(2) + "#" + _ncname_rename(m.group(3)) + m.group(4)
 
     s, n2 = re.subn(
         r'\b(href\s*=\s*["\'])([^"#]*?)#([^"\']+)(["\'])',
@@ -1509,3 +1560,65 @@ def strip_broken_tags(text: str) -> tuple[str, int]:
     leaked-looking fragment inside either is literal text, not markup.
     """
     return _BROKEN_TAGS_RE.subn("", text)
+
+
+# --strip-presentational-attrs: the 2026-11-04 family census's largest
+# attribute slice. Every member is a deprecated presentational hint the
+# XHTML 1.1 DTD rejects wherever it appears (align/valign/border/bgcolor/
+# vspace/hspace/compact are element-agnostic presentation; the Amazon
+# data-AmznRemoved family is scraper junk). Two members are ELEMENT-SCOPED
+# because their names are legal elsewhere: body's link/vlink/alink/text/
+# background color family (a `link` attribute on anything but <body> is a
+# different beast), and type on the list elements (legal -- and load-bearing
+# -- on <style>/<link>/<script>). HONEST CAVEAT, Brandon-approved 2026-11-04:
+# these are presentational hints, and readers that honor them (bgcolor
+# colors, align centers) render differently after the strip. Opt-in for
+# exactly that reason; the gate measures the RSC-005 decrease.
+_PRESENTATIONAL_BARE_RE = re.compile(
+    r"""\s+(?:align|valign|border|bgcolor|vspace|hspace|compact)=(?:"[^"]*"|'[^']*')"""
+)
+_PRESENTATIONAL_BODY_RE = re.compile(
+    r"""\s+(?:link|vlink|alink|text|background)=(?:"[^"]*"|'[^']*')"""
+)
+_PRESENTATIONAL_LIST_TYPE_RE = re.compile(r"""\s+type=(?:"[^"]*"|'[^']*')""")
+_AMZN_JUNK_ATTR_RE = re.compile(
+    r"""\s+data-AmznRemoved(?:-[^\s=]+)?=(?:"[^"]*"|'[^']*')"""
+)
+
+
+@_outside_protected
+def strip_presentational_attrs(s: str) -> tuple[str, int]:
+    """Strip the deprecated presentational attributes (the 2026-11-04
+    census's largest attribute family) from real start tags, plus the
+    body-scoped color family on `<body>` and the marker-style `type` on
+    list elements. See the set block above for the honesty note."""
+    count = 0
+
+    def scrub(m: re.Match) -> str:
+        nonlocal count
+        tag = m.group(0)
+        em = re.match(r"<([A-Za-z][\w.-]*)", tag)
+        el = em.group(1).lower() if em else ""
+        # attribute-counted (strip_epub3_attributes' convention): subn's
+        # second return is the per-tag attribute drop, never the tag itself
+        dropped = 0
+        tag, k = _PRESENTATIONAL_BARE_RE.subn("", tag)
+        dropped += k
+        tag, k = _AMZN_JUNK_ATTR_RE.subn("", tag)
+        dropped += k
+        if el == "body":
+            tag, k = _PRESENTATIONAL_BODY_RE.subn("", tag)
+            dropped += k
+        elif el in ("ol", "ul", "li"):
+            tag, k = _PRESENTATIONAL_LIST_TYPE_RE.subn("", tag)
+            dropped += k
+        count += dropped
+        return tag
+
+    def run(t: str) -> tuple[str, int]:
+        before = count
+        # the delta, not the cumulative: outside_protected_map sums every
+        # segment's return
+        return _START_TAG_RE.sub(scrub, t), count - before
+
+    return outside_protected_map(s, run)

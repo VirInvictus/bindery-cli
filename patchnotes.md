@@ -1,5 +1,55 @@
 # bindery-cli Patch Notes
 
+## v0.63.0 (2026-11-04)
+
+### The harvest census: two new flags, the id scope, and the shell detector
+
+The 2026-11-04 dig asked the honest question about the remaining 14,109
+error mass, and the answer was: not entirely the floor. A stratified
+family census over the RSC-005 carriers plus live diagnosis of the
+RSC-001/RSC-020 populations surfaced three repairable lanes, built here
+with the specimen-first discipline:
+
+- **`--strip-presentational-attrs`** (the census's largest attribute
+  family): strips the deprecated presentational hints the XHTML 1.1 DTD
+  rejects wherever they appear -- `align`, `valign`, `border`, `bgcolor`,
+  `vspace`, `hspace`, `compact`; body's `link`/`vlink`/`alink`/`text`/
+  `background` (body-scoped; `link` on anything but `<body>` survives);
+  `type` on list elements (`style`/`link`/`script` keep theirs); the
+  Amazon `data-AmznRemoved` scraper junk. HONEST CAVEAT (Brandon-approved
+  2026-11-04): these are presentational hints, and readers that honor
+  them render differently after the strip.
+- **`--encode-ref-brackets`** (RSC-020's 59-book bracket lane, 1,439
+  messages): percent-encodes raw `[`/`]` in the PATH portion of internal
+  references whose target exists -- the issue #19 mechanism
+  (`encode-url-spaces` only does it while renaming space-bearing entries,
+  so brackets without spaces were uncovered). Fragments and queries stay
+  raw, entry names stay raw, external and unresolvable references stay as
+  written; runs on content documents, the OPF, the NCX, and stylesheet
+  `url()` tokens.
+- **`--fix-id-colons` broadened**: the predicate goes from colon-bearing
+  to every value `_is_invalid_ncname` rejects -- digit-led scraped ids
+  (`<body id="0-25c121ec...">`, the census's 72-location family),
+  apostrophe-bearing calibre ids (whose content-doc half could never hold
+  the apostrophe: the value charset `[^"']+` was the issue #3 blind spot
+  again; the matcher is the tempered pattern now). The rename base is the
+  manifest scheme's (`id_` + sanitized), fragments sync, and the NCX half
+  (`fix_ncx_src_fragments`) broadens identically.
+- **The audit battery gains the `shell` analyzer** (the Wandering Inn
+  detector, advisory by contract): the fraction of spine positions whose
+  files the archive never carried -- 738/752 and 736/752 on the two
+  shells -- at or over 50% reads SHELL: re-source, never repair. The
+  manual handling of the two shells (Brandon re-sources; the spine guard
+  was CORRECT to refuse) is documented in OBSERVE-RESEARCH.md and the
+  report.
+
+Also moved: the XML NCName check and sanitize scheme now live in
+transforms.py (the vendored base), shared by the manifest half and the
+broadened content-doc half; `_sanitize_ncname` stays prefix-free with the
+prefix in the callers, so the manifest scheme is single-prefixed.
+
+Suite: 913 tests.
+
 ## v0.62.2 (2026-11-04)
 
 ### The review batch: the insert-branch fix and the inventories, closed

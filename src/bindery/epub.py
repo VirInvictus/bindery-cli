@@ -33,6 +33,8 @@ from .transforms import (
     _STYLE_BLOCK_RE,
     HTML_TRANSFORMS,
     XML_TRANSFORMS,
+    _is_invalid_ncname,
+    _sanitize_ncname,
     add_img_alt,
     apply_transforms,
     css_protected_tags,
@@ -57,6 +59,7 @@ from .transforms import (
     strip_broken_tags,
     strip_invalid_attributes,
     strip_invalid_value,
+    strip_presentational_attrs,
     style_block_tags,
     unwrap_block_in_inline,
     unwrap_illegal_tags,
@@ -111,36 +114,6 @@ def _locate_opf(z: zipfile.ZipFile) -> str | None:
     if m and _xml_unescape(m.group(2), _XML_ATTR_ENTITIES) in z.namelist():
         return _xml_unescape(m.group(2), _XML_ATTR_ENTITIES)
     return next((n for n in z.namelist() if n.lower().endswith(".opf")), None)
-
-
-# XML NameChar, one char, XSD NCName-shaped: \w covers the letter/digit/
-# underscore scripts, then the name punctuation XML allows. Colons are
-# deliberately absent: an id must be an NCName (no colons), which the
-# dedicated check below keeps.
-_XML_NAMECHAR_RE = re.compile(
-    r"[\w.\-\u00B7\u00C0-\u00D6\u00D8-\u00F6\u02FF-\u037D\u037F-\u1FFF\u200C\u200D\u203F-\u2040\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]+"
-)
-
-
-def _is_invalid_ncname(s: str) -> bool:
-    """True if `s` cannot be an XML id (NCName): empty, containing a colon,
-    or carrying any character outside the XML NameChar set at any position.
-    This is what epubcheck flags as RSC-005 'must be an XML name' — and its
-    message names only colons, which is how the apostrophe-bearing calibre
-    ids (`Stephen_King_-_Lisey's_story22`) hid from the original
-    empty/colon/leading-char check (issue #3, 2026-10-06)."""
-    if not s:
-        return True
-    if ":" in s:
-        return True
-    return not (s[0].isalpha() or s[0] == "_") or not _XML_NAMECHAR_RE.fullmatch(s)
-
-
-def _sanitize_ncname(old: str) -> str:
-    """The rename base for an invalid id: every character the id could not
-    keep (colon, apostrophe, space, ...) becomes `_`. \\w keeps valid
-    script letters and digits, so only genuine defects are rewritten."""
-    return re.sub(r"[^\w.-]", "_", old)
 
 
 def _plan_renames(existing: set[str]) -> dict[str, str]:
@@ -310,6 +283,8 @@ class RepairFlags:
     prune_guide_refs: bool = False
     item_properties: bool = False
     double_colon_tags: bool = False
+    presentational_attrs: bool = False
+    encode_ref_brackets: bool = False
 
 
 @dataclass
@@ -2782,6 +2757,12 @@ def repair_epub(
                     text, n = fix_pagelist_class(text)
                     if n:
                         counts["pagelist_class_added"] = n
+                if flags.encode_ref_brackets:
+                    text, n = encode_bracket_refs(
+                        text, posixpath.dirname(name), present
+                    )
+                    if n:
+                        counts["bracket_refs_encoded"] = n
                 if space_renames:
                     text, n = rewrite_space_renames(
                         text,
@@ -2981,6 +2962,13 @@ def repair_epub(
                     if n:
                         report.add({"fix_comment_double_hyphen": n})
                         opf_changed = True
+                if flags.encode_ref_brackets:
+                    text, n = encode_bracket_refs(
+                        text, posixpath.dirname(name), present
+                    )
+                    if n:
+                        report.add({"bracket_refs_encoded": n})
+                        opf_changed = True
                 if space_renames:
                     text, n = rewrite_space_renames(
                         text,
@@ -3069,6 +3057,10 @@ def repair_epub(
                     text, n = strip_epub3_attributes(text)
                     if n:
                         counts["epub3_attrs_stripped"] = n
+                if flags.presentational_attrs:
+                    text, n = strip_presentational_attrs(text)
+                    if n:
+                        counts["presentational_attrs_stripped"] = n
                 if flags.downgrade_epub3:
                     protected = downgrade_css_tags | style_block_tags(
                         text, tags=tuple(EPUB3_DOWNGRADE_TAGS)
@@ -3127,6 +3119,12 @@ def repair_epub(
                     text, n = strip_pagination_doc(text, runheads, delete_layer)
                     if n:
                         counts["stripped_pagination"] = n
+                if flags.encode_ref_brackets:
+                    text, n = encode_bracket_refs(
+                        text, posixpath.dirname(name), present
+                    )
+                    if n:
+                        counts["bracket_refs_encoded"] = n
                 if space_renames:
                     text, n = rewrite_space_renames(
                         text,
@@ -3178,24 +3176,122 @@ def repair_epub(
                         report.add({"fix_svg_dup_ids": n})
                         report.files_changed += 1
                         data = svg_text.encode("utf-8")
-            elif low.endswith((".css", ".xpgt")) and space_renames:
+            elif low.endswith((".css", ".xpgt")) and (
+                space_renames or flags.encode_ref_brackets
+            ):
                 # Stylesheets pass through the rewrite too: a url() that
                 # resolved against a raw-space entry would dangle the
-                # moment that entry is written under its new spelling.
-                # UTF-8 was verified for every document when the renames
-                # were licensed.
+                # moment that entry is written under its new spelling,
+                # and the bracket encode covers the path-segment brackets
+                # the attribute-level pass covers in markup. UTF-8 was
+                # verified for every document when the renames were
+                # licensed; the bracket encode decodes no entities, so it
+                # runs on the decoded text only.
                 text = data.decode("utf-8")
-                text, n = rewrite_space_renames_css(
-                    text,
-                    posixpath.dirname(name),
-                    posixpath.dirname(out_item.filename),
-                    space_resolved,
-                )
-                if n:
-                    report.add({"renamed_refs_rewritten": n})
-                    report.files_changed += 1
+                if flags.encode_ref_brackets:
+                    text, n = encode_bracket_refs_css(
+                        text, posixpath.dirname(name), present
+                    )
+                    if n:
+                        report.add({"bracket_refs_encoded": n})
+                        report.files_changed += 1
+                if space_renames:
+                    text, n = rewrite_space_renames_css(
+                        text,
+                        posixpath.dirname(name),
+                        posixpath.dirname(out_item.filename),
+                        space_resolved,
+                    )
+                    if n:
+                        report.add({"renamed_refs_rewritten": n})
+                    data = text.encode("utf-8")
+                elif data is not None:
                     data = text.encode("utf-8")
 
             zout.writestr(out_item, data, compress_type=item.compress_type)
 
     return report
+
+
+def encode_bracket_refs(
+    text: str, lookup_dir: str, present: frozenset[str] | set[str]
+) -> tuple[str, int]:
+    """Percent-encode raw ``[``/``]`` in the PATH portion of internal src/href
+    references whose archive target exists with the raw brackets (RSC-020
+    'Illegal character in path segment'). The issue #19 mechanism: epubcheck
+    decodes references before entry lookup, so the encoded spelling resolves
+    to the raw-spelled entry; encode_url_spaces performs this encoding only
+    while renaming space-bearing entries, and brackets WITHOUT spaces were
+    uncovered (the 2026-11-04 census's 59-book lane). The fragment and query
+    portions are left untouched (brackets there are not path-segment
+    findings), the entry names are never renamed, and references whose
+    target cannot be resolved stay as written. The anchor is the same
+    start-tag/processing-instruction matcher the space renames use:
+    display text carrying href="..." is never rewritten."""
+    count = 0
+
+    def ref_sub(m: re.Match) -> str:
+        nonlocal count
+        value = m.group(3)
+        split_at = re.search(r"[?#]", value)
+        path = value[: split_at.start()] if split_at else value
+        if "[" not in path and "]" not in path:
+            return m.group(0)
+        resolved = _resolve_href(lookup_dir, value)
+        if resolved is None or resolved not in present:
+            return m.group(0)
+        count += 1
+        new_value = path.replace("[", "%5B").replace("]", "%5D") + value[len(path) :]
+        return m.group(1) + m.group(2) + new_value + m.group(4)
+
+    def rewrite_tag(m: re.Match) -> str:
+        return _RENAME_REF_ATTR_RE.sub(ref_sub, m.group(0))
+
+    def run(t: str) -> tuple[str, int]:
+        before = count
+        # the delta, not the cumulative: outside_protected_map sums every
+        # segment's return
+        return _START_TAG_OR_PI_RE.sub(rewrite_tag, t), count - before
+
+    return outside_protected_map(text, run)
+
+
+def encode_bracket_refs_css(
+    text: str, lookup_dir: str, present: frozenset[str] | set[str]
+) -> tuple[str, int]:
+    """The same bracket encode for stylesheet url() tokens (quoted and
+    bare): path-segment brackets only, targets must exist, entry names
+    stay raw."""
+    count = 0
+
+    def sub_quoted(m: re.Match) -> str:
+        nonlocal count
+        value = m.group(3)
+        split_at = re.search(r"[?#]", value)
+        path = value[: split_at.start()] if split_at else value
+        if "[" not in path and "]" not in path:
+            return m.group(0)
+        resolved = _resolve_href(lookup_dir, value)
+        if resolved is None or resolved not in present:
+            return m.group(0)
+        count += 1
+        new_value = path.replace("[", "%5B").replace("]", "%5D") + value[len(path) :]
+        return m.group(1) + m.group(2) + new_value + m.group(4) + m.group(5)
+
+    def sub_bare(m: re.Match) -> str:
+        nonlocal count
+        value = m.group(2)
+        split_at = re.search(r"[?#]", value)
+        path = value[: split_at.start()] if split_at else value
+        if "[" not in path and "]" not in path:
+            return m.group(0)
+        resolved = _resolve_href(lookup_dir, value)
+        if resolved is None or resolved not in present:
+            return m.group(0)
+        count += 1
+        new_value = path.replace("[", "%5B").replace("]", "%5D") + value[len(path) :]
+        return m.group(1) + new_value + m.group(3)
+
+    text = _RENAME_CSS_URL_QUOTED_RE.sub(sub_quoted, text)
+    text = _RENAME_CSS_URL_BARE_RE.sub(sub_bare, text)
+    return text, count

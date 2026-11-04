@@ -1697,3 +1697,36 @@ class TestFixMissingTitleHeadScope(unittest.TestCase):
         self.assertEqual(n, 1)
         self.assertIn("<head><title>Unknown</title>", out)
         self.assertIn("<svg><title>name</title></svg>", out)
+
+
+class TestFixIdColonsNcNameBroadening(unittest.TestCase):
+    """v0.63.0 broadened the predicate from colon-bearing to every value
+    _is_invalid_ncname rejects -- digit-led scraped ids
+    (`<body id="0-25c121ec...">`, apostrophe-bearing calibre ids) -- with
+    the rename base the manifest half's _plan_renames uses (`id_` +
+    sanitized), so both halves of a book agree."""
+
+    def test_digit_led_id_gains_the_id_prefix(self):
+        doc = '<html><body id="0-25c121ec3b"></body></html>'
+        out, n = fix_id_colons(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('id="id_0-25c121ec3b"', out)
+
+    def test_digit_led_fragment_syncs(self):
+        doc = (
+            '<html><body id="0-25c121ec3b"></body></html>'
+            '<p><a href="#0-25c121ec3b">x</a></p>'
+        )
+        out, n = fix_id_colons(doc)
+        self.assertEqual(n, 2)
+        self.assertIn('href="#id_0-25c121ec3b"', out)
+
+    def test_apostrophe_id_sanitizes(self):
+        doc = '<p id="Lisey\'s_story">x</p>'
+        out, n = fix_id_colons(doc)
+        self.assertEqual(n, 1)
+        self.assertNotIn("'", out)
+
+    def test_valid_ids_untouched(self):
+        doc = '<p id="ok_name-2">x</p>'
+        self.assertEqual(fix_id_colons(doc), (doc, 0))

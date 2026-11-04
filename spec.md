@@ -13,7 +13,7 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty-two
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
@@ -24,7 +24,8 @@ The deliberate exceptions to "semantics-preserving" come in opt-in groups. The t
 `--fix-misnested-inline`,
 `--fix-stray-close`, `--fix-unterminated-attr`, `--fix-unbound-prefix`,
 `--fix-unique-identifier`, `--fix-package-version`, `--fix-doctype`,
-`--prune-invalid-guide-refs`, `--fix-item-properties`) alter
+`--prune-invalid-guide-refs`, `--fix-item-properties`,
+`--strip-presentational-attrs`, `--encode-ref-brackets`) alter
 markup structure or fabricate minimal content; the four
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
 `--strip-stub-docs`) remove
@@ -178,12 +179,16 @@ part of the default pipeline:
   Adds visible content, hence opt-in like `--add-img-alt`.
 - **`--fix-missing-title`**: inject `<title>Unknown</title>` when the head has no usable
   title.
-- **`--fix-id-colons`**: illegal colons in `id="X:Y"` and their matching internal
-  `#X:Y` fragment references become `_`. Only the bare `id` attribute is in scope
-  (`data-id` values are arbitrary data and are never touched), the fragment of an
-  external URL names a position in that other document and survives verbatim, and the
-  NCX's `content src` fragments follow the rename (`fix_ncx_src_fragments`), so a ToC
-  never dangles against the ids it references.
+- **`--fix-id-colons`**: any `id` value that cannot be an XML NCName and its
+  matching internal fragment reference are renamed with the deterministic
+  `id_`+sanitized scheme (v0.63.0 broadened the predicate from colon-bearing
+  to every NCName failure: digit-led scraped ids like
+  `<body id="0-25c121ec...">`, apostrophe-bearing calibre ids). Only the bare
+  `id` attribute is in scope (`data-id` values are arbitrary data and are never
+  touched), the fragment of an external URL names a position in that other
+  document and survives verbatim, and the NCX's `content src` fragments follow
+  the rename (`fix_ncx_src_fragments`), so a ToC never dangles against the ids
+  it references.
 - **`--unwrap-block-in-inline`**: drop a `<span>` that illegally wraps a
   `<div>/<p>/<blockquote>`, keeping the block element and its text.
 - **`--strip-invalid-value`**: remove misplaced `value="..."` attributes from non-form
@@ -502,7 +507,34 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   the handler demand was never verified against the oracle the way the form
   was.
 
-Twenty-seven of the thirty are evaluated by the normal `gate`: unlike the lossy strips,
+- **`--strip-presentational-attrs`**: strip the deprecated presentational
+  hints the XHTML 1.1 DTD rejects wherever they appear -- `align`,
+  `valign`, `border`, `bgcolor`, `vspace`, `hspace`, `compact`
+  (element-agnostic presentation), body's `link`/`vlink`/`alink`/`text`/
+  `background` color family (body-scoped: `link` on anything but `<body>`
+  is a different attribute class and survives), `type` on the list
+  elements (legal -- and load-bearing -- on `style`/`link`/`script`, which
+  are never touched), and the Amazon `data-AmznRemoved` scraper junk.
+  HONEST CAVEAT, Brandon-approved 2026-11-04: these are presentational
+  hints, and readers that honor them render differently after the strip
+  (`bgcolor` stops coloring, `align` stops centering); the edit is
+  anchored to real start tags, attribute-counted, and never touches CDATA
+  or comments.
+
+- **`--encode-ref-brackets`**: percent-encode raw `[`/`]` in the PATH
+  portion of internal `src`/`href` references whose archive target exists
+  with the raw brackets (RSC-020 'Illegal character in path segment'; the
+  2026-11-04 census's 59-book lane). The issue #19 mechanism: epubcheck
+  decodes references before entry lookup, so the encoded spelling resolves
+  to the raw-spelled entry; `encode-url-spaces` performs this encoding
+  only while renaming space-bearing entries, and brackets WITHOUT spaces
+  were uncovered. The fragment and query portions are left untouched
+  (brackets there are not path-segment findings), entry names are never
+  renamed, unresolvable and external references stay as written, and the
+  walk covers content documents, the OPF, the NCX, and stylesheet `url()`
+  tokens.
+
+Twenty-nine of the thirty-two are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. The three exceptions are `--fix-cover`, `--encode-url-spaces`, and
 `--fix-media-types` (whose gains sit on axes epubcheck's counts do not measure:

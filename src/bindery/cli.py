@@ -114,6 +114,8 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         prune_guide_refs=args.prune_invalid_guide_refs or all_,
         item_properties=args.fix_item_properties or all_,
         double_colon_tags=args.fix_double_colon_tags or all_,
+        presentational_attrs=args.strip_presentational_attrs or all_,
+        encode_ref_brackets=args.encode_ref_brackets or all_,
     )
 
 
@@ -1706,6 +1708,22 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
     ],
     "structural repairs: markup and nesting": [
         (
+            "strip_presentational_attrs",
+            "strip deprecated presentational attributes (align/valign/bgcolor/border, body link/vlink, list type)",
+            "strip the deprecated presentational hints the XHTML 1.1 DTD rejects "
+            "wherever they appear: align, valign, border, bgcolor, vspace, "
+            "hspace, compact (element-agnostic presentation), body's "
+            "link/vlink/alink/text/background color family, type on the list "
+            "elements (legal -- and load-bearing -- on style/link/script, "
+            "which are never touched), and the Amazon data-AmznRemoved "
+            "scraper junk. HONEST CAVEAT (Brandon-approved 2026-11-04): "
+            "these are presentational hints, and readers that honor them "
+            "render differently after the strip -- bgcolor stops coloring, "
+            "align stops centering. The 2026-11-04 census's largest "
+            "attribute family; the edit is anchored to real start tags and "
+            "never touches CDATA or comments.",
+        ),
+        (
             "fix_empty_body",
             "fill a strictly empty <body></body> with <p>&#160;</p>",
             "inject <p>&#160;</p> inside a strictly empty <body></body> (the "
@@ -1813,6 +1831,21 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
         ),
     ],
     "structural repairs: references and resources": [
+        (
+            "encode_ref_brackets",
+            "percent-encode raw [ ] in internal references whose target exists (RSC-020)",
+            "percent-encode [ and ] in the path portion of internal src/href "
+            "references whose archive target exists with the raw brackets "
+            "(RSC-020 'Illegal character in path segment'). The issue #19 "
+            "mechanism: epubcheck decodes references before entry lookup, so "
+            "the encoded spelling resolves to the raw-spelled entry; "
+            "encode-url-spaces performs this encoding only while renaming "
+            "space-bearing entries, and brackets WITHOUT spaces were "
+            "uncovered. The fragment and query portions are left untouched, "
+            "entry names are never renamed, and unresolvable references stay "
+            "as written. Runs on content documents, the OPF, the NCX, and "
+            "stylesheet url() tokens.",
+        ),
         (
             "fix_page_map",
             'drop the OPF page-map attribute; class="pages" on NCX pageLists',

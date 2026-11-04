@@ -56,6 +56,8 @@ DEST_TO_FIELD = {
     "prune_invalid_guide_refs": "prune_guide_refs",
     "fix_item_properties": "item_properties",
     "fix_double_colon_tags": "double_colon_tags",
+    "strip_presentational_attrs": "presentational_attrs",
+    "encode_ref_brackets": "encode_ref_brackets",
     "strip_pagination": "strip_pagination",
     "strip_broken_tags": "strip_brokentags",
     "strip_watermarks": "strip_watermarks",

@@ -1515,6 +1515,36 @@ def scan_completeness(path: Path) -> dict:
     return analyze_completeness(load_book(path))
 
 
+def analyze_shell(book: Book) -> dict:
+    """The shell-book detector (the 2026-11-04 Wandering Inn diagnosis):
+    what fraction of the manifest's content hrefs name files the archive
+    does not contain. The loader's `spine_missing` already counts the
+    itemrefs that could not resolve; a high fraction on a book that still
+    opens means the converter wrote the series-wide manifest and shipped a
+    sliver of the archive -- 738 and 736 manifest items missing of 755 and
+    752 on the two shells. Re-source territory: no repair can fabricate
+    the missing files, and the spine guard correctly refuses to drop them.
+    Advisory by contract, like completeness."""
+    spine_n = len(book.spine)
+    missing = book.spine_missing
+    frac = (missing / spine_n) if spine_n else 0.0
+    return {"spine_docs": spine_n, "missing": missing, "missing_frac": frac}
+
+
+def _shell_dir(r: dict) -> tuple[bool, str, list[str]]:
+    lines = [
+        f"spine {r['spine_docs']}, manifest-missing {r['missing']} "
+        f"({r['missing_frac'] * 100:.0f}%)"
+    ]
+    status = "OK"
+    if r["spine_docs"] and r["missing_frac"] >= 0.5:
+        status = (
+            "SHELL: the manifest names files the archive never carried; "
+            "re-source, never repair"
+        )
+    return (False, status, lines)
+
+
 def _completeness_dir(r: dict) -> tuple[bool, str, list[str]]:
     """Advisory by contract: the archive, spine, and emptytext verdicts own
     the flags; completeness reports the shape a human judges."""
@@ -2721,6 +2751,18 @@ def _spine_sections(hits, advisory) -> int:
     return 0
 
 
+def _shell_sections(advisory) -> int:
+    """Print the shell advisories; the analyzer never fails a run."""
+    if advisory:
+        print(
+            f"{YELLOW}{BOLD}SHELL BOOKS ({len(advisory)} to re-source;"
+            f" reported, not flagged){RESET}"
+        )
+        for book_id, title, tag in sorted(advisory):
+            print(f"  {YELLOW}#{book_id}{RESET} [{tag}] {title}")
+    return 0
+
+
 def _completeness_sections(advisory) -> int:
     """Print the completeness advisories; the analyzer never fails a run."""
     if advisory:
@@ -2774,6 +2816,7 @@ ALL: tuple[str, ...] = (
     "cover",
     "tocdrift",
     "contamination",
+    "shell",
 )
 
 
@@ -2806,6 +2849,7 @@ def _dir_dispatch(
         "cover": lambda b: _cover_dir(analyze_cover(b)),
         "tocdrift": lambda b: _tocdrift_dir(analyze_tocdrift(b)),
         "contamination": lambda b: _contamination_dir(analyze_contamination(b)),
+        "shell": lambda b: _shell_dir(analyze_shell(b)),
     }
 
 
@@ -2934,6 +2978,7 @@ def run_library(
     ocr_found: list[tuple] = []
     mono_hits: list[tuple] = []
     completeness_advisory: list[tuple] = []
+    shell_advisory: list[tuple] = []
     cover_advisory: list[tuple] = []
     tocdrift_advisory: list[tuple] = []
     contamination_advisory: list[tuple] = []
@@ -3044,6 +3089,14 @@ def run_library(
             # status and the exit code are never moved by this analyzer
             _record_verdict(record, "completeness", (False, status, lines))
 
+        if "shell" in selected:
+            r = analyze_shell(book)
+            _p, status, lines = _shell_dir(r)
+            if status != "OK":
+                shell_advisory.append((book_id, title, tag, r))
+            # advisory by contract: problem is always False
+            _record_verdict(record, "shell", (False, status, lines))
+
         if "cover" in selected:
             r = analyze_cover(book)
             _p, status, lines = _cover_dir(r)
@@ -3086,6 +3139,8 @@ def run_library(
             rc |= _monolithic_sections(mono_hits)
         elif key == "completeness":
             rc |= _completeness_sections(completeness_advisory)
+        elif key == "shell":
+            rc |= _shell_sections(shell_advisory)
         elif key == "cover":
             rc |= _cover_sections(cover_advisory)
         elif key == "tocdrift":
