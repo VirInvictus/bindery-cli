@@ -1,5 +1,54 @@
 # bindery-cli Patch Notes
 
+## v0.62.2 (2026-11-04)
+
+### The review batch: the insert-branch fix and the inventories, closed
+
+A three-reviewer pass over the v0.62.x range (code review, test-gap map,
+docs-vs-code audit) converged on one ship-blocking defect and a set of
+smaller findings; this patch carries every fix.
+
+- **`--fix-item-properties`'s insertion branch emitted malformed XML**
+  (ship-blocking): an item with no `properties` attribute got the new
+  attribute appended after its self-closing solidus
+  (`<item .../ properties="scripted">` -- a violation of EmptyElemTag), so
+  the gate rejected every candidate on exactly the books the flag targets.
+  No test had ever driven the branch: every fixture pre-carried
+  `properties="nav"`. The branch now appends before the solidus
+  (`properties="scripted"/>`), a fixture pins the self-closed well-formedness
+  with an ElementTree parse, and the paired-item shape is covered too. The
+  affected books will harvest on the next `--all` sweep.
+- **`fix_missing_title`'s empty-title fill is head-scoped**: an empty
+  `<title>` inside `<svg>` is the image's accessibility name and hover
+  tooltip -- filling it with "Unknown" is a visible text change the gate
+  cannot measure. The fill now runs inside the `<head>` section when one
+  exists; a document with no head keeps the document-wide behavior.
+- **`--fix-double-colon-tags`' tail is bounded** at 120 characters: a
+  pseudo-tag whose own bracket was escaped (`<b::c&gt;`, only the leading
+  `<` raw) would run the lazy tail to the next real tag's `>` and swallow
+  prose plus markup into display text -- damage the gate cannot always see.
+  Real code constructs are short; the bound keeps any failure local.
+- **The on\* handler disjunct is gone from the item-properties census**:
+  `\son[a-z]+=` lexically cannot tell a handler from `only=`/`once=`, and
+  the handler demand was never verified against the oracle the way the
+  `<form>` demand was (tag-off bisection). The census keeps the
+  oracle-verified `scripted` triggers (`<script>`, `<form>`).
+- **`_scan_doctype_span` refuses unterminated declarations**: a `<` met at
+  bracket depth 0 before any `>` means the next tag has begun and the
+  declaration's true end is unknowable -- the span must not swallow it.
+- **The guide-prune docstring matches the code**: both element shapes are
+  removed (self-closed and paired), not "self-closed only".
+- **The documentation inventories caught up** (the drift the reviews
+  measured): README's opt-in list gains the seven flags it was behind
+  (two of them since v0.51/v0.59), spec.md's structural section gains the
+  four v0.62.0 behavioral bullets and the safe-opt-in section for
+  `--fix-double-colon-tags`, the body counts read thirty/twenty-seven, and
+  AGENTS.md's inventory carries the five new flags. The v0.62.1 entry's
+  claim that the spec drift was closed was true only of the intro counts;
+  this entry closes the rest of it.
+
+Suite: 895 tests.
+
 ## v0.62.1 (2026-11-04)
 
 ### --fix-double-colon-tags: the pseudo-tag escape, and the last fatal's repair

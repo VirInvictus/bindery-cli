@@ -692,11 +692,29 @@ def fix_missing_title(s: str) -> tuple[str, int]:
         count += 1
         return "<title>Unknown</title>"
 
-    s, n = re.subn(
-        r"<title\b[^>]*/>|<title\b[^>]*>\s*</title>", repl, s, flags=re.IGNORECASE
-    )
-    if n > 0:
-        return s, n
+    # Head-scoped (v0.62.2): an empty <title> inside <svg> is the image's
+    # accessibility name / hover tooltip -- filling it with "Unknown" is a
+    # VISIBLE text change the gate cannot measure, so the fill only runs
+    # inside the head section when one exists. A document with no head at
+    # all keeps the document-wide behavior (nothing scoped to protect).
+    head_m = re.search(r"<head\b[^>]*>.*?</head>", s, re.IGNORECASE | re.DOTALL)
+    if head_m is not None:
+        head = head_m.group(0)
+        filled, n = re.subn(
+            r"<title\b[^>]*/>|<title\b[^>]*>\s*</title>",
+            repl,
+            head,
+            flags=re.IGNORECASE,
+        )
+        if n > 0:
+            return s[: head_m.start()] + filled + s[head_m.end() :], n
+        # nothing empty in the head; fall through to the checks below
+    else:
+        s, n = re.subn(
+            r"<title\b[^>]*/>|<title\b[^>]*>\s*</title>", repl, s, flags=re.IGNORECASE
+        )
+        if n > 0:
+            return s, n
 
     if re.search(r"<title\b[^>]*>.*?</title>", s, re.IGNORECASE | re.DOTALL):
         return s, 0
@@ -725,7 +743,12 @@ _EXTERNAL_TARGET_RE = re.compile(r"^(?:[a-zA-Z][\w+.-]*:|//)")
 # samples: `std::vector<std::shared_ptr>` with the template's closing bracket
 # escaped as `&gt;` but the pseudo-tag itself raw). Escaping both ends
 # restores exactly the text the author wrote.
-_DOUBLE_COLON_TAG_RE = re.compile(r"</?[A-Za-z_][\w.-]*(?:::[\w.-]+)+[^>]*?>")
+# The tail is bounded (v0.62.2, 120 chars): a pseudo-tag whose own bracket
+# was escaped (`<b::c&gt;` -- only the leading `<` raw) would otherwise run
+# the lazy tail to the next REAL tag's `>` and swallow prose plus markup
+# into display text, damage the gate cannot always see. Real code
+# constructs are short; the bound keeps any failure local.
+_DOUBLE_COLON_TAG_RE = re.compile(r"</?[A-Za-z_][\w.-]*(?:::[\w.-]+)+[^>]{0,120}?>")
 
 
 @_outside_protected

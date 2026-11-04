@@ -1646,3 +1646,54 @@ class TestFixDoubleColonTags(unittest.TestCase):
     def test_escaped_constructs_are_stable(self):
         doc = "<p>std::vector&lt;std::shared_ptr&gt;&gt; data;</p>"
         self.assertEqual(fix_double_colon_tags(doc), (doc, 0))
+
+
+class TestFixDoubleColonTagsBounds(unittest.TestCase):
+    """The v0.62.1 review's content-level risk, closed by the bounded tail:
+    a pseudo-tag whose own bracket was escaped (only the leading `<` raw)
+    used to run the lazy tail to the next REAL tag's `>` and swallow prose
+    plus markup into display text -- damage the gate cannot always see."""
+
+    def test_escaped_bracket_construct_does_not_run_away(self):
+        doc = (
+            "<html><head><title>t</title></head><body><p>x &lt; b::c stuff "
+            "<p>real</p></body></html>"
+        )
+        out, n = fix_double_colon_tags(doc)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, doc)
+
+    def test_tail_over_one_hundred_twenty_chars_does_not_match(self):
+        filler = "x" * 130
+        doc = f"<html><head><title>t</title></head><body><p><a::b {filler}>y</p></body></html>"
+        self.assertEqual(fix_double_colon_tags(doc), (doc, 0))
+
+    def test_raw_ampersand_in_the_tail_is_escaped(self):
+        out, n = fix_double_colon_tags("<p><b::c & d>x</p>")
+        self.assertEqual(n, 1)
+        self.assertIn("&lt;b::c &amp; d&gt;", out)
+
+
+class TestFixMissingTitleHeadScope(unittest.TestCase):
+    """v0.62.2: the empty-title fill is head-scoped -- an empty <title>
+    inside <svg> is the image's accessibility name / hover tooltip, and
+    filling it with "Unknown" is a visible text change the gate cannot
+    measure."""
+
+    def test_empty_svg_title_is_protected_when_a_head_exists(self):
+        doc = (
+            "<html><head><title>Real</title></head><body>"
+            "<svg><title/></svg></body></html>"
+        )
+        self.assertEqual(fix_double_colon_tags(doc), (doc, 0))
+        self.assertEqual(fix_missing_title(doc), (doc, 0))
+
+    def test_head_empty_title_still_fills(self):
+        doc = (
+            "<html><head><title/></head><body>"
+            "<svg><title>name</title></svg></body></html>"
+        )
+        out, n = fix_missing_title(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("<head><title>Unknown</title>", out)
+        self.assertIn("<svg><title>name</title></svg>", out)

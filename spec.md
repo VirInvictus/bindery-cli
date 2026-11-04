@@ -147,9 +147,27 @@ edit is anchored to real start tags; CDATA sections and comments are never
 rewritten, and everything but the offending attribute is preserved
 byte-for-byte. The normal gate applies.
 
+### Opt-in: escape double-colon pseudo-tags (`--fix-double-colon-tags`)
+
+An XML name can carry at most one colon (the QName production is
+`(NCName ':')? NCName`), so a pseudo-tag whose name contains `::` is never
+markup -- every occurrence is unescaped author text, and the parser dies on
+it with a fatal RSC-016 (C++ code samples like `std::vector<std::shared_ptr>`
+whose converter escaped the trailing bracket but not the tag itself). With
+this flag both ends of the construct are escaped, restoring exactly the text
+the author wrote; the result renders identically to that intent. Real markup
+is unreachable by construction -- the double colon lives in the name grammar
+-- and prose comparisons (`a < b`) never form the shape. Nested templates
+escape inner-first until stable (capped at sixteen passes) and a fully
+escaped nesting's trailing `>`s stay raw, which is legal text. The tail is
+bounded at 120 characters so an escaped-bracket construct cannot swallow
+prose plus real markup, and CDATA sections and comments are never rewritten.
+The normal gate applies.
+
+
 ### Opt-in: structural repairs
 
-Twenty-six repairs go past well-formedness and therefore require their own flag; none is ever
+Thirty repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `<p>&#160;</p>` inside a strictly empty `<body></body>` ("body
@@ -437,7 +455,54 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   byte-identical. Runs on the OPF only: content documents have the
   invalid-attribute drop (`--strip-bad-attrs`) for the same defect class.
 
-Twenty-three of the twenty-six are evaluated by the normal `gate`: unlike the lossy strips,
+- **`--fix-package-version`**: rewrite a `<package>` element whose `version`
+  attribute is the literal `1.0` -- an EPUB version epubcheck cannot parse
+  (OPF-001 "error when parsing the EPUB version") -- to `"2.0"`, the
+  conformance the census's 25 carriers were all written to. Only the exact
+  literal qualifies: a missing attribute (the OEB-1.0-namespace package is a
+  migration, not an attribute bump) or any other spelling refuses the
+  document untouched, and the gate decides whether the profile
+  revalidation the bump buys is a real decrease.
+
+- **`--fix-doctype`**: replace a content document's DOCTYPE when it carries a
+  public identifier its package profile forbids. EPUB 3 requires any DOCTYPE
+  to be `<!DOCTYPE html>` (an XHTML 1.x public doctype is a spec violation);
+  EPUB 2's OPS content docs are XHTML 1.1, so an XHTML 1.0 public doctype is
+  the census's second flagged shape. A whitespace-variant of the expected
+  form is a no-op, an ABSENT DOCTYPE is legal in both profiles and is left
+  alone (the first whole-library firing census measured insertion flat on
+  ~2,400 of 2,545 firing books -- absent is tolerated, so insertion never
+  converges), and a DOCTYPE carrying an internal subset is never touched
+  (the subset declares entities; swapping it changes what the parser
+  resolves). An unterminated declaration refuses: a `<` at bracket depth 0
+  before any `>` means the true end is unknowable and the span must not
+  swallow the next tag.
+
+- **`--prune-invalid-guide-refs`**: remove guide `<reference>` elements whose
+  target is declared in the manifest but is not an OPS content document
+  (OPF-032; the Random House `msr` guide block pointing cover/thumbimage
+  references at JPEGs is the dominant fingerprint). The guide is furniture,
+  so removal is content-neutral. A reference to an UNDECLARED file is
+  OPF-031 (declare-missing's lane) and is left alone, as are external
+  schemes and references with no href at all. Both element shapes are
+  removed: self-closed and the paired `<reference>...</reference>`.
+
+- **`--fix-item-properties`**: the OPF-014 inverse of the attribute scrub --
+  declare what the document contains instead of stripping it. A whole-book
+  census reads each content document (`scripted` from a `<script>` element
+  or a `<form>`; `svg` from an `<svg>`; `remote-resources` from an
+  absolute-scheme `src`, a remote `<link href>`, or a remote CSS `url()`)
+  and merges the tokens into the owning manifest item's `properties`
+  attribute, sorted and deduplicated; the insertion branch appends the
+  attribute before a self-closed item's solidus, never after it. EPUB 3
+  packages only: on EPUB 2 the `properties` attribute is itself illegal
+  (the oracle demands it and forbids it at once), so those carriers refuse
+  and stay measured. on* handler attributes are deliberately not detected:
+  `\son[a-z]+=` lexically cannot tell a handler from `only=`/`once=`, and
+  the handler demand was never verified against the oracle the way the form
+  was.
+
+Twenty-seven of the thirty are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. The three exceptions are `--fix-cover`, `--encode-url-spaces`, and
 `--fix-media-types` (whose gains sit on axes epubcheck's counts do not measure:

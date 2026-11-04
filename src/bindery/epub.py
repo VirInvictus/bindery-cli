@@ -444,7 +444,10 @@ _XHTML11_DOCTYPE = (
 def _scan_doctype_span(text: str) -> tuple[int, int] | None:
     """The exact (start, end) span of a DOCTYPE declaration, honouring the
     bracketed internal subset: a naive `[^>]*` stops at the first `>`, which
-    a subset's conditional sections can carry. None when unterminated."""
+    a subset's conditional sections can carry. None when unterminated -- and
+    a `<` met at bracket depth 0 before the closing `>` IS unterminated (the
+    next tag has begun, so the declaration's true end is unknowable and the
+    span must not swallow it)."""
     m = re.search(r"<!DOCTYPE", text, re.IGNORECASE)
     if m is None:
         return None
@@ -458,6 +461,8 @@ def _scan_doctype_span(text: str) -> tuple[int, int] | None:
             depth -= 1
         elif ch == ">" and depth <= 0:
             return m.start(), i + 1
+        elif ch == "<" and depth <= 0:
+            return None
         i += 1
     return None
 
@@ -547,10 +552,13 @@ def prune_invalid_guide_refs(opf_text: str, opf_dir: str) -> tuple[str, int]:
     not an OPS content document (OPF-032).
 
     The predicate is deliberate: a reference to an UNDECLARED file is
-    OPF-031, declare-missing's lane; an external scheme is nobody's guide;
-    a self-closed element is the only shape removed (a paired reference
-    with children is unheard of in the census, and a botched span would
-    eat the guide). Nothing else about the guide is rewritten.
+    OPF-031, declare-missing's lane; an external scheme is nobody's guide.
+    Both element shapes are removed -- self-closed and the paired
+    `<reference>...</reference>` (the census never saw a paired one, but
+    the guide is furniture either way; the lazy paired span's
+    bridge-into-the-next-reference risk is bounded by references being
+    siblings in one small block). Nothing else about the guide is
+    rewritten.
     """
     media_types = _manifest_media_type_map(opf_text, opf_dir)
     count = 0
@@ -575,16 +583,18 @@ def prune_invalid_guide_refs(opf_text: str, opf_dir: str) -> tuple[str, int]:
 
 # --fix-item-properties: the OPF-014 lane (the 2026-11-03 triage, 74 books).
 # EPUB3 manifest items must declare what their documents contain: `scripted`
-# when the document carries scripting (a <script> element, an on* handler,
-# or a <form> — epubcheck 5.3 demands scripted for form documents, verified
-# on the Rustonomicon's scraped GitHub page where tag-off bisection isolated
-# the form), `svg` when the document carries an <svg>, and
-# `remote-resources` when it loads resources from outside the container
-# (src=/href= attributes and CSS url() values with an absolute scheme).
-# Declaring reality changes no content.
+# when the document carries scripting (a <script> element or a <form> —
+# epubcheck 5.3 demands scripted for form documents, verified on the
+# Rustonomicon's scraped GitHub page where tag-off bisection isolated the
+# form), `svg` when the document carries an <svg>, and `remote-resources`
+# when it loads resources from outside the container (src=/href= attributes
+# and CSS url() values with an absolute scheme). Deliberately NOT detected:
+# on* handler attributes -- `\son[a-z]+=` lexically cannot tell a handler
+# from `only=`/`once=` (the v0.62.1 review's false-positive finding), and
+# the handler demand was never verified against the oracle the way the form
+# was. Declaring reality changes no content.
 _SCRIPT_TAG_RE = re.compile(r"<script\b", re.IGNORECASE)
 _FORM_TAG_RE = re.compile(r"<form\b", re.IGNORECASE)
-_HANDLER_ATTR_RE = re.compile(r"""\son[a-z]+\s*=\s*["']""", re.IGNORECASE)
 _SVG_TAG_RE = re.compile(r"<svg\b", re.IGNORECASE)
 _REMOTE_SRC_RE = re.compile(r"""\ssrc\s*=\s*(["'])https?://""", re.IGNORECASE)
 _REMOTE_LINK_HREF_RE = re.compile(
@@ -599,10 +609,10 @@ _ITEM_PROPERTIES_RE = re.compile(
 def collect_item_properties(zin: zipfile.ZipFile) -> dict[str, frozenset[str]]:
     """The item-properties census: resolved content-doc path -> the EPUB3
     property tokens the document's own bytes demand. `scripted` from a
-    `<script>` element, an on* handler attribute, or a `<form>`; `svg` from
-    an `<svg>` element; `remote-resources` from an absolute-scheme src
-    attribute, a remote `<link href>`, or a remote CSS url(). Non-UTF-8
-    documents are skipped (their contents are nobody's guess)."""
+    `<script>` element or a `<form>`; `svg` from an `<svg>` element;
+    `remote-resources` from an absolute-scheme src attribute, a remote
+    `<link href>`, or a remote CSS url(). Non-UTF-8 documents are skipped
+    (their contents are nobody's guess)."""
     props: dict[str, set[str]] = {}
     for item in zin.infolist():
         low = item.filename.lower()
@@ -613,11 +623,7 @@ def collect_item_properties(zin: zipfile.ZipFile) -> dict[str, frozenset[str]]:
         except (UnicodeDecodeError, RuntimeError):
             continue
         found: set[str] = set()
-        if (
-            _SCRIPT_TAG_RE.search(text)
-            or _FORM_TAG_RE.search(text)
-            or _HANDLER_ATTR_RE.search(text)
-        ):
+        if _SCRIPT_TAG_RE.search(text) or _FORM_TAG_RE.search(text):
             found.add("scripted")
         if _SVG_TAG_RE.search(text):
             found.add("svg")
@@ -665,11 +671,13 @@ def fix_manifest_item_properties(
         if pm is None:
             merged = " ".join(sorted(needed))
             count += 1
-            return (
-                tag[: tag.rindex(">")]
-                + f' properties="{merged}"'
-                + tag[tag.rindex(">") :]
-            )
+            head = tag[: tag.rindex(">")]
+            if head.endswith("/"):
+                # self-closed: the solidus must sit immediately before `>`
+                # (an attribute after it violates EmptyElemTag and the
+                # candidate dies as a fatal of our own making)
+                return head[:-1] + f' properties="{merged}"' + "/>"
+            return head + f' properties="{merged}"' + ">"
         existing = set(pm.group(3).split())
         if existing >= needed:
             return tag

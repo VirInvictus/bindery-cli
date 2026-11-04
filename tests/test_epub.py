@@ -3692,3 +3692,51 @@ class TestFlagDoubleColonTagsEndToEnd(unittest.TestCase):
                 out = z.read("OEBPS/c1.xhtml").decode()
         self.assertIn("&lt;std::shared_ptr&gt;", out)
         self.assertNotIn("<std::shared_ptr>", out)
+
+
+class TestItemPropertiesInsertionBranch(unittest.TestCase):
+    """v0.62.1's insertion branch (an item with NO properties attribute)
+    emitted `<item .../ properties="...">` on the universal self-closed
+    shape -- an attribute after the solidus violates EmptyElemTag, so the
+    gate rejected every candidate on exactly the books the flag targets,
+    and no test drove the branch because every fixture pre-carried
+    properties="nav" (the v0.62.1 review's ship-blocking finding)."""
+
+    OPF = (
+        '<?xml version="1.0"?><package '
+        'xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+        'unique-identifier="id"><metadata/>'
+        '<manifest><item id="c1" href="c1.xhtml" '
+        'media-type="application/xhtml+xml"/></manifest>'
+        "<spine><itemref idref='c1'/></spine></package>"
+    )
+
+    def test_self_closed_item_inserts_well_formed(self):
+        out, n = fix_manifest_item_properties(
+            self.OPF, "OEBPS", {"OEBPS/c1.xhtml": frozenset({"scripted"})}
+        )
+        self.assertEqual(n, 1)
+        self.assertIn('properties="scripted"', out)
+        # the solidus must sit immediately before `>`
+        self.assertIn('properties="scripted"/>', out)
+        self.assertNotIn("/ properties=", out)
+        ET.fromstring(out)
+
+    def test_paired_item_inserts_well_formed(self):
+        opf = self.OPF.replace(
+            'media-type="application/xhtml+xml"/>',
+            'media-type="application/xhtml+xml">',
+        )
+        opf = opf.replace(
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml">',
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"></item>',
+        )
+        out, n = fix_manifest_item_properties(
+            opf, "OEBPS", {"OEBPS/c1.xhtml": frozenset({"scripted"})}
+        )
+        self.assertEqual(n, 1)
+        ET.fromstring(out)
+
+    def test_doctype_unterminated_declaration_is_left_alone(self):
+        text = "<!DOCTYPE html\n<html></html>"
+        self.assertEqual(fix_doctype(text, 2), (text, 0))
