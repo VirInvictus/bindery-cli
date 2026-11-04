@@ -13,7 +13,7 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The twenty-six
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
@@ -23,13 +23,15 @@ The deliberate exceptions to "semantics-preserving" come in opt-in groups. The t
 `--fix-svg-dup-ids`, `--fix-duplicate-ids`, `--fix-cdata-terminator`,
 `--fix-misnested-inline`,
 `--fix-stray-close`, `--fix-unterminated-attr`, `--fix-unbound-prefix`,
-`--fix-unique-identifier`) alter
+`--fix-unique-identifier`, `--fix-package-version`, `--fix-doctype`,
+`--prune-invalid-guide-refs`, `--fix-item-properties`) alter
 markup structure or fabricate minimal content; the four
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
 `--strip-stub-docs`) remove
 content a converter injected rather than content the author wrote. A fourth group of
 **safe opt-ins** (`--fix-ids`, `--add-img-alt`, `--strip-bad-attrs`,
-`--escape-unknown-entities`) repairs without altering visible markup, and
+`--escape-unknown-entities`, `--fix-double-colon-tags`) repairs without altering
+visible markup, and
 `--reserialize` re-parses still-malformed documents whole. The default pass runs
 ONLY the five well-formedness transforms above, the NCX pipeline, and the mimetype
 fix: nothing else. (v0.14–v0.16 briefly

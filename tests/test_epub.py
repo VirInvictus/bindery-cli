@@ -3656,3 +3656,39 @@ class TestFlagItemPropertiesEndToEnd(unittest.TestCase):
                 out = z.read("OEBPS/content.opf").decode()
         self.assertIn('properties="nav"', out)
         self.assertNotIn("scripted", out)
+
+
+class TestFlagDoubleColonTagsEndToEnd(unittest.TestCase):
+    """--fix-double-colon-tags through the real repair: the Book of
+    Debugging's C++ sample shape (the library's last fatal) escapes and
+    the count lands in fixes."""
+
+    def test_repair_epub_escapes_the_pseudo_tag(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+            'unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="id">x</dc:identifier>'
+            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
+            '<manifest><item id="c1" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest>'
+            "<spine><itemref idref='c1'/></spine></package>"
+        )
+        doc = (
+            '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+            "<head><title>t</title></head><body><pre><code><span>"
+            "std::vector<std::shared_ptr>&gt; data;</span>"
+            "</code></pre></body></html>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            s, d = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", doc)
+            report = repair_epub(s, d, RepairFlags(double_colon_tags=True))
+            self.assertEqual(report.fixes.get("double_colon_tags_escaped"), 1)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/c1.xhtml").decode()
+        self.assertIn("&lt;std::shared_ptr&gt;", out)
+        self.assertNotIn("<std::shared_ptr>", out)

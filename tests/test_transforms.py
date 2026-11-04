@@ -15,6 +15,7 @@ from bindery.transforms import (
     escape_bare_amp,
     escape_unknown_entities,
     fix_cdata_terminator,
+    fix_double_colon_tags,
     fix_duplicate_ids,
     fix_empty_body,
     fix_id_colons,
@@ -1581,3 +1582,67 @@ class TestFixDuplicateIds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFixDoubleColonTags(unittest.TestCase):
+    """--fix-double-colon-tags: an XML name can carry at most one colon, so
+    a pseudo-tag whose name contains `::` is never markup -- every
+    occurrence is unescaped author text and the parser dies on it with a
+    fatal RSC-016 (the Book of Debugging's C++ samples, the library's last
+    fatal). Escaping both ends restores the author's text; real markup is
+    unreachable because the double colon lives in the name grammar."""
+
+    def test_escapes_the_book_of_debugging_shape(self):
+        doc = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body><pre><code><span>std::vector"
+            "<std::shared_ptr>&gt; data;</span></code></pre></body></html>"
+        )
+        out, n = fix_double_colon_tags(doc)
+        self.assertEqual(n, 1)
+        self.assertIn("std::vector&lt;std::shared_ptr&gt;&gt; data;", out)
+
+    def test_closing_pseudo_tags_escape_too(self):
+        out, n = fix_double_colon_tags("<p>begin <b::c> x </b::c> end</p>")
+        self.assertEqual(n, 2)
+        self.assertIn("&lt;b::c&gt;", out)
+        self.assertIn("&lt;/b::c&gt;", out)
+
+    def test_real_tags_are_never_touched(self):
+        doc = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body><p>a:b</p><p>plain</p></body></html>"
+        )
+        self.assertEqual(fix_double_colon_tags(doc), (doc, 0))
+
+    def test_prose_comparison_never_matches(self):
+        doc = (
+            "<html><head><title>t</title></head><body><p>if a &lt; b</p></body></html>"
+        )
+        self.assertEqual(fix_double_colon_tags(doc), (doc, 0))
+
+    def test_nested_template_escapes_inner_first_then_outer(self):
+        # `std::vector<std::string>` fully raw: the first pass escapes the
+        # innermost construct, the second the outer one; the trailing `>`s
+        # stay raw, which is legal text
+        doc = (
+            "<html><head><title>t</title></head><body><p>x"
+            "<std::vector<std::string>>y</p></body></html>"
+        )
+        out, n = fix_double_colon_tags(doc)
+        # one pass suffices: the tail crosses the nested `<` and the match
+        # ends at the first raw `>`; the second trailing `>` stays raw,
+        # which is legal text and renders as `>`
+        self.assertEqual(n, 1)
+        self.assertIn("x&lt;std::vector&lt;std::string&gt;>y", out)
+        # the result carries no raw `<` from the pseudo-tags
+        self.assertNotIn("<std::", out)
+
+    def test_triple_colon_name_escapes(self):
+        out, n = fix_double_colon_tags("<p><a::b::c></p>")
+        self.assertEqual(n, 1)
+        self.assertIn("&lt;a::b::c&gt;", out)
+
+    def test_escaped_constructs_are_stable(self):
+        doc = "<p>std::vector&lt;std::shared_ptr&gt;&gt; data;</p>"
+        self.assertEqual(fix_double_colon_tags(doc), (doc, 0))

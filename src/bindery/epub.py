@@ -40,6 +40,7 @@ from .transforms import (
     escape_unknown_entities,
     fix_cdata_terminator,
     fix_comment_double_hyphen,
+    fix_double_colon_tags,
     fix_duplicate_ids,
     fix_empty_body,
     fix_id_colons,
@@ -308,6 +309,7 @@ class RepairFlags:
     doctype: bool = False
     prune_guide_refs: bool = False
     item_properties: bool = False
+    double_colon_tags: bool = False
 
 
 @dataclass
@@ -3074,6 +3076,10 @@ def repair_epub(
                     text, n = fix_missing_title(text)
                     if n:
                         counts["fix_missing_title"] = n
+                if flags.double_colon_tags:
+                    text, n = fix_double_colon_tags(text)
+                    if n:
+                        counts["double_colon_tags_escaped"] = n
                 if flags.doctype:
                     text, n = fix_doctype(text, pkg_major)
                     if n:

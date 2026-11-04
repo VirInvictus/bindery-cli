@@ -113,6 +113,7 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         doctype=args.fix_doctype or all_,
         prune_guide_refs=args.prune_invalid_guide_refs or all_,
         item_properties=args.fix_item_properties or all_,
+        double_colon_tags=args.fix_double_colon_tags or all_,
     )
 
 
@@ -1687,6 +1688,20 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "as browsers already render an unknown entity. Documents whose "
             "DOCTYPE carries an internal subset (which can declare custom "
             "entities) are skipped wholesale.",
+        ),
+        (
+            "fix_double_colon_tags",
+            "escape unescaped pseudo-tags whose name carries :: (a fatal QName break)",
+            "escape the < and > around pseudo-tags whose name contains a double "
+            "colon -- an XML name can carry at most one colon (the QName "
+            "production), so such a construct is never markup and the parser "
+            "dies on it with a fatal RSC-016 (C++ code samples like "
+            "`std::vector<std::shared_ptr>` whose converter escaped the "
+            "trailing bracket but not the tag; the Book of Debugging's last "
+            "library fatal). Escaping both ends restores exactly the text the "
+            "author wrote. Real markup is unreachable by construction: the "
+            "double colon lives in the name grammar itself. Nested templates "
+            "escape inner-first until stable.",
         ),
     ],
     "structural repairs: markup and nesting": [

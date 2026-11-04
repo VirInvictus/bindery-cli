@@ -529,6 +529,19 @@ def _fixtures() -> dict:
             },
             "item_properties_added",
         ),
+        "--fix-double-colon-tags": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": (
+                    '<?xml version="1.0"?><html '
+                    'xmlns="http://www.w3.org/1999/xhtml">'
+                    "<head><title>t</title></head><body><pre><code><span>"
+                    "std::vector<std::shared_ptr>&gt; data;</span>"
+                    "</code></pre></body></html>"
+                ),
+            },
+            "double_colon_tags_escaped",
+        ),
     }
 
 
@@ -757,6 +770,12 @@ class FlagEndToEndTests(unittest.TestCase):
     def test_fix_item_properties(self):
         self.assertGreaterEqual(
             self._fixes_for("--fix-item-properties")["item_properties_added"], 1
+        )
+
+    def test_fix_double_colon_tags(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--fix-double-colon-tags")["double_colon_tags_escaped"],
+            1,
         )
 
 

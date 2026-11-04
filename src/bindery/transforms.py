@@ -718,6 +718,52 @@ def fix_missing_title(s: str) -> tuple[str, int]:
 _EXTERNAL_TARGET_RE = re.compile(r"^(?:[a-zA-Z][\w+.-]*:|//)")
 
 
+# --fix-double-colon-tags: an XML name can carry at most one colon (the QName
+# production is (NCName ':')? NCName), so a pseudo-tag whose name contains
+# `::` can never be markup -- every occurrence is unescaped author text, and
+# the parser reads it as a fatal RSC-016 (the Book of Debugging's C++ code
+# samples: `std::vector<std::shared_ptr>` with the template's closing bracket
+# escaped as `&gt;` but the pseudo-tag itself raw). Escaping both ends
+# restores exactly the text the author wrote.
+_DOUBLE_COLON_TAG_RE = re.compile(r"</?[A-Za-z_][\w.-]*(?:::[\w.-]+)+[^>]*?>")
+
+
+@_outside_protected
+def fix_double_colon_tags(s: str) -> tuple[str, int]:
+    """Escape `<`/`>` around pseudo-tags whose name contains `::`.
+
+    Opt-in (--fix-double-colon-tags): it rewrites document bytes, though the
+    result renders exactly the text the author intended. The `::` lives in
+    the NAME grammar, which no real tag can carry (a legal QName holds at
+    most one colon), so real markup is unreachable by construction; prose
+    comparisons (`a < b`) never match because the name must start the
+    construct and carry the double colon. A nested template
+    (`std::vector<std::string>`) leaves the innermost pseudo-tag for the
+    next pass -- the sub runs until stable (capped), and the trailing
+    `>`s of a fully-escaped nesting stay raw, which is legal text. The
+    `[^>]*?` tail crosses a nested `<` on purpose and stops at the first
+    `>`: a `<b::c` with no closing `>` anywhere would run to the next
+    tag's end -- the same single-class runaway shape every tag matcher
+    here documents, and the gate rejects any escape that measures worse.
+    """
+    count = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal count
+        count += 1
+        body = m.group(0)
+        # body[0] is the leading `<` (and the `/` of a closing construct
+        # stays): escape both ends, plus any raw & or nested < the tail
+        # crossed
+        return "&lt;" + body[1:-1].replace("&", "&amp;").replace("<", "&lt;") + "&gt;"
+
+    for _ in range(16):
+        s, n = _DOUBLE_COLON_TAG_RE.subn(repl, s)
+        if not n:
+            break
+    return s, count
+
+
 @_outside_protected
 def fix_id_colons(s: str) -> tuple[str, int]:
     """Translate illegal colons in `id="X:Y"` and matching internal `#X:Y`
