@@ -3497,37 +3497,66 @@ class TestFixItemProperties(unittest.TestCase):
         self.assertEqual(props, {"OEBPS/c1.xhtml": frozenset({"scripted", "svg"})})
 
 
+def _flag_book_opf(*, version="2.0", extra_items="", guide=""):
+    """The minimal one-content-doc package the flag end-to-end classes
+    build their books from (the shared half of the boilerplate the
+    v0.62.x review flagged as a second parallel harness)."""
+    return (
+        '<?xml version="1.0"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" '
+        f'version="{version}" unique-identifier="id">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="id">x</dc:identifier>'
+        "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
+        "<manifest>"
+        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+        f"{extra_items}</manifest>"
+        "<spine><itemref idref='c1'/></spine>"
+        f"{guide}</package>"
+    )
+
+
+_PLAIN_DOC = (
+    '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+    "<head><title>t</title></head><body><p>x</p></body></html>"
+)
+
+
+def _run_flag_repair(flags, opf, docs):
+    """Build the minimal book from (opf, docs), run repair_epub with
+    `flags`, and return (report, {entry: decoded text}) for every text
+    entry of the candidate (bytes entries are not decoded)."""
+    with tempfile.TemporaryDirectory() as td:
+        s, d = Path(td) / "in.epub", Path(td) / "out.epub"
+        with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/content.opf", opf)
+            for name, data in docs.items():
+                z.writestr(name, data)
+        report = repair_epub(s, d, flags)
+        with zipfile.ZipFile(d) as z:
+            entries = {
+                n: z.read(n).decode("utf-8")
+                for n in z.namelist()
+                if isinstance(docs.get(n), str) or n.endswith(".opf")
+            }
+    return report, entries
+
+
 class TestFlagPackageVersionEndToEnd(unittest.TestCase):
     """--fix-package-version through the real repair: the OPF-001 carrier
     (version="1.0") gets the 2.0 spelling and the count lands in fixes."""
 
     def test_repair_epub_rewrites_the_version(self):
-        opf = (
-            '<?xml version="1.0"?>'
-            '<package xmlns="http://www.idpf.org/2007/opf" version="1.0" '
-            'unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-            '<dc:identifier id="id">x</dc:identifier>'
-            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
-            '<manifest><item id="c1" href="c1.xhtml" '
-            'media-type="application/xhtml+xml"/></manifest>'
-            "<spine><itemref idref='c1'/></spine></package>"
+        report, entries = _run_flag_repair(
+            RepairFlags(package_version=True),
+            _flag_book_opf(version="1.0"),
+            {"OEBPS/c1.xhtml": _PLAIN_DOC},
         )
-        with tempfile.TemporaryDirectory() as td:
-            s, d = Path(td) / "in.epub", Path(td) / "out.epub"
-            with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
-                z.writestr("mimetype", "application/epub+zip")
-                z.writestr("OEBPS/content.opf", opf)
-                z.writestr(
-                    "OEBPS/c1.xhtml",
-                    '<html xmlns="http://www.w3.org/1999/xhtml">'
-                    "<head><title>t</title></head><body><p>x</p></body></html>",
-                )
-            report = repair_epub(s, d, RepairFlags(package_version=True))
-            self.assertEqual(report.fixes.get("package_version_fixed"), 1)
-            with zipfile.ZipFile(d) as z:
-                out = z.read("OEBPS/content.opf").decode()
-        self.assertIn('version="2.0"', out)
-        ET.fromstring(out)
+        self.assertEqual(report.fixes.get("package_version_fixed"), 1)
+        opf = entries["OEBPS/content.opf"]
+        self.assertIn('version="2.0"', opf)
+        ET.fromstring(opf)
 
 
 class TestFlagDoctypeEndToEnd(unittest.TestCase):
@@ -3536,16 +3565,6 @@ class TestFlagDoctypeEndToEnd(unittest.TestCase):
     off the package version."""
 
     def test_repair_epub_replaces_the_epub2_doctype(self):
-        opf = (
-            '<?xml version="1.0"?>'
-            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
-            'unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-            '<dc:identifier id="id">x</dc:identifier>'
-            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
-            '<manifest><item id="c1" href="c1.xhtml" '
-            'media-type="application/xhtml+xml"/></manifest>'
-            "<spine><itemref idref='c1'/></spine></package>"
-        )
         doc = (
             '<?xml version="1.0" encoding="utf-8"?>'
             '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" '
@@ -3553,16 +3572,11 @@ class TestFlagDoctypeEndToEnd(unittest.TestCase):
             '<html xmlns="http://www.w3.org/1999/xhtml">'
             "<head><title>t</title></head><body><p>x</p></body></html>"
         )
-        with tempfile.TemporaryDirectory() as td:
-            s, d = Path(td) / "in.epub", Path(td) / "out.epub"
-            with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
-                z.writestr("mimetype", "application/epub+zip")
-                z.writestr("OEBPS/content.opf", opf)
-                z.writestr("OEBPS/c1.xhtml", doc)
-            report = repair_epub(s, d, RepairFlags(doctype=True))
-            self.assertEqual(report.fixes.get("doctype_normalized"), 1)
-            with zipfile.ZipFile(d) as z:
-                out = z.read("OEBPS/c1.xhtml").decode()
+        report, entries = _run_flag_repair(
+            RepairFlags(doctype=True), _flag_book_opf(), {"OEBPS/c1.xhtml": doc}
+        )
+        self.assertEqual(report.fixes.get("doctype_normalized"), 1)
+        out = entries["OEBPS/c1.xhtml"]
         self.assertIn('"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"', out)
         self.assertNotIn("XHTML 1.0 Strict", out)
 
@@ -3572,40 +3586,23 @@ class TestFlagGuidePruneEndToEnd(unittest.TestCase):
     msr shape (a guide cover reference to a declared JPEG) is removed."""
 
     def test_repair_epub_prunes_the_jpeg_guide_ref(self):
-        opf = (
-            '<?xml version="1.0"?>'
-            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
-            'unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-            '<dc:identifier id="id">x</dc:identifier>'
-            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
-            "<manifest>"
-            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
-            '<item id="cover" href="cover.jpg" media-type="image/jpeg"/>'
-            "</manifest>"
-            "<spine><itemref idref='c1'/></spine>"
-            "<guide>"
-            '<reference type="other.ms-coverimage-standard" title="Cover" '
-            'href="cover.jpg"/>'
-            '<reference type="toc" title="T" href="c1.xhtml"/>'
-            "</guide></package>"
+        opf = _flag_book_opf(
+            extra_items='<item id="cover" href="cover.jpg" media-type="image/jpeg"/>',
+            guide=(
+                '<reference type="other.ms-coverimage-standard" title="Cover" '
+                'href="cover.jpg"/>'
+                '<reference type="toc" title="T" href="c1.xhtml"/>'
+            ),
         )
-        with tempfile.TemporaryDirectory() as td:
-            s, d = Path(td) / "in.epub", Path(td) / "out.epub"
-            with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
-                z.writestr("mimetype", "application/epub+zip")
-                z.writestr("OEBPS/content.opf", opf)
-                z.writestr("OEBPS/cover.jpg", b"\xff\xd8\xff\xe0")
-                z.writestr(
-                    "OEBPS/c1.xhtml",
-                    '<html xmlns="http://www.w3.org/1999/xhtml">'
-                    "<head><title>t</title></head><body><p>x</p></body></html>",
-                )
-            report = repair_epub(s, d, RepairFlags(prune_guide_refs=True))
-            self.assertEqual(report.fixes.get("invalid_guide_refs_pruned"), 1)
-            with zipfile.ZipFile(d) as z:
-                out = z.read("OEBPS/content.opf").decode()
-        self.assertIn('href="c1.xhtml"', out)
-        self.assertNotIn("ms-coverimage-standard", out)
+        report, entries = _run_flag_repair(
+            RepairFlags(prune_guide_refs=True),
+            opf,
+            {"OEBPS/c1.xhtml": _PLAIN_DOC, "OEBPS/cover.jpg": b"\xff\xd8\xff\xe0"},
+        )
+        self.assertEqual(report.fixes.get("invalid_guide_refs_pruned"), 1)
+        opf_out = entries["OEBPS/content.opf"]
+        self.assertIn('href="c1.xhtml"', opf_out)
+        self.assertNotIn("ms-coverimage-standard", opf_out)
 
 
 class TestFlagItemPropertiesEndToEnd(unittest.TestCase):
@@ -3613,47 +3610,32 @@ class TestFlagItemPropertiesEndToEnd(unittest.TestCase):
     script gains `scripted` beside `nav`; the same defect on an EPUB2
     package refuses (properties is EPUB3 vocabulary)."""
 
-    def _book(self, td, version):
-        opf = (
-            '<?xml version="1.0"?>'
-            '<package xmlns="http://www.idpf.org/2007/opf" '
-            f'version="{version}" unique-identifier="id">'
-            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-            '<dc:identifier id="id">x</dc:identifier>'
-            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
-            "<manifest>"
-            '<item id="nav" href="nav.xhtml" '
-            'media-type="application/xhtml+xml" properties="nav"/>'
-            "</manifest>"
-            "<spine><itemref idref='nav'/></spine></package>"
-        )
-        nav = (
-            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>n</title>'
-            "<script>1</script></head><body><p>x</p></body></html>"
-        )
-        s, d = Path(td) / "in.epub", Path(td) / "out.epub"
-        with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("mimetype", "application/epub+zip")
-            z.writestr("OEBPS/content.opf", opf)
-            z.writestr("OEBPS/nav.xhtml", nav)
-        return s, d
+    def _run(self, version):
+        opf = _flag_book_opf(
+            version=version,
+            extra_items=(
+                '<item id="nav" href="nav.xhtml" '
+                'media-type="application/xhtml+xml" properties="nav"/>'
+            ),
+        ).replace("<itemref idref='c1'/>", "<itemref idref='nav'/>")
+        docs = {
+            "OEBPS/nav.xhtml": (
+                '<html xmlns="http://www.w3.org/1999/xhtml">'
+                "<head><title>n</title><script>1</script></head>"
+                "<body><p>x</p></body></html>"
+            )
+        }
+        return _run_flag_repair(RepairFlags(item_properties=True), opf, docs)
 
     def test_epub3_nav_gains_scripted(self):
-        with tempfile.TemporaryDirectory() as td:
-            s, d = self._book(td, "3.0")
-            report = repair_epub(s, d, RepairFlags(item_properties=True))
-            self.assertEqual(report.fixes.get("item_properties_added"), 1)
-            with zipfile.ZipFile(d) as z:
-                out = z.read("OEBPS/content.opf").decode()
-        self.assertIn('properties="nav scripted"', out)
+        report, entries = self._run("3.0")
+        self.assertEqual(report.fixes.get("item_properties_added"), 1)
+        self.assertIn('properties="nav scripted"', entries["OEBPS/content.opf"])
 
     def test_epub2_package_refuses(self):
-        with tempfile.TemporaryDirectory() as td:
-            s, d = self._book(td, "2.0")
-            report = repair_epub(s, d, RepairFlags(item_properties=True))
-            self.assertNotIn("item_properties_added", report.fixes)
-            with zipfile.ZipFile(d) as z:
-                out = z.read("OEBPS/content.opf").decode()
+        report, entries = self._run("2.0")
+        self.assertNotIn("item_properties_added", report.fixes)
+        out = entries["OEBPS/content.opf"]
         self.assertIn('properties="nav"', out)
         self.assertNotIn("scripted", out)
 
@@ -3664,32 +3646,19 @@ class TestFlagDoubleColonTagsEndToEnd(unittest.TestCase):
     the count lands in fixes."""
 
     def test_repair_epub_escapes_the_pseudo_tag(self):
-        opf = (
-            '<?xml version="1.0"?>'
-            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
-            'unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-            '<dc:identifier id="id">x</dc:identifier>'
-            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
-            '<manifest><item id="c1" href="c1.xhtml" '
-            'media-type="application/xhtml+xml"/></manifest>'
-            "<spine><itemref idref='c1'/></spine></package>"
+        docs = {
+            "OEBPS/c1.xhtml": (
+                '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+                "<head><title>t</title></head><body><pre><code><span>"
+                "std::vector<std::shared_ptr>&gt; data;</span>"
+                "</code></pre></body></html>"
+            )
+        }
+        report, entries = _run_flag_repair(
+            RepairFlags(double_colon_tags=True), _flag_book_opf(), docs
         )
-        doc = (
-            '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
-            "<head><title>t</title></head><body><pre><code><span>"
-            "std::vector<std::shared_ptr>&gt; data;</span>"
-            "</code></pre></body></html>"
-        )
-        with tempfile.TemporaryDirectory() as td:
-            s, d = Path(td) / "in.epub", Path(td) / "out.epub"
-            with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
-                z.writestr("mimetype", "application/epub+zip")
-                z.writestr("OEBPS/content.opf", opf)
-                z.writestr("OEBPS/c1.xhtml", doc)
-            report = repair_epub(s, d, RepairFlags(double_colon_tags=True))
-            self.assertEqual(report.fixes.get("double_colon_tags_escaped"), 1)
-            with zipfile.ZipFile(d) as z:
-                out = z.read("OEBPS/c1.xhtml").decode()
+        self.assertEqual(report.fixes.get("double_colon_tags_escaped"), 1)
+        out = entries["OEBPS/c1.xhtml"]
         self.assertIn("&lt;std::shared_ptr&gt;", out)
         self.assertNotIn("<std::shared_ptr>", out)
 
