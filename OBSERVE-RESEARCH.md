@@ -696,3 +696,51 @@ the shell. Known display quirk: the percentage divides by the RESOLVED
 spine count (14), not resolved+missing (752), so shells read over 100%
 — cosmetic, the verdict fires correctly. Manual handling pending:
 re-source both books when a better copy surfaces.
+
+### The shell-repair feasibility dig (2026-11-05, facility copies)
+
+Falsified the "different spelling" hypothesis for good: Book 19's archive
+carries 14 REAL full-size chapters (0448_743 through 0461_755 — the
+book's exact serial range, 118-156KB each of real prose), and Book 18
+likewise (19 docs, chapters 730-742). The converter shipped the correct
+chapter range but wrote the ENTIRE serial manifest: 738/755 and 736/758
+manifest items name files that were never this book's chapters. The
+"missing" files were never missing from anything — they belong to the
+other books.
+
+Feasibility verdict for a suite repair: PROVEN by hand-surgery on the
+Book 19 copy. The recipe (NCX prune via the existing flag + drop the
+dead manifest items and dangling itemrefs + playOrder re-sequence to
+1..K + the doctype/title fixes) lands the book at 0f/5e — from
+0f/742e — as a complete, coherent EPUB of its own chapters. All
+deterministic. The flag design (`--prune-dead-spine`, shell-gated at
+the audit's 50% signature so a lone missing chapter never fires it):
+dead manifest content items + dangling itemrefs dropped, then the
+existing fix_ncx_playorder coordination, then the guide-empty
+coordination with prune_invalid_guide_refs.
+
+TWO live discoveries the surgery surfaced, both suite-relevant:
+
+1. **The playOrder contract mismatch is REAL and base-free is wrong for
+   shell-shaped NCXs**: after the prune, the 14 surviving navPoints keep
+   playOrder 448..461 (contiguous run, base 448). The v0.62.0 base-free
+   contract reads that satisfied — but epubcheck 5.3 flags BOTH
+   "playOrder sequence has gaps" AND "the first playOrder value is not
+   1" on this exact NCX. The v0.62.0 minimal matrix (offset-5-8,
+   singleton-2) was too minimal: epubcheck demands the 1-base once the
+   NCX carries findings it validates deeply (or the shape differs in a
+   way the matrix missed). fix_ncx_playorder returning 0 on an NCX
+   epubcheck flags is the mismatch, verbatim. A shell repair must
+   re-sequence to 1..K unconditionally (not contract-gated), and the
+   contract's base-free clause needs this shape added to its test
+   matrix.
+2. **The empty-guide coordination**: dropping dead items can empty the
+   guide (or prune_invalid_guide_refs can), and an empty `<guide>` is
+   itself an RSC-005. The flag design needs the drop-or-fill decision
+   for an emptied guide.
+
+Manual handling note: both books open fine AS SHIPPED (0 fatals; the
+742/739 RSC-001s are noise to readers). The surgical recipe above is
+the documented manual path; the regex-renumber experiment corrupted a
+test NCX once (greedy `[^>]*` across attributes) — use bindery's own
+transforms, not hand regex, for any real re-sequence.
