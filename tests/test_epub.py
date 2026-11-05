@@ -3806,3 +3806,122 @@ class TestEncodeRefBrackets(unittest.TestCase):
         )
         self.assertEqual(n, 1)
         self.assertIn("url(img%5B3%5D.png)", out)
+
+
+class TestPruneDeadSpine(unittest.TestCase):
+    """--prune-dead-spine: the shell repair. Fires ONLY at the shell
+    signature (>= 50% of the manifest's content hrefs name files the
+    archive does not carry) -- a lone missing chapter never crosses it,
+    so the spine non-goal stays in force for ordinary damage. Proven on
+    the Wandering Inn facility copies at 742e -> 5e with 0 fatals."""
+
+    def _opf(self, version="2.0", items=()):
+        manifest = "".join(
+            f'<item id="{iid}" href="{href}" media-type="application/xhtml+xml"/>'
+            for iid, href in items
+        )
+        spine = "".join(f'<itemref idref="{iid}"/>' for iid, _ in items)
+        return (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            f'version="{version}" unique-identifier="id">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="id">x</dc:identifier>'
+            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
+            f"<manifest>{manifest}</manifest>"
+            f"<spine>{spine}</spine></package>"
+        )
+
+    def _doc(self, title):
+        return (
+            '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+            f"<head><title>{title}</title></head><body><p>{title}</p></body></html>"
+        )
+
+    def _build(self, td, opf, docs):
+        s = Path(td) / "in.epub"
+        with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/content.opf", opf)
+            for name, data in docs.items():
+                z.writestr(name, data)
+        return s
+
+    def test_shell_signature_prunes_items_and_refs(self):
+        # 4 content items, only 1 file shipped: 75% missing = shell
+        opf = self._opf(
+            version="2.0",
+            items=[
+                ("live", "live.xhtml"),
+                ("d1", "ghost1.xhtml"),
+                ("d2", "ghost2.xhtml"),
+                ("d3", "ghost3.xhtml"),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as td:
+            s = self._build(td, opf, {"OEBPS/live.xhtml": self._doc("L")})
+            d = Path(td) / "out.epub"
+            report = repair_epub(s, d, RepairFlags(prune_dead_spine=True))
+            self.assertGreaterEqual(report.fixes.get("dead_spine_items_pruned"), 3)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/content.opf").decode()
+        self.assertNotIn("ghost1.xhtml", out)
+        self.assertNotIn('idref="d1"', out)
+        self.assertIn('idref="live"', out)
+        ET.fromstring(out)
+
+    def test_sub_shell_fraction_refuses(self):
+        # 1 of 4 missing: 25% — a lone missing chapter never crosses the
+        # signature and the spine non-goal stays in force
+        opf = self._opf(
+            version="2.0",
+            items=[
+                ("live", "live.xhtml"),
+                ("b", "b.xhtml"),
+                ("c", "c.xhtml"),
+                ("ghost", "ghost.xhtml"),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as td:
+            docs = {
+                "OEBPS/live.xhtml": self._doc("L"),
+                "OEBPS/b.xhtml": self._doc("B"),
+                "OEBPS/c.xhtml": self._doc("C"),
+            }
+            s = self._build(td, opf, docs)
+            d = Path(td) / "out.epub"
+            report = repair_epub(s, d, RepairFlags(prune_dead_spine=True))
+            self.assertNotIn("dead_spine_items_pruned", report.fixes)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/content.opf").decode()
+        self.assertIn("ghost.xhtml", out)
+
+    def test_images_and_ncx_items_are_never_dead(self):
+        # the dead set is content-doc items only: the NCX/CSS/images keep
+        # their manifest entries whatever their files' fate
+        opf = self._opf(
+            version="2.0",
+            items=[
+                ("live", "live.xhtml"),
+                ("d1", "g1.xhtml"),
+                ("d2", "g2.xhtml"),
+                ("d3", "g3.xhtml"),
+            ],
+        )
+        opf = opf.replace(
+            "</manifest>",
+            '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+            '<item id="css" href="s.css" media-type="text/css"/>'
+            '<item id="img" href="i.jpg" media-type="image/jpeg"/>'
+            "</manifest>",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            docs = {"OEBPS/live.xhtml": self._doc("L")}
+            s = self._build(td, opf, docs)
+            d = Path(td) / "out.epub"
+            repair_epub(s, d, RepairFlags(prune_dead_spine=True))
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/content.opf").decode()
+        self.assertIn('id="ncx"', out)
+        self.assertIn('id="css"', out)
+        self.assertIn('id="img"', out)

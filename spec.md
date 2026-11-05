@@ -13,7 +13,7 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty-two
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty-three
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
@@ -25,7 +25,8 @@ The deliberate exceptions to "semantics-preserving" come in opt-in groups. The t
 `--fix-stray-close`, `--fix-unterminated-attr`, `--fix-unbound-prefix`,
 `--fix-unique-identifier`, `--fix-package-version`, `--fix-doctype`,
 `--prune-invalid-guide-refs`, `--fix-item-properties`,
-`--strip-presentational-attrs`, `--encode-ref-brackets`) alter
+`--strip-presentational-attrs`, `--encode-ref-brackets`,
+`--prune-dead-spine`) alter
 markup structure or fabricate minimal content; the four
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
 `--strip-stub-docs`) remove
@@ -534,7 +535,24 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   walk covers content documents, the OPF, the NCX, and stylesheet `url()`
   tokens.
 
-Twenty-nine of the thirty-two are evaluated by the normal `gate`: unlike the lossy strips,
+- **`--prune-dead-spine`**: the shell repair -- fires ONLY when half or
+  more of the manifest's content hrefs name files the archive does not
+  carry (the audit battery's `shell` analyzer names the same shape; the
+  2026-11-04 Wandering Inn shells: 738 and 736 of 755/752 items dead --
+  verified by content walk as the OTHER books' chapters, never a spelling
+  mismatch). Drops the dead manifest items and the spine itemrefs that
+  name them, prunes the dead NCX navPoints (the existing dangling-target
+  prune, coordinated on), and re-sequences the surviving playOrders to
+  1..K UNCONDITIONALLY -- epubcheck 5.3 flagged "the first playOrder
+  value is not 1" on the post-prune 448..461 run even though the
+  base-free contract read it satisfied (the minimal matrix missed the
+  shell shape; the oracle rules). Nothing real is lost: the dropped
+  positions never resolved, and the book that remains is the complete,
+  coherent chapter range the archive actually carries. A lone missing
+  chapter never crosses the signature: the spine non-goal stays in force
+  for ordinary damage.
+
+Thirty of the thirty-three are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. The three exceptions are `--fix-cover`, `--encode-url-spaces`, and
 `--fix-media-types` (whose gains sit on axes epubcheck's counts do not measure:

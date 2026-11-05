@@ -116,6 +116,7 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         double_colon_tags=args.fix_double_colon_tags or all_,
         presentational_attrs=args.strip_presentational_attrs or all_,
         encode_ref_brackets=args.encode_ref_brackets or all_,
+        prune_dead_spine=args.prune_dead_spine or all_,
     )
 
 
@@ -1831,6 +1832,23 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
         ),
     ],
     "structural repairs: references and resources": [
+        (
+            "prune_dead_spine",
+            "the shell repair: drop manifest items and spine positions whose files the archive never carried",
+            "fires ONLY at the shell signature -- half or more of the "
+            "manifest's content hrefs name files the archive does not carry "
+            "(the audit battery's `shell` analyzer names the same shape). "
+            "Drops the dead manifest items, the spine itemrefs that name "
+            "them, and (coordinated) the dead NCX navPoints, then "
+            "re-sequences the surviving playOrders to 1..K unconditionally: "
+            "epubcheck 5.3 demands the 1-base on the post-prune shape even "
+            "where the base-free contract reads a contiguous offset run "
+            "satisfied. A lone missing chapter NEVER crosses the signature: "
+            "the spine non-goal stays in force for ordinary damage. The "
+            "2026-11-04 Wandering Inn shells (738 and 736 of 755/752 items "
+            "dead) are the design case; proven on the facility copy at "
+            "742e -> 5e with 0 fatals.",
+        ),
         (
             "encode_ref_brackets",
             "percent-encode raw [ ] in internal references whose target exists (RSC-020)",

@@ -529,6 +529,20 @@ def _fixtures() -> dict:
             },
             "item_properties_added",
         ),
+        "--prune-dead-spine": (
+            {
+                "OEBPS/content.opf": _opf(
+                    [
+                        _item("live", "live.xhtml"),
+                        _item("d1", "ghost1.xhtml"),
+                        _item("d2", "ghost2.xhtml"),
+                    ],
+                    [_ref("live"), _ref("d1"), _ref("d2")],
+                ),
+                "OEBPS/live.xhtml": _doc("<p>word word word word</p>"),
+            },
+            "dead_spine_items_pruned",
+        ),
         "--fix-double-colon-tags": (
             {
                 "OEBPS/content.opf": _opf([c1], [r1]),
@@ -770,6 +784,11 @@ class FlagEndToEndTests(unittest.TestCase):
     def test_fix_item_properties(self):
         self.assertGreaterEqual(
             self._fixes_for("--fix-item-properties")["item_properties_added"], 1
+        )
+
+    def test_prune_dead_spine(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--prune-dead-spine")["dead_spine_items_pruned"], 2
         )
 
     def test_fix_double_colon_tags(self):

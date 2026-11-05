@@ -1,5 +1,50 @@
 # bindery-cli Patch Notes
 
+## v0.64.0 (2026-11-05)
+
+### --prune-dead-spine: the shell repair
+
+The Wandering Inn feasibility dig proved the recipe on the facility
+copies (0f/742e -> 0f/5e, 0 fatals, a complete coherent book of its own
+chapters); this release builds it as a flag. The diagnosis falsified the
+2026-10-25 "different spelling" hypothesis: Book 18 and Book 19 carry
+their REAL, complete chapter ranges (730-742 and 743-755, full-size
+prose docs) -- the converter shipped the right chapters and wrote the
+ENTIRE serial manifest, so 738 and 736 of 755/752 manifest items name
+files that were never this book's chapters. The books are not damaged
+goods: they are complete books wrapped in another book's manifest.
+
+`--prune-dead-spine` fires ONLY at the shell signature -- half or more
+of the manifest's content hrefs name files the archive does not carry
+(the audit battery's `shell` analyzer, v0.63.0, names the same shape).
+At the signature it drops the dead manifest items and the spine itemrefs
+that name them, prunes the dead NCX navPoints (the existing
+dangling-target prune, coordinated on via a dataclasses.replace), and
+re-sequences the surviving playOrders to 1..K. Below the signature --
+a lone missing chapter, a broken fragment -- it never fires: the spine
+non-goal ("missing spine documents mean corrupt archives or broken
+fragments") stays in force for ordinary damage, now with a third,
+measured exception: the wholesale shell.
+
+Two live findings the build closed out:
+
+- **The playOrder contract is not base-free on the shell shape.** The
+  v0.62.0 base-free clause was built from a minimal matrix that validated
+  offset runs (448..461-shaped) clean -- but epubcheck 5.3 flagged BOTH
+  "playOrder sequence has gaps" AND "the first playOrder value is not 1"
+  on the post-prune Wandering Inn NCX. The oracle rules: the shell
+  repair re-sequences to 1..K unconditionally (a `force` parameter on
+  `fix_ncx_playorder`), and the base-free clause's test matrix gains the
+  shell shape as a known divergence.
+- **fix_ncx_playorder gains `force`**: the shell repair's playOrder
+  half must re-sequence even where the contract reads satisfied.
+
+The proven end state on the facility copy: 0f/5e (from 0f/742e), a
+complete readable book of its own chapters -- nothing real is lost; the
+dropped positions never resolved in any reader.
+
+Suite: 917 tests.
+
 ## v0.63.1 (2026-11-04)
 
 ### Two single-flag live-verification catches

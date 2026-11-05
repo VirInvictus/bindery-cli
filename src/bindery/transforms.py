@@ -351,9 +351,18 @@ _CONTENT_SRC_RE = re.compile(
 
 
 @_outside_protected
-def fix_ncx_playorder(s: str) -> tuple[str, int]:
+def fix_ncx_playorder(s: str, *, force: bool = False) -> tuple[str, int]:
     """Re-sequence `playOrder` values so the NCX satisfies epubcheck's playOrder
     contract, and touch nothing when it already does.
+
+    `force` (v0.64.0, the shell repair's coordination) skips the
+    satisfied-contract early return and re-sequences to 1..K
+    unconditionally. The prune-dead-spine flag needs it: epubcheck 5.3
+    flagged "the first playOrder value is not 1" on the surviving 448..461
+    run of a shell NCX whose dead navPoints had just been pruned -- the
+    base-free clause reads that run satisfied, but on the post-prune shape
+    the oracle demands the 1-base (the v0.62.0 minimal matrix missed this
+    shape; the contract is base-free only where the oracle says so).
 
     Contract-gated (the 2026-10-24 whole-library surgery): the previous form
     renumbered every `<navPoint>` to document-order 1..N unconditionally, which
@@ -435,7 +444,7 @@ def fix_ncx_playorder(s: str) -> tuple[str, int]:
             contract_ok = False
             break
         used |= vals
-    if contract_ok and used and len(used) == len(groups):
+    if not force and contract_ok and used and len(used) == len(groups):
         lo = min(used)
         if used == set(range(lo, lo + len(used))):
             return s, 0

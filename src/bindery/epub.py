@@ -285,6 +285,7 @@ class RepairFlags:
     double_colon_tags: bool = False
     presentational_attrs: bool = False
     encode_ref_brackets: bool = False
+    prune_dead_spine: bool = False
 
 
 @dataclass
@@ -520,6 +521,37 @@ def _manifest_media_type_map(opf_text: str, opf_dir: str) -> dict[str, str]:
         if tm is not None:
             out[resolved] = tm.group(2)
     return out
+
+
+def prune_dead_spine_items(
+    opf_text: str, dead_ids: frozenset[str] | set[str]
+) -> tuple[str, int]:
+    """Drop manifest items whose ids are in `dead_ids` (content items whose
+    files the archive never carried) and the spine itemrefs that name them
+    -- the shell repair's manifest half, gated upstream on the >= 50%
+    signature. Document order survives: everything not dropped passes
+    through byte-identical, and the `spine toc` attribute is untouched.
+    Returns the number of ITEMS dropped (the itemrefs follow silently)."""
+    count = 0
+
+    def drop_item(m: re.Match) -> str:
+        nonlocal count
+        im = _XML_ID_RE.search(m.group(0))
+        if im and im.group(3) in dead_ids:
+            count += 1
+            return ""
+        return m.group(0)
+
+    out = _ITEM_TAG_RE.sub(drop_item, opf_text)
+
+    def drop_ref(m: re.Match) -> str:
+        rm = _IDREF_ATTR_RE.search(m.group(0))
+        if rm and rm.group(3) in dead_ids:
+            return ""
+        return m.group(0)
+
+    out = _SPINE_ITEM_RE.sub(drop_ref, out)
+    return out, count
 
 
 def prune_invalid_guide_refs(opf_text: str, opf_dir: str) -> tuple[str, int]:
@@ -2532,6 +2564,7 @@ def repair_epub(
             or flags.declare_missing
             or flags.prune_ncx_targets
             or flags.encode_ref_brackets
+            or flags.prune_dead_spine
         ):
             for n in zin.namelist():
                 norm_to_raw.setdefault(_norm_path(space_renames.get(n, n)), n)
@@ -2544,6 +2577,40 @@ def repair_epub(
         undeclared: frozenset[str] = frozenset()
         if flags.declare_missing and opf_text is not None:
             undeclared = collect_undeclared_resources(zin, opf_text, opf_dir, present)
+        # --prune-dead-spine: the shell signature, computed once like the
+        # prune's existence set. Dead = manifest CONTENT items whose href
+        # file the archive does not carry; the flag only fires at the
+        # audit's shell signature (>= 50% of the content manifest missing),
+        # so a lone missing chapter never crosses it and the spine
+        # non-goal stays in force for ordinary damage (the 2026-11-04
+        # Wandering Inn diagnosis: 738 and 736 of 755/752 items dead).
+        shell_ok = False
+        dead_spine_ids: frozenset[str] = frozenset()
+        if flags.prune_dead_spine and opf_text is not None and present:
+            total_content = 0
+            dead: set[str] = set()
+            for m in _ITEM_TAG_RE.finditer(opf_text):
+                tag = m.group(0)
+                hm = _HREF_ATTR_RE.search(tag)
+                im = _XML_ID_RE.search(tag)
+                if not hm or not im:
+                    continue
+                href = hm.group(2)
+                if not href.lower().endswith((".xhtml", ".html", ".htm")):
+                    continue
+                total_content += 1
+                resolved = _resolve_href(opf_dir, href)
+                if resolved is None or resolved not in present:
+                    dead.add(im.group(3))
+            if total_content and len(dead) / total_content >= 0.5:
+                shell_ok = True
+                dead_spine_ids = frozenset(dead)
+                # the NCX half coordinates: the navPoint prune drops the
+                # dead navPoints and the playOrders re-sequence to 1..K
+                # (forced -- epubcheck 5.3 demands the 1-base on the
+                # post-prune shape even where the minimal matrix said the
+                # base was free)
+                flags = replace(flags, prune_ncx_targets=True)
         item_props: dict[str, frozenset[str]] = {}
         if flags.item_properties:
             item_props = collect_item_properties(zin)
@@ -2813,6 +2880,18 @@ def repair_epub(
                             counts["fix_ncx_playorder"] = (
                                 counts.get("fix_ncx_playorder", 0) + n2
                             )
+                if shell_ok:
+                    # The shell repair's playOrder half, UNCONDITIONAL (not
+                    # contract-gated): epubcheck 5.3 flagged "the first
+                    # playOrder value is not 1" on the post-prune 448..461
+                    # run -- the base-free clause reads that satisfied, but
+                    # on the shell shape the oracle demands the 1-base.
+                    # Re-sequence to 1..K in document order.
+                    text, n2 = fix_ncx_playorder(text, force=True)
+                    if n2:
+                        counts["fix_ncx_playorder"] = (
+                            counts.get("fix_ncx_playorder", 0) + n2
+                        )
                 synced = False
                 sync_uid = uid if uid else wired_uid
                 if sync_uid:
@@ -2840,6 +2919,7 @@ def repair_epub(
                 or flags.package_version
                 or flags.prune_guide_refs
                 or flags.item_properties
+                or flags.prune_dead_spine
             ):
                 opf_changed = False
                 if flags.package_version:
@@ -2849,6 +2929,16 @@ def repair_epub(
                     text, n = fix_package_version(text)
                     if n:
                         report.add({"package_version_fixed": n})
+                        opf_changed = True
+                if flags.prune_dead_spine and shell_ok and dead_spine_ids:
+                    # The shell repair's manifest half (gated on the >= 50%
+                    # signature computed above): dead content items and the
+                    # spine itemrefs that name them drop together. The NCX
+                    # half (navPoint prune + forced playOrder re-sequence)
+                    # runs in the NCX branch.
+                    text, n = prune_dead_spine_items(text, dead_spine_ids)
+                    if n:
+                        report.add({"dead_spine_items_pruned": n})
                         opf_changed = True
                 if flags.unbound_prefix:
                     # First in the branch: the unbound prefix makes the whole
