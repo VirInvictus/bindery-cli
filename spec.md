@@ -1013,3 +1013,31 @@ Behavior contract:
   on stay out of scope, and anything the opt-ins cannot make deterministically
   safe is detected as `partial`/`nochange` and reported.
 - Editing human-facing dc: metadata or creating content.
+
+
+## The 1.0 stability contract (2026-11-05)
+
+1.0 is a contract statement, not a feature claim: the tool does what this
+document says, and this document is the promise. Concretely, from 1.0.0:
+
+- **The flag surface is additive.** New opt-in flags may appear; existing
+  flags' names and documented semantics do not change. A predicate
+  refinement (a flag firing less or more than before) is a behavior
+  change and ships documented in patchnotes with oracle evidence, as
+  base-free (v0.62.0), the doctype narrowing (v0.63.0), and the
+  presentational set's scoping did.
+- **The gate is stable.** The two-mode improvement/no-worse acceptance
+  bars, the spine-collapse veto, and the shell signature's 50% gate are
+  the contract; their thresholds do not move silently.
+- **The record vocabulary is stable.** `repair --json` / `library --json`
+  record shapes, the fix-breakdown keys, the exit-code contracts, and the
+  observe schema (v2) do not change in 1.x. Consumers (CalibreQuarry's
+  lossy-consent mirror) can pin `bindery>=1.0`.
+- **The audit battery is additive.** Analyzers join the battery
+  (`shell`, v0.63.0); existing analyzers' verdict shapes do not change,
+  and advisory analyzers never move the exit code.
+
+What 1.0 does NOT claim: that every book is repairable. The content-model
+zoo, the shell books (detected, re-source), and the WARN litter stay
+measured by the observatory — the charter's "render identically" line
+puts them out of repair scope permanently.

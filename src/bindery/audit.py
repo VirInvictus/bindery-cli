@@ -1527,8 +1527,18 @@ def analyze_shell(book: Book) -> dict:
     Advisory by contract, like completeness."""
     spine_n = len(book.spine)
     missing = book.spine_missing
-    frac = (missing / spine_n) if spine_n else 0.0
-    return {"spine_docs": spine_n, "missing": missing, "missing_frac": frac}
+    # the denominator is resolved + missing (the manifest the book claims),
+    # not the resolved spine alone: on a shell the resolved spine is the
+    # sliver (14 of 752), so a spine-only denominator read shells at over
+    # 100% (the 2026-11-04 display quirk, fixed v1.0.0)
+    total = spine_n + missing
+    frac = (missing / total) if total else 0.0
+    return {
+        "spine_docs": spine_n,
+        "missing": missing,
+        "manifest_total": total,
+        "missing_frac": frac,
+    }
 
 
 def _shell_dir(r: dict) -> tuple[bool, str, list[str]]:

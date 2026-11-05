@@ -1,5 +1,40 @@
 # bindery-cli Patch Notes
 
+## v1.0.0 (2026-11-05)
+
+### 1.0: the contract is the promise
+
+bindery-cli is 1.0. The observatory's final cycle states the mission's
+completion in numbers: the library's default-pass preview answers
+accepted 0 / partial 0 / rejected 0 / equal 46 — the arsenal has nothing
+left to give on this library — clean sits at 4,126 of 7,156, error mass
+at 11,455 (from 16,182 across the session's waves), and the library
+carries ZERO fatal books. 2,055 books were repaired across the session's
+waves; every finding class in the census is dispositioned: repaired,
+detected at intake, or leave-measured with a recorded reason.
+
+**What 1.0 means** (the stability contract, now a section in spec.md):
+the flag surface is additive from here — new opt-in flags may appear,
+existing flags' names and documented semantics do not change; the gate's
+improvement/no-worse bars, the spine-collapse veto, and the shell
+signature's 50% gate are stable; the JSON record vocabulary, the fix
+breakdown, the exit-code contracts, and the observe schema (v2) are
+stable, and downstream consumers can pin `bindery>=1.0`. Predicate
+refinements ship documented in patchnotes with oracle evidence — the
+standard this session set (base-free v0.62.0, the doctype narrowing
+v0.63.0, both proven against epubcheck before they moved).
+
+**This release carries**: the shell-% denominator fix (a shell now reads
+its true manifest fraction — 75% for the Wandering Inn shape — instead
+of the resolved-spine-only denominator that read shells at over 100%),
+and the 1.0 stability section in spec.md plus the README status line.
+The tool itself is v0.64.0's: `--prune-dead-spine` closed the Wandering
+Inn repair (both books live-applied at 0f/2e and 0f/3e from 0f/739e and
+0f/742e), and the remaining census is the documented leave-measured
+edge.
+
+Suite: 917 tests.
+
 ## v0.64.0 (2026-11-05)
 
 ### --prune-dead-spine: the shell repair

@@ -8,6 +8,12 @@
   <img src="docs/screenshots/library-sweep.png" alt="bindery-cli's dry-run library sweep: per-book epubcheck results and a summary table ending in 'no files written'">
 </p>
 
+**Status: 1.0.** The flag surface is additive from here — new opt-in flags may
+appear, existing flags' names and documented semantics are stable, and the gate
+semantics plus the JSON record vocabulary are the contract (see the stability
+section in spec.md). The observatory keeps the library census measured; the
+remaining findings are the documented leave-measured classes.
+
 ## What it fixes
 
 bindery-cli makes accidentally broken markup well-formed again. It does not rewrite or reflow content. The **default pass** applies only a small set of deterministic, semantics-preserving well-formedness fixes that real-world EPUBs (especially Calibre conversions) trip over; nothing else changes without an explicit flag:

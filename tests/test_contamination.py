@@ -421,7 +421,10 @@ class TestShellAnalyzer(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             book = load_book(_epub(tmp, opf, files))
         r = analyze_shell(book)
-        self.assertGreaterEqual(r["missing_frac"], 0.5)
+        # v1.0.0 denominator: resolved spine + missing (the manifest the
+        # book claims), so a shell reads its true fraction -- never over 1
+        self.assertEqual(r["missing_frac"], 0.75)
+        self.assertEqual(r["manifest_total"], 4)
         _p, status, lines = _shell_dir(r)
         self.assertIn("SHELL", status)
         self.assertIn("re-source", status)
