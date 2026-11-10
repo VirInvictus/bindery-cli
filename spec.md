@@ -13,7 +13,7 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty-three
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty-four
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
@@ -26,6 +26,7 @@ The deliberate exceptions to "semantics-preserving" come in opt-in groups. The t
 `--fix-unique-identifier`, `--fix-package-version`, `--fix-doctype`,
 `--prune-invalid-guide-refs`, `--fix-item-properties`,
 `--strip-presentational-attrs`, `--encode-ref-brackets`,
+`--encode-ref-delims`,
 `--prune-dead-spine`) alter
 markup structure or fabricate minimal content; the four
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
@@ -535,6 +536,32 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   walk covers content documents, the OPF, the NCX, and stylesheet `url()`
   tokens.
 
+- **`--encode-ref-delims`**: percent-encode a literal `#` or `?` inside a
+  filename reference whose raw delimiter defeats the reference's own
+  resolution (issue #26, the Elminster bookmate conversion: 36 of 38
+  manifest hrefs carried `#01`, parsed as file `Elminster_` plus fragment,
+  RSC-001 'File ... could not be found', and epubcheck never parsed the
+  documents at all). Two gates, both required: the reference must NOT
+  resolve as written -- its path portion, read the way the oracle and
+  every reader parse it (first `#`/`?` starts fragment/query), must miss
+  the archive; a working `doc.xhtml#intro` is never touched, and where
+  both `a` and `a#b` exist the RFC spelling wins. And the delimiter-
+  encoded spelling MUST match an archive entry (the issue #19 mechanism:
+  epubcheck decodes references before entry lookup, so the encoded form
+  resolves to the raw-spelled entry). Wholesale refusals: a value whose
+  attribute text carries a numeric character reference anywhere (`&#` --
+  the entity's own spelling contains a raw `#`, and the verbatim rewrite
+  would corrupt it, e.g. `&#38;` into a malformed `&%2338;`), and a value
+  whose path portion is empty (`#intro` is an in-document anchor, never
+  filename damage). Entry names stay raw-spelled; a
+  genuinely missing file stays as written. The walk covers content
+  documents, the OPF, the NCX, and stylesheet `url()` tokens, anchored on
+  the same start-tag/PI matcher outside comments and CDATA; the
+  stylesheet decode now carries the same non-UTF-8 guard as the markup
+  branches (a non-UTF-8 stylesheet is copied byte-for-byte, reported
+  `non_utf8_docs_skipped` -- the reference encodes alone select that
+  branch too).
+
 - **`--prune-dead-spine`**: the shell repair -- fires ONLY when half or
   more of the manifest's content hrefs name files the archive does not
   carry (the audit battery's `shell` analyzer names the same shape; the
@@ -550,15 +577,35 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   positions never resolved, and the book that remains is the complete,
   coherent chapter range the archive actually carries. A lone missing
   chapter never crosses the signature: the spine non-goal stays in force
-  for ordinary damage.
+  for ordinary damage. Since v1.1.0 the dead census also refuses items
+  whose file EXISTS under a delimiter-encoded spelling (issue #26): those
+  hrefs are the `--encode-ref-delims` repair class, and pruning them
+  would amputate live documents while the counts read it as an error win
+  -- the accepted Elminster candidate was `dead_spine_items_pruned: 36`
+  on a book whose archive carried all 38 documents. The audit's shell
+  analyzer subtracts the same recoverable slice before its verdict: a
+  book whose manifest "missing" is all recoverable now reads ADVISORY
+  naming the encode, never SHELL/re-source.
 
-Thirty of the thirty-three are evaluated by the normal `gate`: unlike the lossy strips,
+Thirty of the thirty-four are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
-improvement is a noop and nothing is applied. The three exceptions are `--fix-cover`, `--encode-url-spaces`, and
+improvement is a noop and nothing is applied. `--fix-cover`, `--encode-url-spaces`, and
 `--fix-media-types` (whose gains sit on axes epubcheck's counts do not measure:
 cover wiring is not a schema finding; the rename half's PKG-010 gain sits on the
-warning axis; the font half's CSS-007 gain sits on the INFO axis): all are accepted
-under the same `no_worse` bar the lossy strips use, with the partial rule intact. CDATA sections are never rewritten
+warning axis; the font half's CSS-007 gain sits on the INFO axis) are accepted
+under the same `no_worse` bar the lossy strips use, with the partial rule intact.
+`--encode-ref-delims` carries its own acceptance bar, keyed on its fix having
+fired: the missing-file mask. A manifest item whose file the archive lacks is
+never parsed by epubcheck, so that document's own schema errors stay invisible
+(the fatal branch's masking, one class over: a fatal halts its file's remaining
+checks, a missing file skips the file entirely); the strict error decrease the
+error-cleanup branch demands would read the mask lifting as a regression, and the
+spine-amputating prune would win the gate fight (0f/3e -> 0f/1e by deleting the
+documents, against the encode's 0f/3e -> 0f/6e by opening them). The bar is the
+fatal branch's, one class over: net-new fatals reject, a still-fatal candidate
+stays partial (never auto-applied), a fatal-free candidate accepts whatever the
+unmasking did to the error count; the #10 spine-collapse veto still overrides.
+CDATA sections are never rewritten
 anywhere; comment bodies only by the double-hyphen fix above, and nothing else inside
 them.
 

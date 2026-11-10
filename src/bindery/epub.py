@@ -285,6 +285,7 @@ class RepairFlags:
     double_colon_tags: bool = False
     presentational_attrs: bool = False
     encode_ref_brackets: bool = False
+    encode_ref_delims: bool = False
     prune_dead_spine: bool = False
 
 
@@ -2564,6 +2565,7 @@ def repair_epub(
             or flags.declare_missing
             or flags.prune_ncx_targets
             or flags.encode_ref_brackets
+            or flags.encode_ref_delims
             or flags.prune_dead_spine
         ):
             for n in zin.namelist():
@@ -2601,6 +2603,26 @@ def repair_epub(
                 total_content += 1
                 resolved = _resolve_href(opf_dir, href)
                 if resolved is None or resolved not in present:
+                    variant = _delim_variant_target(opf_dir, href)
+                    if variant is not None and (
+                        variant in present or (present_src and variant in present_src)
+                    ):
+                        # Encoding damage, not a shell (issue #26): the file
+                        # exists under the spelling its href carries once the
+                        # raw #/? delimiters are percent-encoded, so the item
+                        # is the delim encode's repair class, never prune
+                        # material. Without this exclusion the shell
+                        # signature fires on the Elminster shape (36/38
+                        # "missing") and the accepted candidate amputates
+                        # every live document while the counts read it as an
+                        # error win -- the inverse of the #10 collapse, which
+                        # the dangle-count veto cannot see because pruning
+                        # LOWERS the dangle count. The raw-layout set covers
+                        # the co-fired rename case: the href's variant is
+                        # spelled in the SOURCE layout (raw spaces and all),
+                        # and with --encode-url-spaces active the output
+                        # layout renames those entries.
+                        continue
                     dead.add(im.group(3))
             if total_content and len(dead) / total_content >= 0.5:
                 shell_ok = True
@@ -2831,6 +2853,10 @@ def repair_epub(
                     )
                     if n:
                         counts["bracket_refs_encoded"] = n
+                if flags.encode_ref_delims:
+                    text, n = encode_delim_refs(text, posixpath.dirname(name), present)
+                    if n:
+                        counts["refs_delim_encoded"] = n
                 if space_renames:
                     text, n = rewrite_space_renames(
                         text,
@@ -2919,6 +2945,8 @@ def repair_epub(
                 or flags.package_version
                 or flags.prune_guide_refs
                 or flags.item_properties
+                or flags.encode_ref_brackets
+                or flags.encode_ref_delims
                 or flags.prune_dead_spine
             ):
                 opf_changed = False
@@ -3059,6 +3087,15 @@ def repair_epub(
                     )
                     if n:
                         report.add({"bracket_refs_encoded": n})
+                        opf_changed = True
+                if flags.encode_ref_delims:
+                    # The manifest href is the primary damaged surface for
+                    # this class (issue #26: all 36 body-doc items defeat
+                    # their own resolution at the OPF), so the encode runs
+                    # here on the same terms as the brackets sibling.
+                    text, n = encode_delim_refs(text, posixpath.dirname(name), present)
+                    if n:
+                        report.add({"refs_delim_encoded": n})
                         opf_changed = True
                 if space_renames:
                     text, n = rewrite_space_renames(
@@ -3216,6 +3253,10 @@ def repair_epub(
                     )
                     if n:
                         counts["bracket_refs_encoded"] = n
+                if flags.encode_ref_delims:
+                    text, n = encode_delim_refs(text, posixpath.dirname(name), present)
+                    if n:
+                        counts["refs_delim_encoded"] = n
                 if space_renames:
                     text, n = rewrite_space_renames(
                         text,
@@ -3268,7 +3309,7 @@ def repair_epub(
                         report.files_changed += 1
                         data = svg_text.encode("utf-8")
             elif low.endswith((".css", ".xpgt")) and (
-                space_renames or flags.encode_ref_brackets
+                space_renames or flags.encode_ref_brackets or flags.encode_ref_delims
             ):
                 # Stylesheets pass through the rewrite too: a url() that
                 # resolved against a raw-space entry would dangle the
@@ -3277,14 +3318,30 @@ def repair_epub(
                 # the attribute-level pass covers in markup. UTF-8 was
                 # verified for every document when the renames were
                 # licensed; the bracket encode decodes no entities, so it
-                # runs on the decoded text only.
-                text = data.decode("utf-8")
+                # runs on the decoded text only. The reference encodes
+                # alone select this branch too, so the decode carries the
+                # same non-UTF-8 guard as the markup branches: a
+                # windows-1252 stylesheet is copied byte-for-byte, never
+                # decoded with replacement and re-encoded.
+                try:
+                    text = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    report.add({"non_utf8_docs_skipped": 1})
+                    zout.writestr(out_item, data, compress_type=item.compress_type)
+                    continue
                 if flags.encode_ref_brackets:
                     text, n = encode_bracket_refs_css(
                         text, posixpath.dirname(name), present
                     )
                     if n:
                         report.add({"bracket_refs_encoded": n})
+                        report.files_changed += 1
+                if flags.encode_ref_delims:
+                    text, n = encode_delim_refs_css(
+                        text, posixpath.dirname(name), present
+                    )
+                    if n:
+                        report.add({"refs_delim_encoded": n})
                         report.files_changed += 1
                 if space_renames:
                     text, n = rewrite_space_renames_css(
@@ -3382,6 +3439,153 @@ def encode_bracket_refs_css(
         count += 1
         new_value = path.replace("[", "%5B").replace("]", "%5D") + value[len(path) :]
         return m.group(1) + new_value + m.group(3)
+
+    text = _RENAME_CSS_URL_QUOTED_RE.sub(sub_quoted, text)
+    text = _RENAME_CSS_URL_BARE_RE.sub(sub_bare, text)
+    return text, count
+
+
+def _delim_variant_target(base_dir: str, href: str) -> str | None:
+    """The archive path a delim-damaged href names once its raw ``#``/``?``
+    are percent-encoded, or None when no such spelling can denote a file.
+    The recoverability test the shell census's guard and the delim encode
+    share: the href as written resolves with ``#`` meaning fragment and
+    ``?`` meaning query (RFC 3986 parsing, what every reader does with it),
+    and the only spelling that can find the file reads them as literal
+    filename characters. The scheme and empty-target refusals are the
+    resolver's; a href with no literal delimiter in the raw attribute text
+    is out of scope (an entity-encoded delimiter is not rewritten -- the
+    encode edits the attribute text verbatim and cannot re-spell what the
+    text does not carry)."""
+    if "#" not in href and "?" not in href:
+        return None
+    if "&#" in href:
+        # A numeric character reference anywhere in the attribute text: the
+        # entity's own spelling carries a raw `#` (`&#38;`, `&#35;`), so the
+        # raw-text delimiter split can land INSIDE the entity and the
+        # verbatim rewrite would corrupt it (`&#38;` -> `&%2338;`, a
+        # malformed entity on a reference that resolved fine -- the
+        # code-review pass on this fix). Refuse the value wholesale; the
+        # entity-spelled shape is hand-repair territory.
+        return None
+    if href[0] in "#?":
+        # An empty path portion: a pure in-document fragment/query anchor,
+        # never filename damage, even if an archive entry shares the name
+        # (rewriting `#intro` -> `%23intro` would retarget the anchor).
+        return None
+    decoded = _decode_numeric_refs(_xml_unescape(href, _XML_ATTR_ENTITIES))
+    if _URL_SCHEME_RE.match(decoded):
+        return None
+    # Encode every delimiter, not just the first: a filename can carry
+    # several, and the existence check below is what keeps a genuine
+    # fragment reference (`doc.xhtml#intro` -> `doc.xhtml%23intro`, an
+    # entry nobody ships) from ever matching.
+    encoded = decoded.replace("#", "%23").replace("?", "%3F")
+    if not encoded:
+        return None
+    # No fragment split: the delimiters are encoded away, the whole value
+    # is a path.
+    return _norm_path(posixpath.join(base_dir, encoded))
+
+
+def _encode_delim_value(value: str) -> str:
+    return value.replace("#", "%23").replace("?", "%3F")
+
+
+def encode_delim_refs(
+    text: str, lookup_dir: str, present: frozenset[str] | set[str]
+) -> tuple[str, int]:
+    """Percent-encode literal ``#``/``?`` in internal src/href references
+    whose raw delimiter defeats their own resolution (issue #26: the
+    bookmate conversion stamped `#01` into the filenames, `href="Book_#01.htm"`
+    parses as file `Book_` plus fragment `01.htm`, the manifest item goes
+    missing (RSC-001), and epubcheck never parses the document at all).
+
+    Two gates, both required: the reference must NOT resolve as written
+    (a working `doc.xhtml#intro` is never touched -- its `#` means fragment,
+    exactly what a reader will do with it, and where both `a` and `a#b`
+    exist the RFC spelling wins), and the delimiter-encoded spelling must
+    match an archive entry (the issue #19 mechanism: epubcheck decodes
+    references before entry lookup, so the encoded form resolves to the
+    raw-spelled entry; a genuinely missing file stays as written). Entry
+    names are never renamed. The anchor is the same start-tag/PI matcher
+    the space renames and the bracket encode use: display text carrying
+    href="..." is never rewritten, comments and CDATA are skipped."""
+    count = 0
+
+    def ref_sub(m: re.Match) -> str:
+        nonlocal count
+        value = m.group(3)
+        # The resolves-as-written gate reads the PATH PORTION the way the
+        # oracle and every reader parse the reference: the first # or ?
+        # starts fragment/query. (bindery's own _resolve_href keeps a raw
+        # ? in the path -- the spine probe and the shell census read a
+        # ?-bearing name as present; epubcheck does not. The pass follows
+        # the oracle.) Resolving the pre-split path also covers the #
+        # case, where _resolve_href splits there itself.
+        split_at = re.search(r"[?#]", value)
+        path_value = value[: split_at.start()] if split_at else value
+        resolved = _resolve_href(lookup_dir, path_value)
+        if resolved is not None and resolved in present:
+            return m.group(0)
+        target = _delim_variant_target(lookup_dir, value)
+        if target is None or target not in present:
+            return m.group(0)
+        count += 1
+        new_value = _encode_delim_value(value)
+        return m.group(1) + m.group(2) + new_value + m.group(4)
+
+    def rewrite_tag(m: re.Match) -> str:
+        return _RENAME_REF_ATTR_RE.sub(ref_sub, m.group(0))
+
+    def run(t: str) -> tuple[str, int]:
+        before = count
+        # the delta, not the cumulative: outside_protected_map sums every
+        # segment's return
+        return _START_TAG_OR_PI_RE.sub(rewrite_tag, t), count - before
+
+    return outside_protected_map(text, run)
+
+
+def encode_delim_refs_css(
+    text: str, lookup_dir: str, present: frozenset[str] | set[str]
+) -> tuple[str, int]:
+    """The same delim encode for stylesheet url() tokens (quoted and
+    bare): unresolvable-as-written references only, the encoded spelling
+    must exist, entry names stay raw."""
+    count = 0
+
+    def gate(value: str) -> bool:
+        """True when the delim encode may rewrite `value`: the path portion
+        the oracle reads misses the archive and the delimiter-encoded
+        spelling hits it."""
+        split_at = re.search(r"[?#]", value)
+        path_value = value[: split_at.start()] if split_at else value
+        resolved = _resolve_href(lookup_dir, path_value)
+        if resolved is not None and resolved in present:
+            return False
+        target = _delim_variant_target(lookup_dir, value)
+        return target is not None and target in present
+
+    def sub_quoted(m: re.Match) -> str:
+        nonlocal count
+        if not gate(m.group(3)):
+            return m.group(0)
+        count += 1
+        return (
+            m.group(1)
+            + m.group(2)
+            + _encode_delim_value(m.group(3))
+            + m.group(4)
+            + m.group(5)
+        )
+
+    def sub_bare(m: re.Match) -> str:
+        nonlocal count
+        if not gate(m.group(2)):
+            return m.group(0)
+        count += 1
+        return m.group(1) + _encode_delim_value(m.group(2)) + m.group(3)
 
     text = _RENAME_CSS_URL_QUOTED_RE.sub(sub_quoted, text)
     text = _RENAME_CSS_URL_BARE_RE.sub(sub_bare, text)

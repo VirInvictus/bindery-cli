@@ -58,6 +58,7 @@ DEST_TO_FIELD = {
     "fix_double_colon_tags": "double_colon_tags",
     "strip_presentational_attrs": "presentational_attrs",
     "encode_ref_brackets": "encode_ref_brackets",
+    "encode_ref_delims": "encode_ref_delims",
     "prune_dead_spine": "prune_dead_spine",
     "strip_pagination": "strip_pagination",
     "strip_broken_tags": "strip_brokentags",

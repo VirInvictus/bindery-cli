@@ -438,3 +438,73 @@ class TestShellAnalyzer(unittest.TestCase):
         self.assertEqual(r["missing_frac"], 0.0)
         _p, status, _lines = _shell_dir(r)
         self.assertEqual(status, "OK")
+
+    def test_delim_recoverable_is_not_a_shell(self):
+        # issue #26's Elminster shape: 2 content items, one href defeated
+        # by its own raw # while the file ships under that exact name. The
+        # as-written fraction reads 50% (the old verdict: SHELL, re-source)
+        # but the genuine fraction is 0: the verdict names the repair.
+        files = {
+            "s1.xhtml": _doc("Chapter One"),
+            "Book_#01.htm": _doc("Chapter Two"),
+        }
+        opf = _opf([("s1", "s1.xhtml"), ("c2", "Book_#01.htm")], "Elminster")
+        with tempfile.TemporaryDirectory() as tmp:
+            book = load_book(_epub(tmp, opf, files))
+        r = analyze_shell(book)
+        self.assertEqual(r["missing_frac"], 0.5)
+        self.assertEqual(r["delim_recoverable"], 1)
+        self.assertEqual(r["genuine_missing"], 0)
+        _p, status, lines = _shell_dir(r)
+        self.assertNotIn("SHELL", status)
+        self.assertIn("ADVISORY", status)
+        self.assertIn("--encode-ref-delims", status)
+
+    def test_mixed_shell_counts_only_genuine_missing(self):
+        # one genuinely missing file PLUS one delim-recoverable href of 4:
+        # the shell verdict runs on the genuine fraction (25% < 50%), and
+        # the recoverable still reports so the repair is named
+        files = {
+            "s1.xhtml": _doc("Chapter One"),
+            "s4.xhtml": _doc("Chapter Four"),
+            "Book_#01.htm": _doc("Chapter Two"),
+        }
+        opf = _opf(
+            [
+                ("s1", "s1.xhtml"),
+                ("c2", "Book_#01.htm"),
+                ("c3", "ghost.xhtml"),
+                ("c4", "s4.xhtml"),
+            ],
+            "Mixed",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            book = load_book(_epub(tmp, opf, files))
+        r = analyze_shell(book)
+        self.assertEqual(r["missing"], 2)
+        self.assertEqual(r["delim_recoverable"], 1)
+        self.assertEqual(r["genuine_missing"], 1)
+        self.assertEqual(r["genuine_frac"], 0.25)
+        _p, status, _lines = _shell_dir(r)
+        self.assertNotIn("SHELL", status)
+        self.assertIn("ADVISORY", status)
+
+    def test_true_shell_survives_the_refinement(self):
+        # a shell whose missing files have no encoded variant stays a shell
+        files = {"s1.xhtml": _doc("Chapter One")}
+        opf = _opf(
+            [
+                ("s1", "s1.xhtml"),
+                ("c2", "s2.xhtml"),
+                ("c3", "Book_#01.htm"),
+                ("c4", "s4.xhtml"),
+            ],
+            "A Shell Book",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            book = load_book(_epub(tmp, opf, files))
+        r = analyze_shell(book)
+        self.assertEqual(r["delim_recoverable"], 0)
+        self.assertEqual(r["genuine_frac"], 0.75)
+        _p, status, _lines = _shell_dir(r)
+        self.assertIn("SHELL", status)

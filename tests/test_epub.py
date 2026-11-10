@@ -19,6 +19,8 @@ from bindery.epub import (
     downgrade_epub3_tags,
     encode_bracket_refs,
     encode_bracket_refs_css,
+    encode_delim_refs,
+    encode_delim_refs_css,
     fix_doctype,
     fix_manifest_ids,
     fix_manifest_item_properties,
@@ -3808,6 +3810,178 @@ class TestEncodeRefBrackets(unittest.TestCase):
         self.assertIn("url(img%5B3%5D.png)", out)
 
 
+class TestEncodeDelimRefs(unittest.TestCase):
+    """--encode-ref-delims: literal #/? in a filename reference whose raw
+    delimiter defeats its own resolution are percent-encoded (issue #26,
+    the Elminster bookmate conversion). Two gates: the reference must NOT
+    resolve as written, and the encoded spelling must match an archive
+    entry; entry names stay raw."""
+
+    def test_defeated_delim_encodes(self):
+        # the issue's shape: the raw # splits the reference into a missing
+        # path plus a fragment; the encoded spelling finds the entry
+        doc = '<html><body><a href="Book_#01.htm">x</a></body></html>'
+        out, n = encode_delim_refs(doc, "", frozenset({"Book_#01.htm"}))
+        self.assertEqual(n, 1)
+        self.assertIn('href="Book_%2301.htm"', out)
+
+    def test_query_delim_encodes(self):
+        doc = '<html><body><a href="a?b.html">x</a></body></html>'
+        out, n = encode_delim_refs(doc, "", frozenset({"a?b.html"}))
+        self.assertEqual(n, 1)
+        self.assertIn('href="a%3Fb.html"', out)
+
+    def test_working_fragment_never_touched(self):
+        # a reference that resolves as written means what RFC 3986 says it
+        # means; encoding it would dangle it (the entry a#b does not exist)
+        doc = '<html><body><a href="doc.xhtml#intro">x</a></body></html>'
+        self.assertEqual(
+            encode_delim_refs(doc, "", frozenset({"doc.xhtml", "a#b"})),
+            (doc, 0),
+        )
+
+    def test_both_exist_rfc_spelling_wins(self):
+        # where both the pre-delimiter path and the whole-value path exist,
+        # the reference currently resolves: its # means fragment
+        doc = '<html><body><a href="a#b">x</a></body></html>'
+        self.assertEqual(encode_delim_refs(doc, "", frozenset({"a", "a#b"})), (doc, 0))
+
+    def test_genuinely_missing_file_stays(self):
+        # the encoded spelling finds nothing: the file is missing, the
+        # prune/declare lane, never a rewrite
+        doc = '<html><body><a href="Book_#01.htm">x</a></body></html>'
+        self.assertEqual(
+            encode_delim_refs(doc, "", frozenset({"other.html"})), (doc, 0)
+        )
+
+    def test_external_scheme_stays(self):
+        # a remote URL's #/? are its own syntax, never filename damage
+        doc = '<html><body><a href="https://e.com/a?q=1#f">x</a></body></html>'
+        self.assertEqual(encode_delim_refs(doc, "", frozenset()), (doc, 0))
+
+    def test_display_text_and_comments_stay(self):
+        # the start-tag/PI anchor and the protected-span walker: an
+        # href-shaped string in display text or a comment is not a reference
+        doc = (
+            '<html><body><p>href="Book_#01.htm" in text</p>'
+            '<!-- <a href="Book_#01.htm"> --></body></html>'
+        )
+        self.assertEqual(
+            encode_delim_refs(doc, "", frozenset({"Book_#01.htm"})), (doc, 0)
+        )
+
+    def test_opf_manifest_and_ncx_src_encode(self):
+        opf = (
+            '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf">'
+            '<manifest><item id="d" href="Book_#01.htm" '
+            'media-type="application/xhtml+xml"/></manifest></package>'
+        )
+        out, n = encode_delim_refs(opf, "", frozenset({"Book_#01.htm"}))
+        self.assertEqual(n, 1)
+        self.assertIn('href="Book_%2301.htm"', out)
+        ncx = (
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>'
+            '<navPoint id="n1"><content src="Book_#01.htm"/></navPoint>'
+            "</navMap></ncx>"
+        )
+        out, n = encode_delim_refs(ncx, "", frozenset({"Book_#01.htm"}))
+        self.assertEqual(n, 1)
+        self.assertIn('src="Book_%2301.htm"', out)
+
+    def test_css_url_variant_encodes(self):
+        out, n = encode_delim_refs_css(
+            "a { background: url(img#1.png) }", "", frozenset({"img#1.png"})
+        )
+        self.assertEqual(n, 1)
+        self.assertIn("url(img%231.png)", out)
+
+    def test_idempotent_on_encoded_spelling(self):
+        # a second run finds the reference resolving: nothing re-encodes
+        doc = '<html><body><a href="Book_%2301.htm">x</a></body></html>'
+        self.assertEqual(
+            encode_delim_refs(doc, "", frozenset({"Book_#01.htm"})), (doc, 0)
+        )
+
+    def test_numeric_entity_value_never_rewritten(self):
+        # the code-review find: a numeric character reference's own spelling
+        # carries a raw `#`, so the raw-text split and the verbatim rewrite
+        # would corrupt a WORKING reference (&#38; -> &%2338;, a malformed
+        # entity). Any value carrying `&#` is refused wholesale.
+        doc = '<html><body><a href="K&#38;C.png">x</a></body></html>'
+        self.assertEqual(encode_delim_refs(doc, "", frozenset({"K&C.png"})), (doc, 0))
+
+    def test_entity_encoded_delimiter_not_corrupted(self):
+        # same refusal on a genuinely damaged entity-spelled name: the fix
+        # cannot re-spell what the attribute text does not carry literally
+        doc = '<html><body><a href="Book_&#35;01.htm">x</a></body></html>'
+        self.assertEqual(
+            encode_delim_refs(doc, "", frozenset({"Book_#01.htm"})), (doc, 0)
+        )
+
+    def test_entity_plus_real_delimiter_still_encodes(self):
+        # a NAMED entity in the value is ordinary text (no `&#` in it): the
+        # real literal delimiter encodes and the entity spelling survives
+        doc = '<html><body><a href="K&amp;C#1.png">x</a></body></html>'
+        out, n = encode_delim_refs(doc, "", frozenset({"K&C#1.png"}))
+        self.assertEqual(n, 1)
+        self.assertIn('href="K&amp;C%231.png"', out)
+
+    def test_bare_fragment_anchor_never_rewritten(self):
+        # an empty path portion is an in-document anchor, never filename
+        # damage -- even when an archive entry shares the name
+        doc = '<html><body><a href="#intro">x</a></body></html>'
+        self.assertEqual(encode_delim_refs(doc, "", frozenset({"#intro"})), (doc, 0))
+
+    def test_repair_end_to_end_guard_and_encode(self):
+        # the issue's composed shape at repair level: 2 content items, one
+        # shipped under a #-bearing name. The prune_dead_spine census must
+        # NOT count the recoverable item dead (no amputation), and the
+        # delim encode rewrites the manifest href; the OPF branch dispatch
+        # includes the flag so a standalone selection reaches the OPF.
+        opf = (
+            '<?xml version="1.0"?><package '
+            'xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+            'unique-identifier="id"><metadata '
+            'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="id">u</dc:identifier>'
+            "<dc:title>t</dc:title><dc:language>en</dc:language></metadata>"
+            "<manifest>"
+            '<item id="tp" href="titlepage.xhtml" '
+            'media-type="application/xhtml+xml"/>'
+            '<item id="d1" href="Book_#01.htm" '
+            'media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="tp"/><itemref idref="d1"/></spine>'
+            "</package>"
+        )
+        doc = (
+            '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+            "<head><title>t</title></head><body><p>word word word word</p>"
+            "</body></html>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            s = Path(td) / "in.epub"
+            with zipfile.ZipFile(s, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/titlepage.xhtml", doc)
+                z.writestr("OEBPS/Book_#01.htm", doc)
+            # delim encode alone: the OPF href is rewritten, the entry stays
+            d = Path(td) / "out.epub"
+            report = repair_epub(s, d, RepairFlags(encode_ref_delims=True))
+            self.assertEqual(report.fixes.get("refs_delim_encoded"), 1)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/content.opf").decode()
+                self.assertIn("OEBPS/Book_#01.htm", z.namelist())
+            self.assertIn('href="Book_%2301.htm"', out)
+            self.assertNotIn("dead_spine_items_pruned", report.fixes)
+            # prune flag alone: the census guard refuses the recoverable,
+            # so the shell signature never fires on this book
+            d2 = Path(td) / "out2.epub"
+            report2 = repair_epub(s, d2, RepairFlags(prune_dead_spine=True))
+            self.assertNotIn("dead_spine_items_pruned", report2.fixes)
+
+
 class TestPruneDeadSpine(unittest.TestCase):
     """--prune-dead-spine: the shell repair. Fires ONLY at the shell
     signature (>= 50% of the manifest's content hrefs name files the
@@ -3895,6 +4069,42 @@ class TestPruneDeadSpine(unittest.TestCase):
             with zipfile.ZipFile(d) as z:
                 out = z.read("OEBPS/content.opf").decode()
         self.assertIn("ghost.xhtml", out)
+
+    def test_delim_recoverables_excluded_from_the_dead_census(self):
+        # issue #26's guard at the mixed extreme: 3 genuinely missing files
+        # PLUS 2 delim-recoverable hrefs (files shipped under #-bearing
+        # names) of 5 content items. The census counts only the genuine 3
+        # (60% >= 50%, the shell signature fires) and prunes exactly those;
+        # the recoverable docs survive for the delim encode.
+        opf = self._opf(
+            version="2.0",
+            items=[
+                ("live", "live.xhtml"),
+                ("g1", "ghost1.xhtml"),
+                ("g2", "ghost2.xhtml"),
+                ("g3", "ghost3.xhtml"),
+                ("r1", "Book_#01.htm"),
+                ("r2", "Book_#02.htm"),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as td:
+            docs = {
+                "OEBPS/live.xhtml": self._doc("L"),
+                "OEBPS/Book_#01.htm": self._doc("R1"),
+                "OEBPS/Book_#02.htm": self._doc("R2"),
+            }
+            s = self._build(td, opf, docs)
+            d = Path(td) / "out.epub"
+            report = repair_epub(s, d, RepairFlags(prune_dead_spine=True))
+            self.assertEqual(report.fixes.get("dead_spine_items_pruned"), 3)
+            with zipfile.ZipFile(d) as z:
+                out = z.read("OEBPS/content.opf").decode()
+                names = z.namelist()
+        self.assertNotIn("ghost1.xhtml", out)
+        self.assertNotIn('idref="g1"', out)
+        self.assertIn('href="Book_#01.htm"', out)
+        self.assertIn('idref="r1"', out)
+        self.assertIn("OEBPS/Book_#02.htm", names)
 
     def test_images_and_ncx_items_are_never_dead(self):
         # the dead set is content-doc items only: the NCX/CSS/images keep

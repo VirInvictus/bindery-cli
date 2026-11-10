@@ -176,6 +176,7 @@ class Book:
         "opf",
         "spine",
         "spine_missing",
+        "spine_missing_delim",
         "toc_refs",
         "toc_absent",
     )
@@ -192,6 +193,7 @@ class Book:
         toc_absent,
         encrypted=None,
         spine_missing=0,
+        spine_missing_delim=0,
         dup_entries=0,
         obfuscated=None,
         obfuscated_declared=None,
@@ -223,6 +225,12 @@ class Book:
         # idref, decoded-href vs stored-name mismatch): a large count on an
         # EMPTY-verdict book is the diagnostic, not a content-less stub.
         self.spine_missing = spine_missing
+        # The delim-recoverable slice of spine_missing (issue #26): itemrefs
+        # whose href resolves once its raw #/? delimiters are percent-encoded
+        # -- the file IS in the archive, the reference spelling is what
+        # defeats it. The shell verdict must not call this state a shell
+        # (the content is shipped; --encode-ref-delims is the repair).
+        self.spine_missing_delim = spine_missing_delim
         # duplicate archive entry names (zip resolves last-wins silently);
         # surfaced in the archive verdict so nothing is silently shadowed
         self.dup_entries = dup_entries
@@ -307,6 +315,7 @@ def load_book(path: Path) -> Book:
         encrypted: list[str] = []
         oversized: list[str] = []
         spine_missing = 0
+        spine_missing_delim = 0
         dup_entries = len(names) - len(nameset)  # zip resolves last-wins
         raw: dict[str, bytes] = {}
 
@@ -506,6 +515,14 @@ def load_book(path: Path) -> Book:
                 # on a book full of prose; count it so EMPTY carries the
                 # diagnostic.
                 spine_missing += 1
+                if ("#" in href or "?" in href) and full(
+                    href.replace("#", "%23").replace("?", "%3F")
+                ) in nameset:
+                    # Delim-recoverable (issue #26): the raw #/? in the
+                    # filename made the href resolve as path + fragment,
+                    # and the encoded spelling finds the shipped file. The
+                    # shell verdict subtracts this slice before deciding.
+                    spine_missing_delim += 1
         nav = full(nav_href) if nav_href else None
 
         # The single full pass: every archive entry is fully read here (the
@@ -608,6 +625,7 @@ def load_book(path: Path) -> Book:
         toc_absent,
         encrypted=encrypted,
         spine_missing=spine_missing,
+        spine_missing_delim=spine_missing_delim,
         dup_entries=dup_entries,
         obfuscated=obfuscated,
         obfuscated_declared=obfuscated_declared,
@@ -1524,9 +1542,18 @@ def analyze_shell(book: Book) -> dict:
     sliver of the archive -- 738 and 736 manifest items missing of 755 and
     752 on the two shells. Re-source territory: no repair can fabricate
     the missing files, and the spine guard correctly refuses to drop them.
-    Advisory by contract, like completeness."""
+
+    The delim-recoverable slice (`spine_missing_delim`, issue #26) is NOT
+    missing content: the file is in the archive and the raw #/? in the
+    href is what defeats resolution. The shell verdict runs on the
+    GENUINE fraction (missing minus recoverable) -- the Elminster shape
+    (36 of 38 hrefs defeated, all 36 files shipped) read as a shell and
+    said re-source while the repair was one encode away. Advisory by
+    contract, like completeness."""
     spine_n = len(book.spine)
     missing = book.spine_missing
+    delim = book.spine_missing_delim
+    genuine = max(0, missing - delim)
     # the denominator is resolved + missing (the manifest the book claims),
     # not the resolved spine alone: on a shell the resolved spine is the
     # sliver (14 of 752), so a spine-only denominator read shells at over
@@ -1538,6 +1565,9 @@ def analyze_shell(book: Book) -> dict:
         "missing": missing,
         "manifest_total": total,
         "missing_frac": frac,
+        "delim_recoverable": delim,
+        "genuine_missing": genuine,
+        "genuine_frac": (genuine / total) if total else 0.0,
     }
 
 
@@ -1547,10 +1577,16 @@ def _shell_dir(r: dict) -> tuple[bool, str, list[str]]:
         f"({r['missing_frac'] * 100:.0f}%)"
     ]
     status = "OK"
-    if r["spine_docs"] and r["missing_frac"] >= 0.5:
+    if r["spine_docs"] and r["genuine_frac"] >= 0.5:
         status = (
             "SHELL: the manifest names files the archive never carried; "
             "re-source, never repair"
+        )
+    elif r["delim_recoverable"]:
+        status = (
+            f"ADVISORY: {r['delim_recoverable']} of the missing hrefs resolve "
+            "once their raw #/? are percent-encoded (the files are shipped); "
+            "--encode-ref-delims territory, not re-source"
         )
     return (False, status, lines)
 

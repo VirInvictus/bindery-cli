@@ -116,6 +116,7 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         double_colon_tags=args.fix_double_colon_tags or all_,
         presentational_attrs=args.strip_presentational_attrs or all_,
         encode_ref_brackets=args.encode_ref_brackets or all_,
+        encode_ref_delims=args.encode_ref_delims or all_,
         prune_dead_spine=args.prune_dead_spine or all_,
     )
 
@@ -256,6 +257,31 @@ def process_book(
         # the partial rule intact (a book that still has fatals is
         # never auto-applied).
         if not no_worse(before, after):
+            verdict = "reject"
+        elif after.fatals > 0:
+            verdict = "partial"
+        else:
+            verdict = "accept"
+    if report.fixes.get("refs_delim_encoded"):
+        # The missing-file mask (issue #26, the Elminster shape). A manifest
+        # item whose file the archive lacks is never parsed by epubcheck, so
+        # that document's own schema errors stay invisible -- the fatal
+        # branch's masking, one class over: a fatal halts its file's
+        # remaining checks, a missing file skips the file entirely. The
+        # error-cleanup branch demands a strict error decrease, and here the
+        # encode LOSES that comparison (0f/3e -> 0f/6e: the RSC-001 mass
+        # clears while the newly parsed documents surface their latent
+        # damage) while the spine-amputating prune wins it (0f/3e -> 0f/1e
+        # by deleting the documents). The encode's own gates bound the risk:
+        # it only rewrites references whose encoded spelling provably
+        # matches an archive entry and never touches a reference that
+        # already resolves, so it cannot damage a resolving reference --
+        # the rise is the mask lifting, not new damage. Bar: the fatal
+        # branch's, one class over -- net-new fatals still reject, a
+        # still-fatal candidate stays partial (never auto-applied), a
+        # fatal-free candidate accepts whatever the unmasking did to the
+        # error count. The spine veto below still overrides everything.
+        if after.fatals > before.fatals:
             verdict = "reject"
         elif after.fatals > 0:
             verdict = "partial"
@@ -1847,7 +1873,11 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "the spine non-goal stays in force for ordinary damage. The "
             "2026-11-04 Wandering Inn shells (738 and 736 of 755/752 items "
             "dead) are the design case; proven on the facility copy at "
-            "742e -> 5e with 0 fatals.",
+            "742e -> 5e with 0 fatals. The dead census also refuses items "
+            "whose file exists under a delimiter-encoded spelling (issue "
+            "#26): those hrefs are the delim encode's repair class, and "
+            "pruning them would amputate live documents while the counts "
+            "read it as an error win.",
         ),
         (
             "encode_ref_brackets",
@@ -1863,6 +1893,24 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
             "entry names are never renamed, and unresolvable references stay "
             "as written. Runs on content documents, the OPF, the NCX, and "
             "stylesheet url() tokens.",
+        ),
+        (
+            "encode_ref_delims",
+            "percent-encode raw # ? that defeat their own reference's resolution (RSC-001)",
+            "percent-encode a literal # or ? inside a filename reference whose "
+            'raw delimiter defeats resolution: href="Book_#01.htm" parses as '
+            "file 'Book_' plus fragment '01.htm', the manifest item goes "
+            "missing (RSC-001 'File ... could not be found'), and epubcheck "
+            "never parses the document at all (issue #26: the Elminster "
+            "bookmate conversion, 36 of 38 body docs unreachable). Two gates, "
+            "both required: the reference must NOT resolve as written (a "
+            "working doc.xhtml#intro is never touched; where both 'a' and "
+            "'a#b' exist the RFC spelling wins), and the percent-encoded "
+            "spelling must match an archive entry (the issue #19 mechanism: "
+            "epubcheck decodes references before entry lookup, so the encoded "
+            "form resolves to the raw-spelled entry). Entry names stay "
+            "raw-spelled; a genuinely missing file stays as written. Runs on "
+            "content documents, the OPF, the NCX, and stylesheet url() tokens.",
         ),
         (
             "fix_page_map",

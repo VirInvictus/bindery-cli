@@ -299,5 +299,126 @@ class FixtureRegressionTests(_TempBook):
         self.assertEqual(spine_dangles(dst), 0)
 
 
+class DelimPromotionTests(_TempBook):
+    """The missing-file mask bar (issue #26): when refs_delim_encoded
+    fires, a rising error count is the mask lifting (documents epubcheck
+    never parsed now surfacing their latent damage), not a regression --
+    the error-cleanup branch would read it as one and the spine-amputating
+    prune would win the gate fight. Net-new fatals still reject; a
+    still-fatal candidate stays partial."""
+
+    def _run(self, src, candidate, fixes, before, after):
+        work = self._path("work")
+        work.mkdir(exist_ok=True)
+
+        def fake_repair(epub, dst, flags=None):
+            if candidate is not None:
+                shutil.copyfile(candidate, dst)
+            return RepairReport(fixes=fixes)
+
+        with (
+            mock.patch("bindery.cli.repair_epub", side_effect=fake_repair),
+            mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
+        ):
+            return process_book(src, work, validate=True)
+
+    def test_unmasking_rise_accepts(self):
+        # the Elminster shape: 0f/3e -> 0f/6e. The plain gate reads reject
+        # (strict error decrease demanded); the mask bar reads accept.
+        src = self._fan_book()
+        fine = self._path("fine.epub")
+        shutil.copyfile(src, fine)
+        o = self._run(
+            src,
+            fine,
+            {"refs_delim_encoded": 36},
+            CheckResult(0, 3, 0),
+            CheckResult(0, 6, 0),
+        )
+        self.assertEqual(o.status, "accept")
+
+    def test_net_new_fatals_reject(self):
+        src = self._fan_book()
+        fine = self._path("fine.epub")
+        shutil.copyfile(src, fine)
+        o = self._run(
+            src,
+            fine,
+            {"refs_delim_encoded": 36},
+            CheckResult(0, 3, 0),
+            CheckResult(1, 2, 0),
+        )
+        self.assertEqual(o.status, "reject")
+
+    def test_still_fatal_stays_partial(self):
+        src = self._fan_book()
+        fine = self._path("fine.epub")
+        shutil.copyfile(src, fine)
+        o = self._run(
+            src,
+            fine,
+            {"refs_delim_encoded": 36},
+            CheckResult(2, 3, 0),
+            CheckResult(1, 6, 0),
+        )
+        self.assertEqual(o.status, "partial")
+
+    def test_spine_veto_still_overrides(self):
+        # the promotion never outranks the #10 veto: a candidate that
+        # orphans live itemrefs rejects even under the mask bar
+        src = self._fan_book()
+        collapse = self._path("collapse.epub")
+        with (
+            zipfile.ZipFile(src) as zin,
+            zipfile.ZipFile(collapse, "w", zipfile.ZIP_DEFLATED) as zout,
+        ):
+            for item in zin.infolist():
+                data = zin.read(item)
+                if item.filename == "OEBPS/content.opf":
+                    text = data.decode()
+                    for _ in range(3):
+                        start = text.index("<item ", text.index("split_"))
+                        end = text.index("/>", start) + 2
+                        text = text[:start] + text[end:]
+                    data = text.encode()
+                zout.writestr(item, data)
+        o = self._run(
+            src,
+            collapse,
+            {"refs_delim_encoded": 36},
+            CheckResult(0, 3, 0),
+            CheckResult(0, 6, 0),
+        )
+        self.assertEqual(o.status, "reject")
+        self.assertIn("(spine collapse)", o.summary)
+
+
+try:
+    _DELIM_FIXTURE = Path(__file__).resolve().parent.parent / (
+        "testing_facility/books_to_fix/elminster-hash-in-href-broken.epub"
+    )
+    HAVE_DELIM_FIXTURE = _DELIM_FIXTURE.exists()
+except OSError:
+    HAVE_DELIM_FIXTURE = False
+
+
+@unittest.skipUnless(HAVE_DELIM_FIXTURE, "local issue fixture not present")
+class DelimFixtureRegressionTests(_TempBook):
+    def test_fixture_no_amputation_and_encode_fires(self):
+        # The issue #26 shape at full scale: 36 of 38 manifest hrefs defeat
+        # their own resolution on raw '#'. The census guard must keep every
+        # recoverable item out of the dead set (the shell signature never
+        # fires, no amputation) and the delim encode rewrites the manifest.
+        src = self._path("fixture.epub")
+        shutil.copyfile(_DELIM_FIXTURE, src)
+        dst = self._path("fixed.epub")
+        report = repair_epub(
+            src, dst, RepairFlags(encode_ref_delims=True, prune_dead_spine=True)
+        )
+        self.assertIsNone(report.fixes.get("dead_spine_items_pruned"))
+        self.assertEqual(report.fixes.get("refs_delim_encoded"), 36)
+        self.assertEqual(spine_dangles(dst), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

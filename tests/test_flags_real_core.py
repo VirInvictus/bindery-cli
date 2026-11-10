@@ -81,6 +81,20 @@ def _fixtures() -> dict:
     c1 = _item("c1", "c1.xhtml")
     r1 = _ref("c1")
     plain = _doc("<p>word word word word</p>")
+    delim_manifest = _opf([c1, _item("d", "Book_#01.htm")], [r1, _ref("d")])
+    delim_entries = {
+        "OEBPS/content.opf": delim_manifest,
+        "OEBPS/c1.xhtml": plain,
+        "OEBPS/Book_#01.htm": plain,
+    }
+    # the OPF carries the bracketed href: a standalone --encode-ref-brackets
+    # selection must reach the OPF branch (the dispatch listed it nowhere
+    # before v1.1.0, so the documented "runs on the OPF" never fired alone)
+    bracket_entries = {
+        "OEBPS/content.opf": _opf([c1, _item("d", "k[1].htm")], [r1, _ref("d")]),
+        "OEBPS/c1.xhtml": plain,
+        "OEBPS/k[1].htm": plain,
+    }
     return {
         "--fix-ids": (
             {
@@ -276,6 +290,8 @@ def _fixtures() -> dict:
             },
             "entries_renamed",
         ),
+        "--encode-ref-delims": (delim_entries, "refs_delim_encoded"),
+        "--encode-ref-brackets": (bracket_entries, "bracket_refs_encoded"),
         "--fix-container": (
             {
                 "META-INF/container.xml": (
@@ -686,6 +702,16 @@ class FlagEndToEndTests(unittest.TestCase):
     def test_encode_url_spaces(self):
         self.assertGreaterEqual(
             self._fixes_for("--encode-url-spaces")["entries_renamed"], 1
+        )
+
+    def test_encode_ref_delims(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--encode-ref-delims")["refs_delim_encoded"], 1
+        )
+
+    def test_encode_ref_brackets(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--encode-ref-brackets")["bracket_refs_encoded"], 1
         )
 
     def test_fix_container(self):
