@@ -1,5 +1,58 @@
 # bindery-cli Patch Notes
 
+## v1.1.0 (2026-11-09)
+
+### The delimiter-damage repair (issue #26)
+
+A raw `#` in a filename reference defeats its own resolution: the bookmate
+conversion of Elminster: The Making of a Mage stamped `#01` into 36
+filenames, every manifest href parsed as file `Elminster_` plus a fragment,
+epubcheck read RSC-001 'File ... could not be found', and the archive's 38
+documents sat unreachable. The defect's real danger was the gate's answer:
+the ACCEPTED candidate was the shell prune dropping all 36 live documents
+(0f/3e -> 0f/1e by deleting them, against the encode's 0f/3e -> 0f/6e by
+opening them), a 2-doc husk shipping as an error-count win -- the inverse
+of the #10 spine collapse, invisible to the dangle veto because pruning
+LOWERS the dangle count.
+
+- **`--encode-ref-delims`** (structural repair #34): percent-encode a
+  literal `#`/`?` in internal src/href and stylesheet url() references,
+  under two required gates -- the reference must NOT resolve as written
+  (its path portion, read the way the oracle parses it: first `#`/`?`
+  starts fragment/query) and the delimiter-encoded spelling MUST match an
+  archive entry (the issue #19 decode-before-lookup mechanism; entries
+  stay raw-spelled). Working fragments are never touched, `a`-and-`a#b`
+  both-exist keeps the RFC spelling, genuinely missing files stay as
+  written, numeric-entity values are refused wholesale (the entity's own
+  spelling carries a raw `#`; the verbatim rewrite would corrupt a working
+  reference into a malformed entity), and an empty-path value (`#intro`)
+  is an in-document anchor, never filename damage.
+- **The shell census guard**: the `--prune-dead-spine` dead set excludes
+  delim-recoverable items (against the output layout AND the raw layout,
+  closing the co-fired rename hole where output-layout names would miss
+  the raw-spelled variant). The Elminster shape can never cross the 50%
+  shell signature again; a mixed book prunes only the genuine dead.
+- **The missing-file mask bar**: when `refs_delim_encoded` fires, the
+  keyed promotion replaces the error-cleanup answer -- net-new fatals
+  reject, a still-fatal candidate stays partial, a fatal-free candidate
+  accepts the unmasking rise (documents epubcheck never parsed surfacing
+  their own latent damage); the #10 spine veto still overrides.
+- **The audit says what the archive holds**: the loader counts
+  `spine_missing_delim` and the shell verdict runs on the genuine
+  fraction -- the Elminster fixture reads ADVISORY naming the encode,
+  never SHELL/re-source; a true shell still reads SHELL.
+- **Two latent gaps closed**: the OPF branch dispatch never listed
+  `--encode-ref-brackets`, so its documented OPF coverage could not fire
+  on a standalone selection (now listed, pinned by a real-core row); and
+  the stylesheet decode lacked the markup branches' non-UTF-8 guard once
+  the reference encodes select that branch (a windows-1252 stylesheet is
+  copied byte-for-byte, `non_utf8_docs_skipped`).
+
+On the facility fixture (`elminster-hash-in-href-broken.epub`, kept
+permanently): probe accepts 0f/3e/0w -> 0f/4e/0w with refs_delim_encoded:36,
+no amputation, spine dangles 36 -> 0, all 38 documents resolve, and the
+audit flips SHELL -> ADVISORY. Suite: 943 tests.
+
 ## v1.0.0 (2026-11-05)
 
 ### 1.0: the contract is the promise
