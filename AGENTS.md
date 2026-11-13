@@ -25,6 +25,11 @@ Born from the 2026 library audit (see the user memory `calibre-library-epubcheck
   external CLI dependency expected on PATH; `--install-to-calibre` needs no external
   binary, it re-registers the format through cquarry's write module (the calibredb
   subprocess was retired in v0.24.0). Before adding any further Python package, stop and ask.
+- **CLI surface contract.** bindery is a reference implementation of the workspace CLI
+  machine-surface contract (`~/.gitrepos/CLAUDE.md`, Throughlines): machine help carries
+  exit contracts and gate annotations (`--help-json`), errors are one clean line on stderr
+  (never a traceback), missing-input paths are usage-class errors on stderr, and user-facing
+  surfaces are additive-only post-1.0 (spec-stated). Keep it that way.
 - **Semantics-preserving transforms by default, everything else fenced behind a flag.**
   The always-on core is exactly five well-formedness fixes (prolog junk, duplicate
   `xmlns`, bare `&`, named entities, void self-closing), the NCX pipeline, and the
