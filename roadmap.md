@@ -82,6 +82,29 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
       repairs cleanly. The no-rename shape remains: entries with brackets
       but no spaces never enter the rename map, and the flag stays a
       no-op on such books.)*
+- [ ] **Kindle-container conversion support (azw3/mobi -> epub): a possible
+      x.0.0 release candidate** (Brandon, 2026-11-13). The acquisition
+      pipeline keeps meeting Kindle-container sources (the 2026-11-13
+      cookbook batch imported four azw3s that had to go through
+      ebook-convert by hand, then through bindery for the converter's own
+      artifacts - see issue #27: ebook-convert emits dead @font-face rules
+      in page_styles(.1).css for publisher fonts whose payloads it drops,
+      RSC-007 from CSS url(), unconverged by --all). The candidate shape:
+      KF8/PalmDOC container parsing, HTML/OPF/NCX extraction into bindery's
+      existing repair-and-gate pipeline (so converted books get the same
+      epubcheck-gated deterministic treatment instead of a second tool's
+      artifact classes), metadata passthrough, and the open question of
+      font extraction - the sources carry TrueType-signature payloads, but
+      whether publisher fonts are recoverable from KF8 (and whether they
+      are obfuscated) needs a container parser before the answer is known.
+      The dead-font-face repair (issue #27) ships independently and first;
+      it is useful against any ebook-convert output, not just ours. Entry
+      conditions: a real batch need beyond the four-book proof (the
+      acquisition tempo keeps bringing Kindle containers), a KF8 parser
+      survey (existing stdlib-parseable state vs new code), and the spec
+      question of whether conversion is a bindery verb or a companion tool
+      (bindery's charter is repair, not format conversion - this is the
+      biggest scope question the project has faced).
 - [ ] **Obfuscation-aware encryption.xml repair**: prune stale obfuscation entries
       when font magic bytes prove the fonts are decrypted in place; drop
       encryption.xml when only obfuscation entries remain and fonts verify. NEVER
