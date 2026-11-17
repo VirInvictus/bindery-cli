@@ -31,7 +31,7 @@ from .audit import (
 from .audit import (
     run_library as run_audit_library,
 )
-from .epub import RepairFlags, ncx_uid_mismatch, repair_epub, spine_dangles
+from .epub import RepairFlags, ncx_uid_mismatch, repair_epub, spine_resolution
 from .library import (
     CalibreIdResolver,
     atomic_replace,
@@ -298,14 +298,39 @@ def process_book(
     # counts or the bar any fix class promotes under. The probe runs on both
     # real files; a probe failure (unreadable package, no locatable OPF)
     # carries no evidence and vetoes nothing.
-    dangles_before = spine_dangles(epub)
-    dangles_after = spine_dangles(repaired)
+    res_before = spine_resolution(epub)
+    res_after = spine_resolution(repaired)
     spine_collapse = (
-        dangles_before is not None
-        and dangles_after is not None
-        and dangles_after > dangles_before
+        res_before is not None
+        and res_after is not None
+        and res_after.dangles > res_before.dangles
     )
     if spine_collapse:
+        verdict = "reject"
+    # The half-spine veto (issue #35, the Flux specimen). The dangle-count
+    # veto above is blind to a prune: pruning removes the dangling
+    # declarations along with the rest, so an amputation can LOWER the
+    # dangle count to zero while epubcheck measures an error win on the
+    # smaller book (Flux measured 0f/38e/31w -> 0f/30e/0w with 31 of 32
+    # spine documents pruned). The prune's contract says it drops only
+    # never-resolving positions, so its candidate's resolved-spine count
+    # cannot be lower than the source's: a drop is the census having
+    # disagreed with the rename/rewrite passes about the same items. A
+    # dead_spine_items_pruned candidate whose spine resolves to less than
+    # half of what resolved before the repair is an amputation no message
+    # count can buy back: reject, regardless of the counts or the
+    # promotion that produced it. The comparison counts documents that
+    # RESOLVE on both sides, so the genuine shell keeps its v0.64.0
+    # contract (the Wandering Inn prune drops only never-resolving
+    # positions: the same documents resolve before and after, no veto);
+    # only orphaned live documents fire this.
+    spine_halved = (
+        report.fixes.get("dead_spine_items_pruned", 0) > 0
+        and res_before is not None
+        and res_after is not None
+        and res_after.resolved * 2 < res_before.resolved
+    )
+    if spine_halved:
         verdict = "reject"
     if verdict == "reject":
         summary += " (REGRESSION)"
@@ -313,6 +338,8 @@ def process_book(
         summary += " (no measurable gain)"
     if spine_collapse:
         summary += " (spine collapse)"
+    if spine_halved:
+        summary += " (spine halved)"
     status = "equal" if verdict == "noop" else verdict
     return Outcome(
         epub,

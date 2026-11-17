@@ -4,8 +4,14 @@ rename layout when --encode-url-spaces renames entries), the prune's spine
 protection must describe the text as the prune reads it (fix_manifest_ids
 renames ids ahead of it in the OPF pipeline), and process_book must veto any
 candidate whose spine (itemref -> item -> archive) dangles more than the
-source's — the collapse that used to measure as an error reduction."""
+source's — the collapse that used to measure as an error reduction.
 
+The half-spine arm (issue #35) completes the guard for the prune class the
+dangle count cannot see: pruning removes the dangling declarations with the
+rest, so an amputation lowers the dangle count while epubcheck measures an
+error win on the smaller book."""
+
+import re
 import shutil
 import tempfile
 import unittest
@@ -21,6 +27,7 @@ from bindery.epub import (
     prune_missing_manifest_items,
     repair_epub,
     spine_dangles,
+    spine_resolution,
 )
 from bindery.validate import CheckResult
 
@@ -134,6 +141,33 @@ class SpineDanglesTests(_TempBook):
         # The veto needs evidence: an unreadable package answers None and
         # never fires the guard.
         self.assertIsNone(spine_dangles(self._path("nope.epub")))
+
+
+class SpineResolutionTests(_TempBook):
+    """The three-count probe (issue #35): total, resolved, dangles."""
+
+    def test_healthy_book_counts_every_itemref(self):
+        r = spine_resolution(self._fan_book())
+        self.assertEqual(r.total, 4)
+        self.assertEqual(r.resolved, 4)
+        self.assertEqual(r.dangles, 0)
+
+    def test_missing_file_dangles_but_still_counts(self):
+        src = self._fan_book()
+        broken = self._path("missing.epub")
+        with (
+            zipfile.ZipFile(src) as zin,
+            zipfile.ZipFile(broken, "w", zipfile.ZIP_DEFLATED) as zout,
+        ):
+            for item in zin.infolist():
+                if item.filename.endswith("split_001.htm"):
+                    continue
+                zout.writestr(item, zin.read(item))
+        r = spine_resolution(broken)
+        self.assertEqual((r.total, r.resolved, r.dangles), (4, 3, 1))
+
+    def test_unreadable_archive_probes_none(self):
+        self.assertIsNone(spine_resolution(self._path("nope.epub")))
 
 
 class PruneManifestGuardTests(unittest.TestCase):
@@ -271,6 +305,169 @@ class SpineVetoTests(_TempBook):
             CheckResult(0, 17, 8),
             CheckResult(0, 10, 0),
             write_candidate=False,
+        )
+        self.assertEqual(o.status, "accept")
+
+
+class SpineHalvedVetoTests(_TempBook):
+    """The half-spine veto (issue #35, the Flux specimen): a
+    dead_spine_items_pruned candidate whose spine resolves to less than
+    half of what resolved before is an amputation epubcheck cannot see
+    (the dangle count falls with the pruned declarations), so it rejects
+    regardless of the counts or the promotion. The genuine shell --
+    only never-resolving positions dropped -- keeps sailing."""
+
+    _SPLIT_ITEM_RE = re.compile(r'<item [^>]*href="[^"]*split_[0-9]+\.htm"[^>]*/>')
+    _SPLIT_REF_RE = re.compile(r'<itemref idref="[^"]*split_[0-9]+0"/>')
+
+    def _strip_split_declarations(self, src, out_name):
+        out = self._path(out_name)
+        with (
+            zipfile.ZipFile(src) as zin,
+            zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout,
+        ):
+            for item in zin.infolist():
+                data = zin.read(item)
+                if item.filename == "OEBPS/content.opf":
+                    text = data.decode()
+                    text = self._SPLIT_ITEM_RE.sub("", text)
+                    text = self._SPLIT_REF_RE.sub("", text)
+                    data = text.encode()
+                zout.writestr(item, data)
+        return out
+
+    def _halved_candidate(self, src):
+        # The Flux shape: every split item AND its itemref pruned; the
+        # candidate spine is the title page alone. Dangles stay 0 -> the
+        # #10 veto is blind; resolved drops 4 -> 1 -> the halved veto fires.
+        return self._strip_split_declarations(src, "halved.epub")
+
+    def _shell_book_and_candidate(self, src):
+        # The genuine-shell parity shape (the Wandering Inn contract):
+        # the split FILES are absent from the source (three never-resolving
+        # positions), and the candidate prunes exactly those declarations.
+        # Resolution is unchanged, so no veto.
+        shell_src = self._path("shell-src.epub")
+        with (
+            zipfile.ZipFile(src) as zin,
+            zipfile.ZipFile(shell_src, "w", zipfile.ZIP_DEFLATED) as zout,
+        ):
+            for item in zin.infolist():
+                if re.search(r"split_00[0-2]\.htm$", item.filename):
+                    continue
+                zout.writestr(item, zin.read(item))
+        return shell_src, self._strip_split_declarations(shell_src, "shell.epub")
+
+    def _run(self, src, candidate, fixes, before, after):
+        work = self._path("work")
+        work.mkdir(exist_ok=True)
+
+        def fake_repair(epub, dst, flags=None):
+            if candidate is not None:
+                shutil.copyfile(candidate, dst)
+            return RepairReport(fixes=fixes)
+
+        with (
+            mock.patch("bindery.cli.repair_epub", side_effect=fake_repair),
+            mock.patch("bindery.cli.run_epubcheck", side_effect=[before, after]),
+        ):
+            return process_book(src, work, validate=True)
+
+    def test_amputating_prune_rejects_improving_counts(self):
+        # The Flux verdict shape: 0f/38e/31w -> 0f/30e/0w measures as a
+        # win while 31 of 32 spine documents are gone behind the title page.
+        src = self._fan_book()
+        o = self._run(
+            src,
+            self._halved_candidate(src),
+            {"dead_spine_items_pruned": 3, "entries_renamed": 3},
+            CheckResult(0, 38, 31),
+            CheckResult(0, 30, 0),
+        )
+        self.assertEqual(o.status, "reject")
+        self.assertIn("(spine halved)", o.summary)
+
+    def test_veto_overrides_the_delim_mask_promotion(self):
+        # "regardless of the epubcheck delta" covers the promotions: the
+        # missing-file mask's accept never outranks the amputation.
+        src = self._fan_book()
+        o = self._run(
+            src,
+            self._halved_candidate(src),
+            {"dead_spine_items_pruned": 3, "refs_delim_encoded": 36},
+            CheckResult(0, 3, 0),
+            CheckResult(0, 6, 0),
+        )
+        self.assertEqual(o.status, "reject")
+        self.assertIn("(spine halved)", o.summary)
+
+    def test_half_exactly_keeps_the_normal_verdict(self):
+        # "less than half" is strict: a prune that leaves exactly half the
+        # resolution is not the amputation class.
+        src = self._fan_book()
+        out = self._path("half.epub")
+        with (
+            zipfile.ZipFile(src) as zin,
+            zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout,
+        ):
+            for item in zin.infolist():
+                data = zin.read(item)
+                if item.filename == "OEBPS/content.opf":
+                    text = data.decode()
+                    text = self._SPLIT_ITEM_RE.sub("", text, count=2)
+                    text = self._SPLIT_REF_RE.sub("", text, count=2)
+                    data = text.encode()
+                zout.writestr(item, data)
+        o = self._run(
+            src,
+            out,
+            {"dead_spine_items_pruned": 2},
+            CheckResult(0, 38, 31),
+            CheckResult(0, 30, 0),
+        )
+        self.assertEqual(o.status, "accept")
+        self.assertNotIn("(spine halved)", o.summary)
+
+    def test_genuine_shell_prune_sails(self):
+        # The v0.64.0 contract: the shell prune drops only never-resolving
+        # positions, so the same documents resolve before and after. No
+        # veto; the improving counts accept.
+        shell_src, shell_cand = self._shell_book_and_candidate(self._fan_book())
+        o = self._run(
+            shell_src,
+            shell_cand,
+            {"dead_spine_items_pruned": 3},
+            CheckResult(0, 742, 0),
+            CheckResult(0, 5, 0),
+        )
+        self.assertEqual(o.status, "accept")
+        self.assertNotIn("(spine halved)", o.summary)
+
+    def test_prune_counter_absent_no_veto(self):
+        # The rule is keyed on the prune: a rename-only candidate with an
+        # intact spine never reads halved.
+        src = self._fan_book()
+        fine = self._path("fine.epub")
+        shutil.copyfile(src, fine)
+        o = self._run(
+            src,
+            fine,
+            {"entries_renamed": 3},
+            CheckResult(0, 17, 8),
+            CheckResult(0, 10, 0),
+        )
+        self.assertEqual(o.status, "accept")
+
+    def test_probe_failure_vetoes_nothing(self):
+        # Same fail-open contract as the #10 veto: an unreadable candidate
+        # carries no evidence.
+        src = self._fan_book()
+        o = self._run(
+            src,
+            None,
+            {"dead_spine_items_pruned": 3},
+            CheckResult(0, 17, 8),
+            CheckResult(0, 10, 0),
         )
         self.assertEqual(o.status, "accept")
 
@@ -418,6 +615,38 @@ class DelimFixtureRegressionTests(_TempBook):
         self.assertIsNone(report.fixes.get("dead_spine_items_pruned"))
         self.assertEqual(report.fixes.get("refs_delim_encoded"), 36)
         self.assertEqual(spine_dangles(dst), 0)
+
+
+try:
+    _FLUX_FIXTURE = Path(__file__).resolve().parent.parent / (
+        "testing_facility/books_to_fix/flux-space-rename-prune-amputation.epub"
+    )
+    HAVE_FLUX_FIXTURE = _FLUX_FIXTURE.exists()
+except OSError:
+    HAVE_FLUX_FIXTURE = False
+
+
+@unittest.skipUnless(HAVE_FLUX_FIXTURE, "local issue fixture not present")
+class FluxFixtureRegressionTests(_TempBook):
+    def test_fixture_census_reads_the_raw_layout(self):
+        # The issue #35 specimen at full scale: 31 raw-space entries, 31
+        # raw-space hrefs, all present. The census must read the layout its
+        # hrefs are written in and judge none of them dead (the space
+        # rename is their repair class), so no fake 97% shell signature, no
+        # amputation; the rename pass lands a clean candidate whose spine
+        # still resolves end to end.
+        src = self._path("fixture.epub")
+        shutil.copyfile(_FLUX_FIXTURE, src)
+        dst = self._path("fixed.epub")
+        report = repair_epub(
+            src, dst, RepairFlags(url_spaces=True, prune_dead_spine=True)
+        )
+        self.assertIsNone(report.fixes.get("dead_spine_items_pruned"))
+        self.assertEqual(report.fixes.get("entries_renamed"), 31)
+        resolution = spine_resolution(dst)
+        self.assertIsNotNone(resolution)
+        self.assertEqual(resolution.dangles, 0)
+        self.assertEqual(resolution.total, 32)
 
 
 if __name__ == "__main__":

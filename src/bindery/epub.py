@@ -21,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from html import unescape as _html_unescape
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import unquote
 from xml.sax.saxutils import escape as _xml_escape
 from xml.sax.saxutils import unescape as _xml_unescape
@@ -2388,11 +2389,22 @@ def sync_ncx_uid(ncx_text: str, uid: str) -> tuple[str, bool]:
     return new, True
 
 
-def spine_dangles(src: Path) -> int | None:
-    """Count spine itemrefs that cannot walk itemref -> manifest item ->
-    archive entry: the spine-resolution axis the epubcheck count cannot see
-    (issue #10). A repair that orphans live itemrefs can measure as an error
-    reduction, so process_book vetoes any candidate whose count rises.
+class SpineResolution(NamedTuple):
+    """The spine probe's three counts: every itemref tag in the spine, how
+    many of them walk itemref -> manifest item -> archive entry, and the
+    dangle remainder."""
+
+    total: int
+    resolved: int
+    dangles: int
+
+
+def spine_resolution(src: Path) -> SpineResolution | None:
+    """Probe a package's spine resolution: the spine-resolution axis the
+    epubcheck count cannot see (issue #10). A repair that orphans live
+    itemrefs can measure as an error reduction, and a repair that prunes
+    them away can measure as an error win on the smaller book (issue #35),
+    so process_book vetoes on both shapes from this one probe.
 
     The last hop resolves through the same helper the repair's own
     existence checks use (_resolve_href + _norm_path: unquoted, normalized),
@@ -2419,15 +2431,23 @@ def spine_dangles(src: Path) -> int | None:
                 if resolved is not None:
                     items[im.group(3)] = resolved
             dangles = 0
+            total = 0
             for m in _SPINE_ITEM_RE.finditer(text):
+                total += 1
                 rm = _IDREF_ATTR_RE.search(m.group(0))
                 if rm is None or items.get(rm.group(3)) not in present:
                     dangles += 1
-            return dangles
+            return SpineResolution(total, total - dangles, dangles)
     except (zipfile.BadZipFile, OSError, RuntimeError):
         # RuntimeError covers zip-encrypted entries, which raise out of
         # z.read: like ncx_uid_mismatch, a DRM'd book is not a crash.
         return None
+
+
+def spine_dangles(src: Path) -> int | None:
+    """The issue #10 read of the probe: the dangle count alone."""
+    resolution = spine_resolution(src)
+    return None if resolution is None else resolution.dangles
 
 
 def ncx_uid_mismatch(src: Path) -> bool:
@@ -2750,6 +2770,19 @@ def repair_epub(
                 total_content += 1
                 resolved = _resolve_href(opf_dir, href)
                 if resolved is None or resolved not in present:
+                    if present_src and resolved in present_src:
+                        # The href is spelled in the raw source layout and
+                        # the archive carries that spelling: the space
+                        # rename is this item's repair class, never prune
+                        # material (issue #35, the Flux specimen -- 31 of
+                        # 32 content items read dead on a book whose files
+                        # were all present, renamed). The v0.52.0 lesson,
+                        # census edition: an existence check reads the
+                        # layout its hrefs are written in; this arm was
+                        # reading only the renamed output layout, so a
+                        # co-firing --encode-url-spaces manufactured a fake
+                        # shell signature out of every raw-space href.
+                        continue
                     variant = _delim_variant_target(opf_dir, href)
                     if variant is not None and (
                         variant in present or (present_src and variant in present_src)
