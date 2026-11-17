@@ -1,5 +1,73 @@
 # bindery-cli Patch Notes
 
+## v1.1.1 (2026-11-16)
+
+### The audit batch (issues #28-#33)
+
+Six defects filed from the 2026-11-16 deep codebase audit, each one
+live-replicated before the fix. No CLI surface changes: every fix tightens an
+existing flag's behavior to what its documentation already promised.
+
+- **`--fix-id-colons` fragment sync (#28)**: `fix_ncx_src_fragments` followed
+  the old colon-only predicate, so a digit-led id (`<body id="0-25c121ec">`)
+  renamed on the content side left its NCX `content src` fragment untouched
+  and the ToC dangled against the id that no longer existed, and a digit-led
+  COLON-bearing id translated to two different spellings (`id_1_intro` on the
+  content side, `1_intro` in the NCX). The NCX half now uses the same
+  `_is_invalid_ncname` predicate and `_ncname_rename` scheme as the content
+  ids, and both fragment passes (the NCX `src` and the in-document `href`)
+  carry the quote-tempered idiom: an apostrophe inside a double-quoted value
+  (`href="c1.xhtml#Lisey's_story"`) translates whole instead of truncating
+  at the apostrophe and never translating. Two guard rails came out of the
+  pre-commit review: a fragment carrying an escape (a percent-escape like
+  `#caf%C3%A9` or an entity reference like `#caf&eacute;`) is refused
+  outright, because it names its target under decoding rather than NCName
+  spelling and renaming the encoded form would manufacture a target that
+  exists nowhere (undoing this release's own #29 decode match whenever both
+  flags run, which `--all` always does); and both matchers are
+  whitespace-anchored with the optional namespace prefix, so `data-href` and
+  `data-src` values are out of scope while `xlink:href` stays covered.
+- **Percent-decoded fragments (#29)**: `--strip-broken-anchors` compared raw
+  attribute fragments while the wire spelling of a link to a non-ASCII id is
+  percent-encoded (`href="#caf%C3%A9"` naming `<h2 id="café">`), so valid
+  links lost their href; the NCX and OPF guide halves dropped the same valid
+  ToC entries and landmarks the same way. All three cleaners decode the
+  fragment (XML entities, then RFC 3986 percent-decoding -- the same chain
+  the href resolver has always applied to the path) before the existence
+  check. Cyrillic ids (`#%D1%82%D0%B5%D1%81%D1%82` naming `id="тест"`)
+  survive too.
+- **id-attribute lookbehind guards (#30)**: `\bid=` also fires right after a
+  hyphen or colon, so `data-id` and `xml:id` read as THE id in three
+  matchers: the duplicate-id rename (a `data-id="c1"` made the real
+  `id="c1"` a "duplicate" and renamed it away from the fragments pointing at
+  it), `fix_manifest_ids` (a manifest item's `data-id` was renamed while its
+  real id stayed), and the anchor indexer (`ids_by_doc` collected data
+  attributes as link targets). All three now carry the `(?<![\w:.-])` guard
+  `fix_id_colons` has had since v0.32.0. The anchor index keeps a deliberate
+  exception: `xml:id` is a real XML id the oracle resolves fragments against,
+  so the anchor collection still reads it (a dedicated `(?:xml:)?id` pattern)
+  while the strict rename matchers exclude it.
+- **Self-closing paragraphs (#31)**: `--strip-pagination`'s paragraph matcher
+  matched `<p class="divider"/>` as a block start; with no `</p>` of its own
+  the match ran forward to the NEXT paragraph's close tag, welding divider
+  and content into one block whose text could read as a page number and
+  strip real markup with it. The matcher refuses a `/` immediately before
+  the closing `>`.
+- **The downgrade's shields (#32)**: `--downgrade-epub3-tags` ran unshielded
+  `re.sub` over the whole document, downgrading markup inside commented-out
+  sections and CDATA (phantom transform counts, the CDATA invariant broken);
+  it runs through `outside_protected_map` like every other markup transform
+  now. Its class merge matched `data-class=` and appended the semantic hook
+  to arbitrary data while the element's real class stayed untouched; the
+  matcher is whitespace-anchored.
+- **The declarer's close tag (#33)**: `--declare-missing-items` located the
+  manifest close tag by the literal string `</manifest>` and silently
+  no-opped on prefixed (`</opf:manifest>`) or whitespace (`</manifest >`)
+  spellings; the close-tag matcher now carries the same namespace-prefix
+  tolerance as every other OPF matcher.
+
+Suite: 972 tests.
+
 ## v1.1.0 (2026-11-09)
 
 ### The delimiter-damage repair (issue #26)

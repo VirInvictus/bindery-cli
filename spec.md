@@ -134,7 +134,8 @@ A safe opt-in: it renames manifest `item` ids that are not valid XML names
 deterministic `id_` scheme, and updates every reference to them: spine `idref`
 and `toc`, item `fallback` and `media-overlay`, and the EPUB 2 cover meta, in
 both quote styles. NCX ids are renamed by the same pass (`fix_ncx_ids`);
-colon-bearing fragments follow the rename via `--fix-id-colons`' NCX half. Href
+NCName-invalid fragments follow the rename via `--fix-id-colons`' NCX half (the
+same predicate and `id_` rename as the content ids, v1.1.1). Href
 paths and filenames are untouched, and the human-facing `dc:` metadata is never
 altered. Rendering is unchanged (ids are invisible), but the OPF is edited, so it
 is off by default; the normal gate applies.
@@ -189,8 +190,18 @@ part of the default pipeline:
   `id` attribute is in scope (`data-id` values are arbitrary data and are never
   touched), the fragment of an external URL names a position in that other
   document and survives verbatim, and the NCX's `content src` fragments follow
-  the rename (`fix_ncx_src_fragments`), so a ToC never dangles against the ids
-  it references.
+  the rename (`fix_ncx_src_fragments`) under the same NCName predicate and
+  `id_` scheme, so a ToC never dangles against the ids it references (v1.1.1:
+  a digit-led ToC fragment follows the `id_` rename instead of dangling, a
+  digit-led colon-bearing id translates to the same spelling on both sides,
+  and the quote-tempered fragment matchers translate an apostrophe-bearing
+  value like `href="c1.xhtml#Lisey's_story"` whole instead of truncating at
+  the apostrophe). A fragment carrying an escape -- a percent-escape
+  (`#caf%C3%A9`) or an entity reference (`#caf&eacute;`, `#&#x44E;`) -- is
+  refused outright: it names its target under decoding, not NCName spelling,
+  and renaming the encoded form would manufacture a target that exists
+  nowhere. The matchers are whitespace-anchored with the optional namespace
+  prefix (`xlink:href` covered, `data-href`/`data-src` out of scope).
 - **`--unwrap-block-in-inline`**: drop a `<span>` that illegally wraps a
   `<div>/<p>/<blockquote>`, keeping the block element and its text.
 - **`--strip-invalid-value`**: remove misplaced `value="..."` attributes from non-form
@@ -218,7 +229,9 @@ part of the default pipeline:
   Names a stylesheet styles as an element selector are protected book-wide
   (`css_protected_tags`/`style_block_tags` are parameterized over the tag set), so
   styled formatting can never be silently destroyed; a protected book keeps its
-  RSC-005 findings, which is the correct outcome.
+  RSC-005 findings, which is the correct outcome. Comments and CDATA are never
+  rewritten and the class merge cannot fire inside a `data-class` attribute
+  (v1.1.1).
 
 Both EPUB2-targeted fixes are gated on the package version carried in the OPF: they
 fire on EPUB 2 packages (major version 2 or 1) and are inert on EPUB 3 packages and
@@ -270,7 +283,10 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   by design (95.3% of its mass is spine documents whose files exist under a
   different spelling; `--encode-url-spaces` territory) and RSC-008 had zero
   coverage (441 of 452 sampled findings are `<img src>` to present-but-undeclared
-  files); this flag is that repair.
+  files); this flag is that repair. The insertion point is the manifest close tag
+  however it is spelled: prefixed (`</opf:manifest>`) or whitespace-carrying
+  (`</manifest >`) declare too; a package whose manifest never closes is not
+  repaired (v1.1.1).
 - **`--strip-broken-anchors`**: strip `href` attributes that cannot resolve, keeping
   the anchor text byte-for-byte. A `#fragment` the target document does not define
   (RSC-020 "fragment identifier not defined", RSC-012 "points to the wrong element") is
@@ -288,6 +304,9 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   spine-integrity report. href values carrying a scheme no reader resolves
   (`kindle:embed:`, `file:`, ...) are stripped under the same flag; the resolvable set
   is fixed (`http`, `https`, `mailto`) and extends only with a named finding.
+  Fragments are compared after the decode chain the href resolver applies to paths
+  (XML entities, then RFC 3986 percent-decoding), so a valid link to a non-ASCII id
+  (`href="#caf%C3%A9"` naming `<h2 id="café">`) is kept, not stripped (v1.1.1).
 - **`--prune-dangling-ncx-targets`** (v0.59.0, issue #23): remove NCX
   `navPoint`/`pageTarget` elements whose `<content src>` names a document the archive
   does not contain (RSC-007 raised from toc.ncx). This is the class the prune flag
@@ -726,7 +745,10 @@ conversion baked into the body as literal paragraphs (so they reflow mid-sentenc
 "where the hay cart 16 was taking him"). This is the one mode that removes visible
 content; it is off by default and never runs unless requested.
 
-Scope is `<p>` elements (where the defect is carried). For each book:
+Scope is `<p>` elements (where the defect is carried). A self-closing `<p .../>`
+start tag never opens a block: it has no close tag of its own, so a match starting
+there would run to the NEXT paragraph's close and weld the following markup into
+the block (v1.1.1). For each book:
 
 - **Running headers** are short `<p>` blocks repeated >= 8 times across the whole book
   (the title, an author byline, a download watermark); they are page furniture.
