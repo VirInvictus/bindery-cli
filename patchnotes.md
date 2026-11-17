@@ -1,5 +1,55 @@
 # bindery-cli Patch Notes
 
+## v1.2.0 (2026-11-16)
+
+### The CSS dead-font drop (issue #27)
+
+Found 2026-11-13 converting four azw3 cookbooks to epub with ebook-convert
+before import. The converter carries the source's `@font-face` CSS
+declarations but NOT the font payloads they reference: the output's
+`page_styles.css` and `page_styles1.css` fill with blocks whose `src` is the
+literal placeholder `url(styles/XXXXXXXXXXXXXXXX)` -- fonts named in the
+source (Dante, Nexa, SourceHan, FreeSans) but never carried over. epubcheck
+reports each dead reference as RSC-007 (Referenced resource could not be
+found): live counts 149/316/159/450 errors across the four files, 0 fatals.
+The gate's `--all` set never converges them: `--prune-missing-resources`
+works the OPF manifest, and these references live in CSS `url()`, where no
+item exists to prune (the OPF never declared the fonts).
+
+- **`--strip-dead-font-faces`** (structural repair #35): for every
+  `@font-face` block in a stylesheet, resolve each `url()` reference
+  against the archive (the shared href resolver: XML entities, then RFC
+  3986 percent-decoding, relative to the stylesheet's directory). A block
+  whose every reference misses the archive is dead by construction -- the
+  font never loaded, so the fallback rendering is what the file already
+  does -- and drops, rendering-neutral. The semantics-preserving guards
+  (the last two from the pre-commit review): one live `url()` keeps the
+  whole block; a scheme, query, fragment, raw space, or empty reference
+  keeps it (never guessed at: first `#`/`?` starts fragment/query, so a
+  query-carrying url whose path portion exists is a LIVE reference); a
+  `local()`-only block is not this class; a block with nested braces the
+  flat-brace matcher cannot read exactly is refused; and comments are
+  never rewritten -- XML comments and CDATA through the protected-region
+  split, plain CSS comments through a span-intersection check (a `}`
+  inside a comment truncates the flat-brace match short, and a drop
+  keyed on the match START alone would leave comment garbage in the
+  stylesheet), because dropping a commented-out block is a byte change
+  epubcheck cannot measure that another flag's gain could carry into an
+  applied candidate.
+- **Gate behavior**: normal `gate`, like the other reference repairs --
+  the RSC-007 count is the measured gain. Runs on `.css` entries only.
+  When `--encode-url-spaces` renames entries, the pass judges references
+  against the pre-rename layout (first in the stylesheet branch, before
+  the reference rewrites), so a live font under a raw-space name can
+  never read as dead.
+- **Facility verification** (the two pristine converter outputs the issue
+  attached): scoped-flag gate runs 0f/6e -> 0f/3e (16 blocks dropped) and
+  0f/5e -> 0f/2e (25 blocks dropped), both ACCEPT, zero residual
+  RSC-007 -- the remaining errors are other flags' classes (`epub:type`
+  scrubs, colon ids) and clear under their own flags.
+
+Suite: 985 tests.
+
 ## v1.1.1 (2026-11-16)
 
 ### The audit batch (issues #28-#33)

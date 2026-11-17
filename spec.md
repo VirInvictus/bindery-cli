@@ -13,7 +13,7 @@ restyle, re-compress, or restructure content, and it does not attempt to fix arb
 schema (RSC-005) violations, which are usually harmless to readers and not safely
 mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty-four
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty-five
 **structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
 `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
@@ -26,7 +26,7 @@ The deliberate exceptions to "semantics-preserving" come in opt-in groups. The t
 `--fix-unique-identifier`, `--fix-package-version`, `--fix-doctype`,
 `--prune-invalid-guide-refs`, `--fix-item-properties`,
 `--strip-presentational-attrs`, `--encode-ref-brackets`,
-`--encode-ref-delims`,
+`--encode-ref-delims`, `--strip-dead-font-faces`,
 `--prune-dead-spine`) alter
 markup structure or fabricate minimal content; the four
 **lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
@@ -266,6 +266,23 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   prune reads, never snapshotted earlier: `--fix-manifest-ids` may have renamed item
   ids and spine idrefs ahead of it in the OPF pipeline, and a guard describing the old
   spelling protects nothing.
+- **`--strip-dead-font-faces`** (v1.2.0, issue #27): drop every `@font-face` block in
+  a stylesheet whose `url()` references ALL miss the archive (RSC-007 raised from CSS
+  url(): ebook-convert azw3->epub carries the source's font declarations without the
+  font payloads, filling `page_styles.css` with `url(styles/XXXXXXXXXXXXXXXX)`
+  placeholders the manifest prune cannot answer, because the OPF never declared the
+  fonts). The font never loaded, so the fallback rendering is what the file already
+  does and dropping the block is rendering-neutral. One live url() keeps the whole
+  block; a scheme, query, fragment, raw-space, or url()-less (`local()`-only) reference also
+  keeps it (never guessed at: first `#`/`?` starts fragment/query, so a query-carrying
+  url whose path portion exists is a live reference), as does any block the flat-brace matcher cannot read
+  exactly (nested braces). Resolution walks the shared href resolver; XML
+  comments/CDATA and plain CSS comments are never rewritten (a commented-out block is
+  invisible to the oracle, and dropping it would be a byte change another flag's gain
+  could carry into an applied candidate; the span check is an intersection over the
+  whole match, because a `}` inside a comment truncates the flat-brace match and a
+  start-keyed drop would leave comment garbage in the stylesheet). Runs on `.css`
+  entries only.
 - **`--declare-missing-items`**: the RSC-008 inverse of the prune (v0.55.0, issue
   #16): add the manifest `<item>` declarations the OPF never wrote for files the
   archive carries and the book references: content `<img src>` and `<link href>`
@@ -606,7 +623,7 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   book whose manifest "missing" is all recoverable now reads ADVISORY
   naming the encode, never SHELL/re-source.
 
-Thirty of the thirty-four are evaluated by the normal `gate`: unlike the lossy strips,
+Thirty-one of the thirty-five are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
 improvement is a noop and nothing is applied. `--fix-cover`, `--encode-url-spaces`, and
 `--fix-media-types` (whose gains sit on axes epubcheck's counts do not measure:
