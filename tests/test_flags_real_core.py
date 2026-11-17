@@ -292,6 +292,18 @@ def _fixtures() -> dict:
         ),
         "--encode-ref-delims": (delim_entries, "refs_delim_encoded"),
         "--encode-ref-brackets": (bracket_entries, "bracket_refs_encoded"),
+        "--strip-dead-font-faces": (
+            {
+                "OEBPS/content.opf": _opf([c1], [r1]),
+                "OEBPS/c1.xhtml": plain,
+                "OEBPS/page_styles.css": (
+                    "@font-face {\n  font-family: 'Dante';\n"
+                    "  src: url(styles/XXXXXXXXXXXXXXXX) format('truetype');\n}\n"
+                    "p { margin: 0; }"
+                ),
+            },
+            "dead_font_faces_stripped",
+        ),
         "--fix-container": (
             {
                 "META-INF/container.xml": (
@@ -712,6 +724,11 @@ class FlagEndToEndTests(unittest.TestCase):
     def test_encode_ref_brackets(self):
         self.assertGreaterEqual(
             self._fixes_for("--encode-ref-brackets")["bracket_refs_encoded"], 1
+        )
+
+    def test_strip_dead_font_faces(self):
+        self.assertGreaterEqual(
+            self._fixes_for("--strip-dead-font-faces")["dead_font_faces_stripped"], 1
         )
 
     def test_fix_container(self):

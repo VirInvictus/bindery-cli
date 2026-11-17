@@ -299,6 +299,7 @@ class RepairFlags:
     presentational_attrs: bool = False
     encode_ref_brackets: bool = False
     encode_ref_delims: bool = False
+    strip_dead_font_faces: bool = False
     prune_dead_spine: bool = False
 
 
@@ -1557,6 +1558,83 @@ def declare_missing_manifest_items(
     return opf_text[:idx] + "\n".join(lines) + "\n" + opf_text[idx:], count
 
 
+# ---- --strip-dead-font-faces: the CSS-side dead @font-face drop (issue #27).
+# ebook-convert azw3->epub carries the source's @font-face declarations but
+# NOT the font payloads they reference, filling the page_styles sheets with
+# url(styles/XXXXXXXXXXXXXXXX) placeholders the archive cannot resolve: one
+# RSC-007 per dead reference, 149/316/159/450 errors across the four
+# converter outputs that found the class. The manifest prune cannot answer
+# (there is no item: the OPF never declared the fonts) and the gate's --all
+# never converges, because the references live in CSS url(), not markup. A
+# @font-face block whose EVERY url() misses the archive is dead by
+# construction -- the font never loaded, so the fallback rendering is what
+# the file already does -- and dropping the block is rendering-neutral.
+# One live url() keeps the whole block; a block with no url() at all
+# (src: local(...) spellings) is not this class.
+
+_FONT_FACE_BLOCK_RE = re.compile(r"@font-face\b[^{}]*\{[^{}]*\}", re.IGNORECASE)
+# Plain CSS comments are NOT XML comments: _PROTECTED_RE covers `<!-- -->`
+# and CDATA only, so a commented-out @font-face needs its own span check
+# (the issue #21 lesson: comment-hidden markup must never count -- dropping
+# it is a byte change epubcheck cannot measure and other flags' gains would
+# carry into the applied candidate).
+_CSS_COMMENT_SPAN_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def strip_dead_font_faces(
+    css: str, css_dir: str, present: frozenset[str] | set[str]
+) -> tuple[str, int]:
+    """Drop every ``@font-face`` block whose ``url()`` references all miss
+    the archive (issue #27). Resolution walks the same helper the reference
+    repairs resolve with (``_resolve_href``: XML entities then RFC 3986
+    percent, relative to the stylesheet's directory, norm-normalized like
+    the existence set). A reference carrying a scheme, a fragment, or a raw
+    space is not provably dead and keeps its block: this repair never
+    guesses. XML comments/CDATA (outside_protected_map) and plain CSS
+    comments (the span check) are never rewritten."""
+
+    def fix(part: str) -> tuple[str, int]:
+        n = 0
+        css_comments = (
+            [(m.start(), m.end()) for m in _CSS_COMMENT_SPAN_RE.finditer(part)]
+            if "/*" in part
+            else []
+        )
+
+        def in_css_comment(pos: int) -> bool:
+            return any(a <= pos < b for a, b in css_comments)
+
+        def repl(m: re.Match) -> str:
+            nonlocal n
+            block = m.group(0)
+            # ANY comment span intersecting the match refuses the drop: a
+            # `}` inside a comment truncates the flat-brace match short, and
+            # dropping a truncated "block" would leave comment garbage in
+            # the stylesheet (the #21/#32 comment-blindness class)
+            if any(a < m.end() and m.start() < b for a, b in css_comments):
+                return block
+            urls = list(_iter_css_urls(block))
+            if not urls:
+                return block
+            for ref in urls:
+                # first #/? starts fragment/query (the issue #26 oracle
+                # model): a query-carrying url whose path portion exists is
+                # a LIVE reference, never this class
+                if not ref.strip() or "#" in ref or "?" in ref or " " in ref:
+                    return block
+                if _URL_SCHEME_RE.match(ref):
+                    return block
+                resolved = _resolve_href(css_dir, ref)
+                if resolved is not None and resolved in present:
+                    return block
+            n += 1
+            return ""
+
+        return _FONT_FACE_BLOCK_RE.sub(repl, part), n
+
+    return outside_protected_map(css, fix)
+
+
 # ---- --strip-stub-docs: the lossy drop of repeated placeholder spine docs.
 # The conservative identity rule mirrors the emptytext analyzer's
 # placeholder-stub signals (audit.py): a stub is short but not blank, the
@@ -2618,6 +2696,7 @@ def repair_epub(
             or flags.prune_ncx_targets
             or flags.encode_ref_brackets
             or flags.encode_ref_delims
+            or flags.strip_dead_font_faces
             or flags.prune_dead_spine
         ):
             for n in zin.namelist():
@@ -3361,7 +3440,10 @@ def repair_epub(
                         report.files_changed += 1
                         data = svg_text.encode("utf-8")
             elif low.endswith((".css", ".xpgt")) and (
-                space_renames or flags.encode_ref_brackets or flags.encode_ref_delims
+                space_renames
+                or flags.encode_ref_brackets
+                or flags.encode_ref_delims
+                or (flags.strip_dead_font_faces and low.endswith(".css"))
             ):
                 # Stylesheets pass through the rewrite too: a url() that
                 # resolved against a raw-space entry would dangle the
@@ -3381,6 +3463,20 @@ def repair_epub(
                     report.add({"non_utf8_docs_skipped": 1})
                     zout.writestr(out_item, data, compress_type=item.compress_type)
                     continue
+                if flags.strip_dead_font_faces and low.endswith(".css"):
+                    # First in the branch: the references it judges are still
+                    # in the SOURCE spelling, so the existence set is
+                    # present_src when renames are licensed (the OPF prune's
+                    # layout rule -- a live font under a raw-space name must
+                    # not read as dead before its references are rewritten).
+                    text, n = strip_dead_font_faces(
+                        text,
+                        posixpath.dirname(name),
+                        present_src if space_renames else present,
+                    )
+                    if n:
+                        report.add({"dead_font_faces_stripped": n})
+                        report.files_changed += 1
                 if flags.encode_ref_brackets:
                     text, n = encode_bracket_refs_css(
                         text, posixpath.dirname(name), present

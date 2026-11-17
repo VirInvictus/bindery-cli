@@ -117,6 +117,7 @@ def _flags_from_args(args: argparse.Namespace) -> RepairFlags:
         presentational_attrs=args.strip_presentational_attrs or all_,
         encode_ref_brackets=args.encode_ref_brackets or all_,
         encode_ref_delims=args.encode_ref_delims or all_,
+        strip_dead_font_faces=args.strip_dead_font_faces or all_,
         prune_dead_spine=args.prune_dead_spine or all_,
     )
 
@@ -1858,6 +1859,23 @@ _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
         ),
     ],
     "structural repairs: references and resources": [
+        (
+            "strip_dead_font_faces",
+            "drop @font-face blocks whose url() references all miss the archive (RSC-007)",
+            "drop every @font-face block in a stylesheet whose url() "
+            "references ALL fail to resolve against the archive (issue #27: "
+            "ebook-convert azw3->epub carries the source's font declarations "
+            "but not the font payloads, filling page_styles.css with "
+            "url(styles/XXXXXXXXXXXXXXXX) placeholders -- one RSC-007 per "
+            "dead reference, hundreds per book, and the manifest prune has "
+            "no item to answer because the OPF never declared the fonts). "
+            "The font never loaded, so the fallback rendering is what the "
+            "file already does and dropping the block is rendering-neutral. "
+            "One live url() keeps the whole block, as does a scheme, "
+            "fragment, raw-space, or url()-less (local()-only) block; "
+            "resolution walks the same helper the reference repairs use, "
+            "and comments/CDATA are never rewritten. Runs on .css entries.",
+        ),
         (
             "prune_dead_spine",
             "the shell repair: drop manifest items and spine positions whose files the archive never carried",

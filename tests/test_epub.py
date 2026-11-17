@@ -34,6 +34,7 @@ from bindery.epub import (
     package_version,
     prune_invalid_guide_refs,
     repair_epub,
+    strip_dead_font_faces,
     strip_epub3_attributes,
     strip_missing_file_hrefs,
     strip_ncx_dangling_targets,
@@ -4406,3 +4407,143 @@ class TestIssue30XmlIdAnchorTarget(unittest.TestCase):
             b = z.read("OEBPS/b.xhtml").decode()
         self.assertIn('href="a.xhtml#tgt"', b)
         self.assertIn("<a>dead</a>", b)
+
+
+class TestStripDeadFontFaces(unittest.TestCase):
+    """--strip-dead-font-faces (issue #27): a @font-face block whose every
+    url() misses the archive is dead by construction -- the font never
+    loaded, so the fallback rendering is what the file already does. One
+    live reference keeps the block; comments are never rewritten."""
+
+    DEAD = (
+        "@font-face {\n  font-family: 'Dante';\n"
+        "  src: url(styles/XXXXXXXXXXXXXXXX) format('truetype');\n}\n"
+    )
+    LIVE = (
+        "@font-face {\n  font-family: 'Kept';\n"
+        "  src: url(fonts/kept.ttf) format('truetype');\n}\n"
+    )
+
+    def test_dead_block_dropped(self):
+        css = self.DEAD + "p { margin: 0; }"
+        out, n = strip_dead_font_faces(css, "OEBPS", frozenset({"OEBPS/p.css"}))
+        self.assertEqual(n, 1)
+        self.assertNotIn("@font-face", out)
+        self.assertIn("p { margin: 0; }", out)
+
+    def test_live_block_kept(self):
+        css = self.LIVE + "p { margin: 0; }"
+        out, n = strip_dead_font_faces(
+            css, "OEBPS", frozenset({"OEBPS/fonts/kept.ttf"})
+        )
+        self.assertEqual((out, n), (css, 0))
+
+    def test_one_live_reference_keeps_the_block(self):
+        css = (
+            "@font-face {\n  font-family: 'Mixed';\n"
+            "  src: url(styles/DEADBEEFDEADBEEF) format('truetype'),"
+            " url(fonts/kept.ttf) format('truetype');\n}\n"
+        )
+        out, n = strip_dead_font_faces(
+            css, "OEBPS", frozenset({"OEBPS/fonts/kept.ttf"})
+        )
+        self.assertEqual((out, n), (css, 0))
+
+    def test_local_only_and_scheme_blocks_kept(self):
+        css = (
+            "@font-face { font-family: 'L'; src: local('Dante'); }\n"
+            "@font-face { font-family: 'R'; src: url(https://fonts.example/d.ttf); }\n"
+        )
+        out, n = strip_dead_font_faces(css, "OEBPS", frozenset())
+        self.assertEqual((out, n), (css, 0))
+
+    def test_fragment_and_space_references_kept(self):
+        css = (
+            "@font-face { font-family: 'F'; src: url(fonts/a.ttf#x); }\n"
+            "@font-face { font-family: 'S'; src: url(fonts/a b.ttf); }\n"
+        )
+        out, n = strip_dead_font_faces(css, "OEBPS", frozenset())
+        self.assertEqual((out, n), (css, 0))
+
+    def test_nested_brace_block_refused(self):
+        # the flat-brace matcher declines anything it cannot read exactly:
+        # a block with nested braces is not provably this class
+        css = "@font-face { src: url(a.ttf); foo { bar: baz }; }\n"
+        out, n = strip_dead_font_faces(css, "OEBPS", frozenset())
+        self.assertEqual((out, n), (css, 0))
+
+    def test_comment_protected(self):
+        css = "/* " + self.DEAD + " */\np { margin: 0; }"
+        out, n = strip_dead_font_faces(css, "OEBPS", frozenset())
+        self.assertEqual((out, n), (css, 0))
+
+    def test_idempotent(self):
+        css = self.DEAD + "p { margin: 0; }"
+        once, n1 = strip_dead_font_faces(css, "OEBPS", frozenset())
+        twice, n2 = strip_dead_font_faces(once, "OEBPS", frozenset())
+        self.assertEqual(n1, 1)
+        self.assertEqual(n2, 0)
+        self.assertEqual(once, twice)
+
+    def test_repair_level_end_to_end(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+            'unique-identifier="id"><metadata>'
+            '<dc:identifier xmlns:dc="http://purl.org/dc/elements/1.1/" '
+            'id="id">urn:uuid:U</dc:identifier></metadata>'
+            '<manifest><item id="c1" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/>'
+            '<item id="ps" href="page_styles.css" media-type="text/css"/>'
+            "</manifest>"
+            '<spine><itemref idref="c1"/></spine></package>'
+        )
+        content = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            '<link rel="stylesheet" href="page_styles.css" type="text/css"/>'
+            "</head><body><p>x</p></body></html>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            dst = Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", content)
+                z.writestr(
+                    "OEBPS/page_styles.css",
+                    self.DEAD + self.LIVE,
+                )
+                z.writestr("OEBPS/fonts/kept.ttf", b"\x00\x01\x02\x03")
+            report = repair_epub(src, dst, RepairFlags(strip_dead_font_faces=True))
+            self.assertEqual(report.fixes.get("dead_font_faces_stripped"), 1)
+            with zipfile.ZipFile(dst) as z:
+                css = z.read("OEBPS/page_styles.css").decode()
+        self.assertNotIn("Dante", css)
+        self.assertIn("Kept", css)
+
+
+class TestStripDeadFontFacesReviewEdges(unittest.TestCase):
+    """The pre-commit review's two edges: a query-carrying url() whose path
+    portion exists is a LIVE reference (first #/? starts fragment/query, the
+    issue #26 oracle model), and a comment carrying `}` inside a block body
+    refuses the drop (the truncated flat-brace match would leave comment
+    garbage in the stylesheet)."""
+
+    def test_query_carrying_live_reference_keeps_the_block(self):
+        css = "@font-face{font-family:X;src:url(fonts/x.woff?v=1);}"
+        out, n = strip_dead_font_faces(css, "OEBPS", frozenset({"OEBPS/fonts/x.woff"}))
+        self.assertEqual((out, n), (css, 0))
+
+    def test_query_carrying_dead_reference_keeps_the_block(self):
+        # the query shape is refused outright, dead or not: this pass never
+        # acts on a ?-carrying value (every sibling reference pass does the same)
+        css = "@font-face{font-family:X;src:url(styles/DEAD?v=1);}"
+        out, n = strip_dead_font_faces(css, "OEBPS", frozenset())
+        self.assertEqual((out, n), (css, 0))
+
+    def test_comment_with_close_brace_inside_refuses_the_drop(self):
+        css = "@font-face{font-family:X;src:url(dead.woff)/* } */;}\np{margin:0}"
+        out, n = strip_dead_font_faces(css, "OEBPS", frozenset())
+        self.assertEqual((out, n), (css, 0))
