@@ -226,3 +226,29 @@ class TestEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSelfClosingParagraphs(unittest.TestCase):
+    """issue #31: a self-closing <p .../> has no </p>; a block match starting
+    there ran forward to the NEXT paragraph's close tag and welded both into
+    one "paragraph" whose text could read as a page number, stripping the
+    divider markup (and anything between) with it."""
+
+    def test_divider_before_number_strips_only_the_number(self):
+        body = (
+            f'<p class="divider"/>\n<p>1</p>\n<p>{LONG}.</p>'
+            f'<p class="divider"/>\n<p>2</p>\n<p>Then. {LONG}.</p>'
+        )
+        out, n = strip_pagination_doc(_doc(body), set(), delete_layer=True)
+        self.assertGreaterEqual(n, 2)
+        self.assertEqual(out.count('<p class="divider"/>'), 2)
+        self.assertIn(LONG, out)
+
+    def test_self_closing_p_tolerated_in_conservative_path(self):
+        body = (
+            f'<p class="divider"/>\n<p>{LONG} and</p><p>7</p><p>sometimes {LONG}.</p>'
+        )
+        out, n = strip_pagination_doc(_doc(body), set())
+        self.assertEqual(n, 1)
+        self.assertIn('<p class="divider"/>', out)
+        self.assertIn("and sometimes", _texts(out))

@@ -4135,3 +4135,274 @@ class TestPruneDeadSpine(unittest.TestCase):
         self.assertIn('id="ncx"', out)
         self.assertIn('id="css"', out)
         self.assertIn('id="img"', out)
+
+
+class TestIssue29PercentDecodedFragments(unittest.TestCase):
+    """issue #29: fragments are URI percent-encoded on the wire
+    (`href="#caf%C3%A9"` names `<h2 id="café">`); the anchor, NCX, and guide
+    cleaners must decode the fragment before the existence check or they
+    strip valid links, ToC entries, and guide landmarks on internationalized
+    books."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = Path(self.tmp.name) / "in.epub"
+        self.dst = Path(self.tmp.name) / "out.epub"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _build(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:U</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            '<item href="a.xhtml" id="a" media-type="application/xhtml+xml"/>'
+            '<item href="b.xhtml" id="b" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="a"/><itemref idref="b"/></spine>'
+            '<guide><reference type="text" title="café" href="a.xhtml#caf%C3%A9"/>'
+            '<reference type="ghost" title="g" href="a.xhtml#ghost"/></guide>'
+            "</package>"
+        )
+        doc_a = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body>"
+            '<h2 id="café">Café</h2>'
+            '<p id="тест">Тест</p>'
+            '<a href="#caf%C3%A9">self café</a>'
+            '<a href="#%D1%82%D0%B5%D1%81%D1%82">self тест</a>'
+            "</body></html>"
+        )
+        doc_b = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body>"
+            '<a href="a.xhtml#caf%C3%A9">cross café</a>'
+            '<a href="a.xhtml#%D1%82%D0%B5%D1%81%D1%82">cross тест</a>'
+            '<a href="a.xhtml#ghost">cross ghost</a>'
+            "</body></html>"
+        )
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
+            '<meta name="dtb:uid" content="urn:uuid:U"/></head>'
+            "<navMap>"
+            '<navPoint id="n1" playOrder="1"><navLabel><text>A</text></navLabel>'
+            '<content src="a.xhtml#caf%C3%A9"/></navPoint>'
+            '<navPoint id="n2" playOrder="2"><navLabel><text>B</text></navLabel>'
+            '<content src="a.xhtml#ghost"/></navPoint>'
+            "</navMap></ncx>"
+        )
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/a.xhtml", doc_a)
+            z.writestr("OEBPS/b.xhtml", doc_b)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/toc.ncx", ncx)
+
+    def test_percent_encoded_fragments_survive(self):
+        self._build()
+        report = repair_epub(self.src, self.dst, RepairFlags(strip_anchors=True))
+        # the fixture carries one ghost control per cleaner; each strip count
+        # of exactly 1 means the ghosts died and nothing else did
+        self.assertEqual(report.fixes.get("broken_fragment_hrefs_stripped"), 1)
+        self.assertEqual(report.fixes.get("ncx_fragments_stripped"), 1)
+        self.assertEqual(report.fixes.get("guide_fragments_stripped"), 1)
+        with zipfile.ZipFile(self.dst) as z:
+            a = z.read("OEBPS/a.xhtml").decode()
+            b = z.read("OEBPS/b.xhtml").decode()
+            ncx = z.read("OEBPS/toc.ncx").decode()
+            opf = z.read("OEBPS/content.opf").decode()
+        # every percent-encoded link keeps its href byte-for-byte
+        self.assertIn('href="#caf%C3%A9"', a)
+        self.assertIn('href="#%D1%82%D0%B5%D1%81%D1%82"', a)
+        self.assertIn('href="a.xhtml#caf%C3%A9"', b)
+        self.assertIn('href="a.xhtml#%D1%82%D0%B5%D1%81%D1%82"', b)
+        self.assertIn('src="a.xhtml#caf%C3%A9"', ncx)
+        self.assertIn('href="a.xhtml#caf%C3%A9"', opf)
+
+    def test_ghost_fragments_still_strip(self):
+        # the control: a fragment the target really does not define is still
+        # dead under the decoded comparison
+        self._build()
+        report = repair_epub(self.src, self.dst, RepairFlags(strip_anchors=True))
+        self.assertEqual(report.fixes.get("broken_fragment_hrefs_stripped"), 1)
+        self.assertEqual(report.fixes.get("ncx_fragments_stripped"), 1)
+        self.assertEqual(report.fixes.get("guide_fragments_stripped"), 1)
+        with zipfile.ZipFile(self.dst) as z:
+            b = z.read("OEBPS/b.xhtml").decode()
+        self.assertIn("<a>cross ghost</a>", b)
+
+
+class TestIssue30OpfIdLookbehind(unittest.TestCase):
+    """issue #30: the OPF and NCX id matchers share the fix_id_colons
+    lookbehind; data-id is arbitrary data and xml:id needs its own reference
+    graph, so neither is an id here."""
+
+    OPF = (
+        '<?xml version="1.0"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="id">'
+        "<metadata/>"
+        '<manifest><item data-id="0-foo" id="valid_id" href="c1.xhtml" '
+        'media-type="application/xhtml+xml"/></manifest>'
+        "<spine><itemref idref='valid_id'/></spine></package>"
+    )
+
+    def test_manifest_data_id_not_renamed(self):
+        out, n = fix_manifest_ids(self.OPF)
+        self.assertEqual((out, n), (self.OPF, 0))
+
+    def test_manifest_digit_id_renamed_beside_a_data_id(self):
+        opf = self.OPF.replace('id="valid_id"', 'id="0-bar"').replace(
+            "idref='valid_id'", "idref='0-bar'"
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('data-id="0-foo"', out)
+        self.assertIn('id="id_0-bar"', out)
+        self.assertIn("idref='id_0-bar'", out)
+
+    def test_ncx_data_id_not_renamed(self):
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>'
+            '<navPoint data-id="0x" id="0y" playOrder="1">'
+            "<navLabel><text>A</text></navLabel></navPoint></navMap></ncx>"
+        )
+        out, n = fix_ncx_ids(ncx)
+        self.assertEqual(n, 1)
+        self.assertIn('data-id="0x"', out)
+        self.assertIn('id="id_0y"', out)
+
+
+class TestIssue32DowngradeGuards(unittest.TestCase):
+    """issue #32: the downgrade never rewrites comments or CDATA and its
+    class merge cannot fire inside data-class."""
+
+    def test_data_class_not_merged(self):
+        text = '<figure data-class="custom" class="real">x</figure>'
+        out, n = downgrade_epub3_tags(text)
+        self.assertEqual(n, 2)  # open + close of the one element
+        self.assertEqual(out, '<div data-class="custom" class="real figure">x</div>')
+
+    def test_data_class_only_still_gets_a_class(self):
+        text = '<figure data-class="custom">x</figure>'
+        out, n = downgrade_epub3_tags(text)
+        self.assertEqual(n, 2)
+        self.assertEqual(out, '<div data-class="custom" class="figure">x</div>')
+
+    def test_commented_markup_untouched(self):
+        comment = '<!-- <section id="old"><figure>x</figure></section> -->'
+        out, n = downgrade_epub3_tags(comment)
+        self.assertEqual((out, n), (comment, 0))
+
+    def test_real_downgrade_beside_comment(self):
+        comment = '<!-- <section id="old"><figure>x</figure></section> -->'
+        out, n = downgrade_epub3_tags(comment + "<section>y</section>")
+        self.assertEqual(n, 2)
+        self.assertIn(comment, out)
+        self.assertIn('<div class="section">y</div>', out)
+
+    def test_cdata_untouched(self):
+        doc = '<style>/*<![CDATA[*/ .x { quotes: "<figure/>" } /*]]>*/</style>'
+        out, n = downgrade_epub3_tags(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+
+class TestIssue33ManifestCloseTag(unittest.TestCase):
+    """issue #33: the declarer's literal ``</manifest>`` check and replace
+    silently no-opped on prefixed close tags and whitespace spellings; the
+    close-tag matcher carries the same prefix tolerance as every other OPF
+    matcher."""
+
+    def test_prefixed_close_tag_declares(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<opf:package xmlns:opf="http://www.idpf.org/2007/opf" '
+            'version="2.0" unique-identifier="id"><metadata/>'
+            '<opf:manifest><opf:item id="c1" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></opf:manifest>'
+            "<opf:spine><opf:itemref idref='c1'/></opf:spine></opf:package>"
+        )
+        out, n = declare_missing_manifest_items(
+            opf, "OEBPS", frozenset({"OEBPS/y.png"})
+        )
+        self.assertEqual(n, 1)
+        self.assertIn('id="bindery-d1" href="y.png"', out)
+        self.assertLess(out.index("y.png"), out.index("</opf:manifest>"))
+
+    def test_whitespace_close_tag_declares(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
+            'unique-identifier="id"><metadata/>'
+            '<manifest><item id="c1" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest >'
+            "</package>"
+        )
+        out, n = declare_missing_manifest_items(
+            opf, "OEBPS", frozenset({"OEBPS/y.png"})
+        )
+        self.assertEqual(n, 1)
+        self.assertIn("</manifest >", out)  # the original spelling survives
+        self.assertLess(out.index("y.png"), out.index("</manifest >"))
+
+
+class TestIssue30XmlIdAnchorTarget(unittest.TestCase):
+    """The code-review follow-up to #30: xml:id left the strict id matchers,
+    but it is a real XML id the oracle resolves fragments against, so the
+    anchor index must still collect it -- a href targeting an xml:id-declared
+    anchor is kept, not stripped."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = Path(self.tmp.name) / "in.epub"
+        self.dst = Path(self.tmp.name) / "out.epub"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_xml_id_targeted_link_kept(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'unique-identifier="bookid"><metadata>'
+            '<dc:identifier xmlns:dc="http://purl.org/dc/elements/1.1/" '
+            'id="bookid">urn:uuid:U</dc:identifier></metadata>'
+            "<manifest>"
+            '<item href="a.xhtml" id="a" media-type="application/xhtml+xml"/>'
+            '<item href="b.xhtml" id="b" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="a"/><itemref idref="b"/></spine></package>'
+        )
+        doc_a = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            '</head><body><p xml:id="tgt">target</p></body></html>'
+        )
+        doc_b = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title>'
+            "</head><body>"
+            '<a href="a.xhtml#tgt">ok</a>'
+            '<a href="a.xhtml#ghost">dead</a>'
+            "</body></html>"
+        )
+        with zipfile.ZipFile(self.src, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("OEBPS/a.xhtml", doc_a)
+            z.writestr("OEBPS/b.xhtml", doc_b)
+            z.writestr("OEBPS/content.opf", opf)
+        report = repair_epub(self.src, self.dst, RepairFlags(strip_anchors=True))
+        # exactly one strip: the ghost control; the xml:id-targeted link is kept
+        self.assertEqual(report.fixes.get("broken_fragment_hrefs_stripped"), 1)
+        with zipfile.ZipFile(self.dst) as z:
+            b = z.read("OEBPS/b.xhtml").decode()
+        self.assertIn('href="a.xhtml#tgt"', b)
+        self.assertIn("<a>dead</a>", b)

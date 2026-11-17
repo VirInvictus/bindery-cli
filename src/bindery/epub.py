@@ -88,7 +88,8 @@ _UID_ATTR_RE = re.compile(r"unique-identifier=([\"'])((?:(?!\1).)+)\1")
 # idref (which _IDREF_ATTR_RE does read) would be renamed against a
 # standing id (issue #20's prefix blindness, in fix_manifest_ids' own lane).
 _ITEM_ID_RE = re.compile(
-    r"(<(?:[\w.-]+:)?item\b[^>]*?\bid=)([\"'])((?:(?!\2).)+)(\2)", re.IGNORECASE
+    r"(<(?:[\w.-]+:)?item\b[^>]*?\b(?<![\w:.-])id=)([\"'])((?:(?!\2).)+)(\2)",
+    re.IGNORECASE,
 )
 _ROOTFILE_RE = re.compile(r"full-path=([\"'])((?:(?!\1).)+)\1")
 
@@ -190,8 +191,20 @@ def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
 
 
 # Any id attribute, either quote style (the OPF _ITEM_ID_RE is item-specific;
-# NCX toolchains emit both styles).
-_XML_ID_RE = re.compile(r"""(\bid=)(["'])((?:(?!\2).)*)(\2)""", re.IGNORECASE)
+# NCX toolchains emit both styles). The lookbehind is the fix_id_colons guard
+# (issue #30): `\b` alone also fires right after a hyphen or colon, so
+# `data-id`/`xml:id` values read as ids here.
+_XML_ID_RE = re.compile(
+    r"""(\b(?<![\w:.-])id=)(["'])((?:(?!\2).)*)(\2)""", re.IGNORECASE
+)
+# The anchor-index collection set (ids_by_doc): `id` AND `xml:id` -- xml:id is
+# a real XML id the oracle resolves fragments against, so dropping it from the
+# set (the way the strict _XML_ID_RE does) would read hrefs targeting
+# xml:id-declared anchors as broken -- but never `data-id`, arbitrary data
+# (issue #30).
+_ANCHOR_ID_RE = re.compile(
+    r"""(?:^|\s)(?:xml:)?id\s*=\s*(["'])((?:(?!\1).)*)\1""", re.IGNORECASE
+)
 
 
 def fix_ncx_ids(ncx_text: str) -> tuple[str, int]:
@@ -983,14 +996,18 @@ EPUB3_DOWNGRADE_TAGS = {"figure": "div", "figcaption": "p", "section": "div"}
 
 def _append_class(attrs: str, name: str) -> str:
     """Add `name` to the class attribute in `attrs` (existing classes kept)."""
-    class_re = re.compile(r"class=(?:\"([^\"]*)\"|'([^']*)')")
+    # Whitespace-anchored (issue #32): a bare `class=` also matched inside
+    # `data-class=`, appending the semantic hook to arbitrary data and
+    # leaving the element's real class attribute untouched.
+    class_re = re.compile(r"""((?:^|\s)class=)(?:\"([^\"]*)\"|'([^']*)')""")
     m = class_re.search(attrs)
     if m:
-        existing = m.group(1) if m.group(1) is not None else m.group(2)
-        quote = '"' if m.group(1) is not None else "'"
+        existing = m.group(2) if m.group(2) is not None else m.group(3)
+        quote = '"' if m.group(2) is not None else "'"
         merged = f"{existing} {name}".strip()
+        prefix = m.group(1)
         return class_re.sub(
-            lambda _: f"class={quote}{merged}{quote}",
+            lambda _: f"{prefix}{quote}{merged}{quote}",
             attrs,
             count=1,
         )
@@ -1011,39 +1028,48 @@ def downgrade_epub3_tags(
     untouched: if a book styles `figure { ... }`, downgrading it would change
     how the text renders, so preservation wins — and the book keeps its
     RSC-005 findings, which is the honest outcome.
+
+    Comments and CDATA are never rewritten (issue #32: the pass ran unshielded
+    `re.sub` over the whole document, downgrading markup inside commented-out
+    sections and counting phantom transforms); the whole downgrade runs
+    through outside_protected_map like every other markup transform.
     """
-    count = 0
-    for tag, new in EPUB3_DOWNGRADE_TAGS.items():
-        if tag in protected_tags:
-            continue
 
-        def repl_open(m: re.Match, tag: str = tag, new: str = new) -> str:
-            nonlocal count
-            attrs = m.group(1)
-            self_close = attrs.rstrip().endswith("/")
-            if self_close:
-                attrs = attrs.rstrip()[:-1]
-            count += 1
-            return f"<{new}{_append_class(attrs, tag)}{'/' if self_close else ''}>"
+    def fix(part: str) -> tuple[str, int]:
+        count = 0
+        for tag, new in EPUB3_DOWNGRADE_TAGS.items():
+            if tag in protected_tags:
+                continue
 
-        def repl_end(m: re.Match, new: str = new) -> str:
-            nonlocal count
-            count += 1
-            return f"</{new}>"
+            def repl_open(m: re.Match, tag: str = tag, new: str = new) -> str:
+                nonlocal count
+                attrs = m.group(1)
+                self_close = attrs.rstrip().endswith("/")
+                if self_close:
+                    attrs = attrs.rstrip()[:-1]
+                count += 1
+                return f"<{new}{_append_class(attrs, tag)}{'/' if self_close else ''}>"
 
-        # quote-aware attrs group (same shape as the manifest matchers): a
-        # `>` inside an attribute value must not end the tag early. The
-        # branches overlap ([^>] also matches quotes), so the possessive
-        # `*+` bounds the re-partitioning that spun CPU on failing
-        # candidates in 0.41.0 (see transforms.unwrap_block_in_inline).
-        text = re.sub(
-            rf"""<{tag}\b((?:"[^"]*"|'[^']*'|[^>])*+)>""",
-            repl_open,
-            text,
-            flags=re.IGNORECASE,
-        )
-        text = re.sub(rf"</{tag}\s*>", repl_end, text, flags=re.IGNORECASE)
-    return text, count
+            def repl_end(m: re.Match, new: str = new) -> str:
+                nonlocal count
+                count += 1
+                return f"</{new}>"
+
+            # quote-aware attrs group (same shape as the manifest matchers): a
+            # `>` inside an attribute value must not end the tag early. The
+            # branches overlap ([^>] also matches quotes), so the possessive
+            # `*+` bounds the re-partitioning that spun CPU on failing
+            # candidates in 0.41.0 (see transforms.unwrap_block_in_inline).
+            part = re.sub(
+                rf"""<{tag}\b((?:"[^"]*"|'[^']*'|[^>])*+)>""",
+                repl_open,
+                part,
+                flags=re.IGNORECASE,
+            )
+            part = re.sub(rf"</{tag}\s*>", repl_end, part, flags=re.IGNORECASE)
+        return part, count
+
+    return outside_protected_map(text, fix)
 
 
 # ---------------------------------------------------------------------------
@@ -1112,6 +1138,18 @@ def _resolve_href(base_dir: str, href: str) -> str | None:
     if not target:
         return None
     return _norm_path(posixpath.join(base_dir, target))
+
+
+def _norm_fragment(frag: str) -> str:
+    """The document-level identity of a URI fragment (issue #29): the same
+    decode chain `_resolve_href` applies to the path portion -- the five
+    predefined entities plus numeric character references, then RFC 3986
+    percent-decoding -- applied to the `#`-tail. Internal links to non-ASCII
+    ids are percent-encoded on the wire (`href="#caf%C3%A9"` names
+    `<h2 id="café">`), and the ids sets hold the raw attribute spellings, so
+    a fragment compared undecoded read as absent and the anchor cleaners
+    stripped valid links, ToC entries, and guide landmarks."""
+    return unquote(_decode_numeric_refs(_xml_unescape(frag, _XML_ATTR_ENTITIES)))
 
 
 def space_rename_map(names) -> dict[str, str]:
@@ -1475,11 +1513,18 @@ def collect_undeclared_resources(
     return frozenset(targets)
 
 
+# The manifest close tag, prefixed packages (<opf:manifest>, the issue #20
+# tolerance every other OPF matcher carries) and whitespace before `>`
+# included. The literal `"</manifest>"` check/replace silently no-opped on
+# both spellings (issue #33).
+_MANIFEST_CLOSE_RE = re.compile(r"</(?:[\w.-]+:)?manifest\s*>", re.IGNORECASE)
+
+
 def declare_missing_manifest_items(
     opf_text: str, opf_dir: str, targets: frozenset[str]
 ) -> tuple[str, int]:
-    """Write one `<item>` per undeclared target, inserted before
-    `</manifest>`. Deterministic: targets in sorted order, ids `bindery-dN`
+    """Write one `<item>` per undeclared target, inserted before the manifest
+    close tag. Deterministic: targets in sorted order, ids `bindery-dN`
     (prefixed with `_` until free), href the relative spelling from the OPF,
     media type from _DECLARE_MEDIA_TYPES. Nothing on the spine changes (no
     itemref is written), so reading order and rendering are untouched — the
@@ -1487,9 +1532,12 @@ def declare_missing_manifest_items(
     with no matching manifest item is deliberately NOT repaired here: which
     file that idref meant is underdetermined, and guessing could weld a
     foreign document into the spine."""
-    if not targets or "</manifest>" not in opf_text:
+    if not targets:
         return opf_text, 0
-    existing_ids = {m.group(3) for m in _XML_ID_RE.finditer(opf_text)}
+    m = _MANIFEST_CLOSE_RE.search(opf_text)
+    if m is None:
+        return opf_text, 0
+    existing_ids = {im.group(3) for im in _XML_ID_RE.finditer(opf_text)}
     lines: list[str] = []
     count = 0
     for i, target in enumerate(sorted(targets), 1):
@@ -1505,7 +1553,8 @@ def declare_missing_manifest_items(
         count += 1
     if not count:
         return opf_text, 0
-    return opf_text.replace("</manifest>", "\n".join(lines) + "\n</manifest>", 1), count
+    idx = m.start()
+    return opf_text[:idx] + "\n".join(lines) + "\n" + opf_text[idx:], count
 
 
 # ---- --strip-stub-docs: the lossy drop of repeated placeholder spine docs.
@@ -1887,7 +1936,8 @@ def strip_broken_anchors_doc(
                     ids = ids_by_doc.get(_resolve_href(doc_dir, target) or "")
                 else:
                     ids = self_ids
-                if ids is not None and frag not in ids:
+                norm_frag = _norm_fragment(frag)
+                if ids is not None and frag not in ids and norm_frag not in ids:
                     dead = True
                     key = "broken_fragment_hrefs_stripped"
             if not dead:
@@ -1932,7 +1982,8 @@ def strip_ncx_broken_fragments(
             target, frag = src.partition("#")[::2]
             resolved = _resolve_href(ncx_dir, target) if target else None
             ids = ids_by_doc.get(resolved or "") if resolved else None
-            if ids is None or frag in ids:
+            norm_frag = _norm_fragment(frag)
+            if ids is None or frag in ids or norm_frag in ids:
                 return m.group(0)
             count += 1
             return f"{prefix}{quote}{target}{quote}"
@@ -2159,7 +2210,8 @@ def strip_broken_guide_fragments(
             target, frag = href.partition("#")[::2]
             resolved = _resolve_href(opf_dir, target) if target else None
             ids = ids_by_doc.get(resolved or "") if resolved else None
-            if ids is None or frag in ids:
+            norm_frag = _norm_fragment(frag)
+            if ids is None or frag in ids or norm_frag in ids:
                 return tag
             count += 1
             value_start = hm.start(2)
@@ -2677,7 +2729,7 @@ def repair_epub(
                         )
                     ids_by_doc[
                         _norm_path(space_renames.get(i.filename, i.filename))
-                    ] = frozenset(m.group(3) for m in _XML_ID_RE.finditer(t))
+                    ] = frozenset(m.group(2) for m in _ANCHOR_ID_RE.finditer(t))
 
         # The mimetype content is an OCF constant, so adding a missing entry and
         # normalizing wrong or whitespace-padded content is deterministic and

@@ -879,13 +879,36 @@ def fix_id_colons(s: str) -> tuple[str, int]:
 
     def repl_href(m: re.Match) -> str:
         nonlocal count
-        if _EXTERNAL_TARGET_RE.match(m.group(2)) or not _is_invalid_ncname(m.group(3)):
+        frag = m.group(4)
+        # the escaped-fragment refusal (see fix_ncx_src_fragments): a
+        # percent-escape or an entity reference names its target under
+        # decoding, not NCName spelling
+        if (
+            _EXTERNAL_TARGET_RE.match(m.group(3))
+            or not _is_invalid_ncname(frag)
+            or "%" in frag
+            or "&" in frag
+        ):
             return m.group(0)
         count += 1
-        return m.group(1) + m.group(2) + "#" + _ncname_rename(m.group(3)) + m.group(4)
+        return (
+            m.group(1)
+            + m.group(2)
+            + m.group(3)
+            + "#"
+            + _ncname_rename(frag)
+            + m.group(2)
+        )
 
     s, n2 = re.subn(
-        r'\b(href\s*=\s*["\'])([^"#]*?)#([^"\']+)(["\'])',
+        # the tempered-quote idiom (issue #28, the in-document half): the old
+        # `[^"']+` fragment class truncated an apostrophe-bearing fragment at
+        # the apostrophe (`href="c1.xhtml#Lisey's_story"` read as the valid
+        # fragment `Lisey` and never translated while the id it named did).
+        # Whitespace-anchored with the optional namespace prefix (the house
+        # _HREF_ATTR_RE shape, keeping `xlink:href`): a bare `\b` fired right
+        # after the hyphen of `data-href`.
+        r'((?:^|\s)(?:[\w.-]+:)?href\s*=\s*)(["\'])([^"#]*?)#((?:(?!\2).)+)\2',
         repl_href,
         s,
         flags=re.IGNORECASE,
@@ -895,25 +918,56 @@ def fix_id_colons(s: str) -> tuple[str, int]:
 
 @_outside_protected
 def fix_ncx_src_fragments(ncx: str) -> tuple[str, int]:
-    """Translate colon-bearing fragments in NCX `content src` references to
-    `_`, mirroring what fix_id_colons just did to the content documents.
+    """Translate invalid-NCName fragments in NCX `content src` references to
+    the `id_`+sanitized rename, mirroring what fix_id_colons just did to the
+    content documents.
 
     Opt-in (--fix-id-colons): a content id rename without this NCX half
     manufactures dangling ToC references end to end (every navPoint pointing
-    at a colon-bearing id lands on nothing). External targets keep their
+    at a renamed id lands on nothing). The predicate and the rename are the
+    same `_is_invalid_ncname`/`_ncname_rename` pair the content half uses
+    (issue #28: the old colon-only check left digit-led and
+    apostrophe-bearing fragments untouched while fix_id_colons renamed their
+    ids -- the ToC dangled -- and a digit-led COLON-bearing id translated to
+    different spellings on the two sides). External targets keep their
     fragments verbatim.
     """
     count = 0
 
     def repl(m: re.Match) -> str:
         nonlocal count
-        if ":" not in m.group(3) or _EXTERNAL_TARGET_RE.match(m.group(2)):
+        frag = m.group(4)
+        # An escaped fragment names its target under decoding, not NCName
+        # spelling: a percent-escape (`#caf%C3%A9` naming id="café") or an
+        # entity reference (`#caf&eacute;`, `#&#x44E;`) renamed here would
+        # manufacture a target that exists nowhere and undo the anchor
+        # cleaners' decode match (issue #29's input class, against #28's
+        # rename). The refs_delim_encoded entity-refusal precedent.
+        if (
+            _EXTERNAL_TARGET_RE.match(m.group(3))
+            or not _is_invalid_ncname(frag)
+            or "%" in frag
+            or "&" in frag
+        ):
             return m.group(0)
         count += 1
-        return m.group(1) + m.group(2) + "#" + m.group(3).replace(":", "_") + m.group(4)
+        return (
+            m.group(1)
+            + m.group(2)
+            + m.group(3)
+            + "#"
+            + _ncname_rename(frag)
+            + m.group(2)
+        )
 
     ncx, _ = re.subn(
-        r'\b(src\s*=\s*["\'])([^"#]*?)#([^"\']+)(["\'])',
+        # the tempered-quote idiom (issue #28): a double-quoted src may carry
+        # an apostrophe (`src="chap.xhtml#Lisey's_story"`), and the old
+        # `[^"']+` fragment class ended the match there, leaving the
+        # apostrophe-bearing fragment untranslated. Whitespace-anchored with
+        # the optional namespace prefix (the house _NCX_CONTENT_SRC_RE
+        # shape): a bare `\b` fired right after the hyphen of `data-src`.
+        r'((?:^|\s)(?:[\w.-]+:)?src\s*=\s*)(["\'])([^"#]*?)#((?:(?!\2).)+)\2',
         repl,
         ncx,
         flags=re.IGNORECASE,
@@ -1077,7 +1131,11 @@ def fix_cdata_terminator(s: str) -> tuple[str, int]:
 # double-quoted value may carry an apostrophe). Anchored to start tags so
 # literal `id="x"` text in element content is never renamed.
 _SVG_TAG_RE = re.compile(r"""<[a-zA-Z][\w:.-]*(?:"[^"]*"|'[^']*'|[^>])*+>""")
-_SVG_ID_ATTR_RE = re.compile(r"""(\bid\s*=\s*)(["'])((?:(?!\2).)*+)(\2)""")
+# The lookbehind is the fix_id_colons guard (issue #30): `\b` alone also
+# matches right after a hyphen or colon, so `data-id="c1"` read as THE id,
+# the real `id="c1"` became a "duplicate" and was renamed away from the
+# fragments pointing at it.
+_SVG_ID_ATTR_RE = re.compile(r"""(\b(?<![\w:.-])id\s*=\s*)(["'])((?:(?!\2).)*+)(\2)""")
 
 
 def _rename_duplicate_ids(s: str) -> tuple[str, int]:

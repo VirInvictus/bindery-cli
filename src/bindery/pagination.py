@@ -42,7 +42,11 @@ RUNHEAD_MIN_REPEAT = 8  # a short block repeated this often is a running header
 RUNHEAD_MAX_LEN = 60  # running headers are short
 
 # <p> cannot nest <p> in valid HTML, so a non-greedy match to the next </p> is exact.
-_P_RE = re.compile(r"<p\b[^>]*>.*?</p>", re.IGNORECASE | re.DOTALL)
+# The (?<!/) keeps a SELF-CLOSING <p .../> start tag out of the match (XML-legal,
+# common on divider paragraphs): it has no </p>, so a match starting there ran
+# forward to the NEXT paragraph's close tag, welding both into one "paragraph"
+# whose text could read as a page number and strip real markup with it (issue #31).
+_P_RE = re.compile(r"<p\b[^>]*?(?<!/)>.*?</p>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _INT_RE = re.compile(r"\d{1,4}\Z")

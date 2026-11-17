@@ -1730,3 +1730,144 @@ class TestFixIdColonsNcNameBroadening(unittest.TestCase):
     def test_valid_ids_untouched(self):
         doc = '<p id="ok_name-2">x</p>'
         self.assertEqual(fix_id_colons(doc), (doc, 0))
+
+
+class TestIssue28FragmentSync(unittest.TestCase):
+    """issue #28: fix_ncx_src_fragments must follow the FULL fix_id_colons
+    predicate (every NCName failure, not colons only) and the same
+    id_+sanitized rename, and both fragment passes must carry the
+    tempered-quote idiom so an apostrophe inside a double-quoted value
+    cannot truncate the fragment."""
+
+    def test_digit_led_ncx_fragment_follows_the_rename(self):
+        # fix_id_colons renames id="0-25c" -> id="id_0-25c"; the old
+        # colon-only NCX check left src="c1.xhtml#0-25c" untouched and the
+        # ToC dangled against the renamed id
+        ncx = (
+            '<navMap><navPoint id="np1"><navLabel><text>A</text></navLabel>'
+            '<content src="c1.xhtml#0-25c121ec"/></navPoint></navMap>'
+        )
+        out, n = fix_ncx_src_fragments(ncx)
+        self.assertEqual(n, 1)
+        self.assertIn('src="c1.xhtml#id_0-25c121ec"', out)
+
+    def test_digit_colon_id_spelling_syncs_across_both_sides(self):
+        # id="1:intro" renames to id_1_intro on the content side; the old
+        # NCX half translated the same value to 1_intro (no prefix) and the
+        # two spellings diverged
+        doc = '<html><body id="1:intro"></body></html>'
+        out, _ = fix_id_colons(doc)
+        self.assertIn('id="id_1_intro"', out)
+        ncx = '<navMap><navPoint id="n1"><content src="c1.xhtml#1:intro"/></navPoint></navMap>'
+        ncx_out, n = fix_ncx_src_fragments(ncx)
+        self.assertEqual(n, 1)
+        self.assertIn('src="c1.xhtml#id_1_intro"', ncx_out)
+
+    def test_apostrophe_ncx_fragment_translates(self):
+        ncx = (
+            '<navMap><navPoint id="np1"><navLabel><text>A</text></navLabel>'
+            '<content src="chap.xhtml#Lisey\'s_story"/></navPoint></navMap>'
+        )
+        out, n = fix_ncx_src_fragments(ncx)
+        self.assertEqual(n, 1)
+        # L is a valid name start, so the sanitized rename needs no id_
+        # prefix; the point is BOTH sides land on the same spelling
+        self.assertIn('src="chap.xhtml#Lisey_s_story"', out)
+
+    def test_apostrophe_href_fragment_translates(self):
+        # the in-document half of the same truncation: href="c1.xhtml#Lisey's_story"
+        # read as the valid fragment `Lisey` and never translated while the id
+        # it named was renamed away
+        doc = (
+            '<html><body><h1 id="Lisey\'s_story">t</h1>'
+            '<p><a href="c1.xhtml#Lisey\'s_story">back</a></p></body></html>'
+        )
+        out, n = fix_id_colons(doc)
+        self.assertEqual(n, 2)
+        self.assertIn('id="Lisey_s_story"', out)
+        self.assertIn('href="c1.xhtml#Lisey_s_story"', out)
+
+    def test_valid_ncx_fragments_untouched(self):
+        ncx = (
+            '<navMap><navPoint id="np1"><content src="c1.xhtml#sec_1"/></navPoint>'
+            '<navPoint id="np2"><content src="http://example.com/x#a:b"/></navPoint>'
+            "</navMap>"
+        )
+        out, n = fix_ncx_src_fragments(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+
+class TestIssue30DataIdLookbehind(unittest.TestCase):
+    """issue #30: the shared duplicate-id rename's id matcher must not fire
+    after a hyphen or colon; data-id is arbitrary data, and counting it as
+    THE id renamed the real definition away from the fragments pointing at
+    it."""
+
+    def test_data_id_is_not_a_duplicate_seed(self):
+        doc = '<p data-id="c1">Intro</p><p id="c1">Target</p>'
+        out, n = fix_duplicate_ids(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_real_duplicate_still_renames_beside_a_data_id(self):
+        doc = '<p data-id="c1">Intro</p><p id="c1">First</p><p id="c1">Second</p>'
+        out, n = fix_duplicate_ids(doc)
+        self.assertEqual(n, 1)
+        self.assertIn('data-id="c1"', out)
+        self.assertIn('<p id="c1">First</p>', out)
+        self.assertIn('<p id="c1_2">Second</p>', out)
+
+    def test_xml_id_is_not_a_duplicate_seed(self):
+        doc = '<p xml:id="c1">Intro</p><p id="c1">Target</p>'
+        out, n = fix_duplicate_ids(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+
+class TestIssue28EscapedFragmentRefusal(unittest.TestCase):
+    """The code-review follow-up to #28: an ESCAPED fragment names its target
+    under decoding (percent-escape, entity reference), not NCName spelling,
+    so the broadened predicate must refuse it -- renaming the encoded form
+    manufactures a target that exists nowhere and undoes the #29 decode
+    match. The attribute anchoring keeps data-href/data-src out of scope."""
+
+    def test_percent_encoded_fragment_refused(self):
+        doc = (
+            '<html><body><h2 id="caf\u00e9">x</h2>'
+            '<p><a href="#caf%C3%A9">y</a></p></body></html>'
+        )
+        out, n = fix_id_colons(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_entity_ref_fragments_refused(self):
+        doc = (
+            '<html><body><p id="\u044b">x</p>'
+            '<p><a href="#&#x44E;">y</a></p>'
+            '<p><a href="#caf&eacute;">z</a></p></body></html>'
+        )
+        out, n = fix_id_colons(doc)
+        # id="ы" is a valid NCName (untouched) and both escaped fragments are
+        # refused: nothing in this document renames
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_ncx_encoded_fragment_refused(self):
+        ncx = (
+            '<navMap><navPoint id="np1"><content src="a.xhtml#caf%C3%A9"/>'
+            "</navPoint></navMap>"
+        )
+        out, n = fix_ncx_src_fragments(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_data_href_and_data_src_out_of_scope(self):
+        doc = '<div data-href="notes.xhtml#12top">x</div>'
+        out, n = fix_id_colons(doc)
+        self.assertEqual((out, n), (doc, 0))
+
+    def test_ncx_data_src_out_of_scope(self):
+        ncx = '<navMap><navPoint id="np1" data-src="c1.xhtml#1:a"/></navMap>'
+        out, n = fix_ncx_src_fragments(ncx)
+        self.assertEqual((out, n), (ncx, 0))
+
+    def test_xlink_href_still_in_scope(self):
+        doc = '<html><body id="0-tgt"></body><use xlink:href="c1.xhtml#0-tgt"/></html>'
+        out, n = fix_id_colons(doc)
+        self.assertEqual(n, 2)
+        self.assertIn('xlink:href="c1.xhtml#id_0-tgt"', out)
