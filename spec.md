@@ -174,7 +174,7 @@ The normal gate applies.
 
 ### Opt-in: structural repairs
 
-Thirty repairs go past well-formedness and therefore require their own flag; none is ever
+Thirty-five repairs go past well-formedness and therefore require their own flag; none is ever
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `<p>&#160;</p>` inside a strictly empty `<body></body>` ("body
@@ -625,7 +625,14 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   on a book whose archive carried all 38 documents. The audit's shell
   analyzer subtracts the same recoverable slice before its verdict: a
   book whose manifest "missing" is all recoverable now reads ADVISORY
-  naming the encode, never SHELL/re-source.
+  naming the encode, never SHELL/re-source. Since v1.2.2 the census also
+  reads the layout its hrefs are written in for the plain href (the
+  v0.52.0 lesson, census edition, issue #35): when `--encode-url-spaces`
+  co-fires, a raw-space href whose file exists in the source layout is
+  the rename pass's repair class, never prune material -- before this
+  arm the census read only the renamed output layout and every raw-space
+  href read dead (the Flux specimen manufactured a 97% shell signature,
+  31 of 32, on a book whose files were all present).
 
 Thirty-one of the thirty-five are evaluated by the normal `gate`: unlike the lossy strips,
 their benefit is visible to epubcheck (they clear errors), so a run with no measurable
@@ -644,7 +651,8 @@ spine-amputating prune would win the gate fight (0f/3e -> 0f/1e by deleting the
 documents, against the encode's 0f/3e -> 0f/6e by opening them). The bar is the
 fatal branch's, one class over: net-new fatals reject, a still-fatal candidate
 stays partial (never auto-applied), a fatal-free candidate accepts whatever the
-unmasking did to the error count; the #10 spine-collapse veto still overrides.
+unmasking did to the error count; the #10 spine-collapse veto still overrides
+(as does its #35 half-spine arm).
 CDATA sections are never rewritten
 anywhere; comment bodies only by the double-hyphen fix above, and nothing else inside
 them.
@@ -740,12 +748,25 @@ match nothing) removes the broken documents' errors from the measurement and a
 destroyed book can read as an error reduction (issue #10: a raw-space fan
 conversion's eight spine items pruned as "missing", gate accepted
 `0f/17e/8w -> 0f/10e/0w`). `process_book` therefore probes both packages with
-`spine_dangles` (itemref -> manifest item -> archive entry, resolved through the
-same helper the repair's existence checks use) and vetoes any candidate whose
-dangle count rises: `reject`, regardless of the counts and regardless of which
-bar a fix class promotes under. The probe needs evidence on both sides — a
-package it cannot read (unreadable archive, no locatable OPF) vetoes nothing —
-and `--no-validate` skips it with the rest of the gate.
+`spine_resolution` (total, resolved, dangles; itemref -> manifest item ->
+archive entry, resolved through the same helper the repair's existence checks
+use) and vetoes any candidate whose dangle count rises: `reject`, regardless of
+the counts and regardless of which bar a fix class promotes under.
+
+The veto's second arm (v1.2.2, issue #35) covers the prune class the dangle
+count cannot see: pruning removes the dangling declarations along with the
+rest, so an amputation LOWERS the dangle count to zero while the error count
+improves on the smaller book (the Flux specimen measured `0f/38e/31w ->
+0f/30e/0w` with 31 of 32 spine documents gone behind the title page). A
+`dead_spine_items_pruned` candidate whose spine resolves to less than half of
+what resolved before the repair is a REJECT with `(spine halved)` in the
+summary. The comparison counts documents that RESOLVE on both sides, so the
+genuine shell keeps its contract (the Wandering Inn prune drops only
+never-resolving positions: the same documents resolve before and after, no
+veto); "less than half" is strict, and the arm fires only when the prune
+counter is present. Both arms share the probe's fail-open contract: a package
+the probe cannot read (unreadable archive, no locatable OPF) vetoes nothing,
+and `--no-validate` skips them with the rest of the gate.
 
 The oracle itself runs two ways: the `epubcheck --json -` subprocess, or a persistent
 daemon (`_EpubcheckDaemon`, a bounded pool sized by `--workers`) that writes
@@ -1120,8 +1141,9 @@ document says, and this document is the promise. Concretely, from 1.0.0:
   base-free (v0.62.0), the doctype narrowing (v0.63.0), and the
   presentational set's scoping did.
 - **The gate is stable.** The two-mode improvement/no-worse acceptance
-  bars, the spine-collapse veto, and the shell signature's 50% gate are
-  the contract; their thresholds do not move silently.
+  bars, the spine-collapse veto (and its half-spine arm), and the shell
+  signature's 50% gate are the contract; their thresholds do not move
+  silently.
 - **The record vocabulary is stable.** `repair --json` / `library --json`
   record shapes, the fix-breakdown keys, the exit-code contracts, and the
   observe schema (v2) do not change in 1.x. Consumers (CalibreQuarry's

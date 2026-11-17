@@ -1,5 +1,54 @@
 # bindery-cli Patch Notes
 
+## v1.2.2 (2026-11-17)
+
+### The half-spine veto (issue #35): the shell census read the wrong layout
+
+One specimen, two fixes. The Flux amputation (live in the 2026-11-17
+mega-batch: `dead_spine_items_pruned:31` on a book whose archive carried
+every document, spine applied down to a lone 758-byte title page behind
+which 31 content docs sat unreachable) had a root cause in the census and
+a hole in the gate, and this release closes both.
+
+- **The shell census reads the layout its hrefs are written in** (the
+  v0.52.0 lesson, census edition). The `--prune-dead-spine` census checked
+  each manifest href against the renamed output layout and consulted the
+  raw source layout (`present_src`) only for the #26 delim variant, so
+  whenever `--encode-url-spaces` co-fires, every raw-space href "misses"
+  and reads dead. Flux measured a 97% shell signature (31 of 32 content
+  items) on a book whose files were all present under the spellings its
+  hrefs carry; the census now consults the source layout for the plain
+  href before judging an item dead, because an item whose file exists in
+  the layout its href is written in is the rename pass's repair class,
+  never prune material. The diagnosis also explains the issue's off-by-one
+  clue: pre-fix, the prune amputated the documents whose references the
+  rewrite pass would have covered (30 rewritten instead of 61). Flux now
+  repairs cleanly: 31 entries renamed, 61 references rewritten, zero items
+  pruned, zero dangles.
+- **The half-spine veto**: `process_book`'s structural veto gains its
+  second arm beside the #10 spine-collapse check. The dangle-count veto is
+  blind to a prune: pruning removes the dangling declarations along with
+  the rest, so an amputation LOWERS the dangle count to zero while
+  epubcheck measures an error win on the smaller book (Flux measured
+  `0f/38e/31w -> 0f/30e/0w`). The rule, resolved-vs-resolved per the
+  issue's Elminster-rule intent: a `dead_spine_items_pruned` candidate
+  whose spine resolves to less than half of what resolved before the
+  repair is a REJECT with `(spine halved)` in the summary, regardless of
+  the epubcheck delta and regardless of which promotion produced the
+  verdict (the entries_renamed no_worse promotion and the #26 missing-file
+  mask both rank below it). Counting documents that RESOLVE on both sides
+  keeps the genuine shell's v0.64.0 contract intact: the Wandering Inn
+  prune drops only never-resolving positions, so the same documents
+  resolve before and after and no veto fires; only a prune that orphans
+  live documents trips the arm. A prune that leaves exactly half the
+  resolution is not the class ("less than half" is strict).
+- `spine_dangles` generalizes into `spine_resolution` (total, resolved,
+  dangles; the old name delegates), the same fail-open probe contract as
+  before: a package the probe cannot read carries no evidence and vetoes
+  nothing.
+
+Suite: 1012 tests.
+
 ## v1.2.1 (2026-11-16)
 
 ### The latent-lookbehind cleanup (issue #34)
