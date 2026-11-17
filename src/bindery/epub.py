@@ -158,17 +158,26 @@ def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
 
     out = _ITEM_ID_RE.sub(repl_attr, opf_text)
     out = _IDREF_ATTR_RE.sub(repl_attr, out)
+    # Every attribute matcher below carries the #30 lookbehind (v1.2.1,
+    # issue #34): `\b` fires right after a hyphen, so `data-fallback=` /
+    # `data-media-overlay=` / `data-toc=` / `data-name=` / `data-content=`
+    # read as the manifest edge attribute and a rename plan collision would
+    # rewrite arbitrary data. Unprefixed-only is the `_IDREF_ATTR_RE`
+    # precedent: OPF edge attributes are never namespaced.
     out = re.sub(
-        r"(\bfallback=)([\"'])((?:(?!\2).)+)(\2)", repl_attr, out, flags=re.IGNORECASE
-    )
-    out = re.sub(
-        r"(\bmedia-overlay=)([\"'])((?:(?!\2).)+)(\2)",
+        r"(\b(?<![\w:.-])fallback=)([\"'])((?:(?!\2).)+)(\2)",
         repl_attr,
         out,
         flags=re.IGNORECASE,
     )
     out = re.sub(
-        r"(<spine\b[^>]*?\btoc=)([\"'])((?:(?!\2).)+)(\2)",
+        r"(\b(?<![\w:.-])media-overlay=)([\"'])((?:(?!\2).)+)(\2)",
+        repl_attr,
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(<spine\b[^>]*?\b(?<![\w:.-])toc=)([\"'])((?:(?!\2).)+)(\2)",
         repl_attr,
         out,
         flags=re.IGNORECASE,
@@ -176,13 +185,15 @@ def fix_manifest_ids(opf_text: str) -> tuple[str, int]:
     # The EPUB 2 cover convention points at a manifest id; Calibre and most readers
     # find the cover through it, so a renamed cover item must be re-pointed.
     out = re.sub(
-        r"(<meta\b[^>]*\bname=[\"']cover[\"'][^>]*\bcontent=)([\"'])((?:(?!\2).)+)(\2)",
+        r"(<meta\b[^>]*\b(?<![\w:.-])name=[\"']cover[\"'][^>]*\b(?<![\w:.-])content=)"
+        r"([\"'])((?:(?!\2).)+)(\2)",
         repl_attr,
         out,
         flags=re.IGNORECASE,
     )
     out = re.sub(
-        r"(<meta\b[^>]*\bcontent=)([\"'])((?:(?!\2).)+)(\2[^>]*\bname=[\"']cover[\"'])",
+        r"(<meta\b[^>]*\b(?<![\w:.-])content=)([\"'])((?:(?!\2).)+)"
+        r"(\2[^>]*\b(?<![\w:.-])name=[\"']cover[\"'])",
         repl_attr,
         out,
         flags=re.IGNORECASE,
@@ -233,12 +244,13 @@ def fix_ncx_ids(ncx_text: str) -> tuple[str, int]:
 # NCX-001). The prefix group needs its trailing colon, so it cannot swallow
 # into the [^>]* runs, and a failing split re-parts only within the tag name.
 _DTB_UID_RE = re.compile(
-    r"(<(?:[A-Za-z_][\w.:-]*:)?meta\b[^>]*\bname=[\"']dtb:uid[\"'][^>]*\bcontent=([\"']))((?:(?!\2).)*)(\2)",
+    r"(<(?:[A-Za-z_][\w.:-]*:)?meta\b[^>]*\b(?<![\w:.-])name=[\"']dtb:uid[\"']"
+    r"[^>]*\b(?<![\w:.-])content=([\"']))((?:(?!\2).)*)(\2)",
     re.IGNORECASE,
 )
 _DTB_UID_RE_REV = re.compile(
-    r"(<(?:[A-Za-z_][\w.:-]*:)?meta\b[^>]*\bcontent=([\"']))((?:(?!\2).)*)"
-    r"(\2[^>]*\bname=[\"']dtb:uid[\"'][^>]*>)",
+    r"(<(?:[A-Za-z_][\w.:-]*:)?meta\b[^>]*\b(?<![\w:.-])content=([\"']))((?:(?!\2).)*)"
+    r"(\2[^>]*\b(?<![\w:.-])name=[\"']dtb:uid[\"'][^>]*>)",
     re.IGNORECASE,
 )
 
@@ -383,10 +395,12 @@ def fix_pagelist_class(ncx_text: str) -> tuple[str, int]:
     def _add(m: re.Match) -> str:
         nonlocal count
         attrs = m.group(1)
-        if re.search(r"\bclass\s*=", attrs, re.IGNORECASE):
+        # the #34 anchors (v1.2.1): epubcheck demands the PLAIN `id`/`class`
+        # on pageList, so a `data-class`/`xml:id` must not read as satisfied
+        if re.search(r"(?:^|\s)class\s*=", attrs, re.IGNORECASE):
             return m.group(0)
         count += 1
-        if re.search(r"\bid\s*=", attrs, re.IGNORECASE):
+        if re.search(r"(?:^|\s)id\s*=", attrs, re.IGNORECASE):
             return f'<pageList class="pages"{attrs}'
         return f'<pageList id="{_pick_id()}" class="pages"{attrs}'
 
@@ -403,7 +417,7 @@ def fix_pagelist_class(ncx_text: str) -> tuple[str, int]:
 # their licensing identical), and the gate decides whether the profile
 # revalidation the bump unmasking-free.
 _PACKAGE_VERSION_ONE_RE = re.compile(
-    r"""(<(?:[\w.-]+:)?package\b[^>]*?\bversion\s*=\s*)(["'])1\.0\2""",
+    r"""(<(?:[\w.-]+:)?package\b[^>]*?\b(?<![\w:.-])version\s*=\s*)(["'])1\.0\2""",
     re.IGNORECASE,
 )
 
@@ -756,7 +770,7 @@ _EDGE_ATTR_RES = (
     re.compile(r"""\s+fallback\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE),
 )
 _COVER_META_RE = re.compile(
-    r"""<meta\b(?=(?:[^>]*\bname=)["']cover["'])(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""",
+    r"""<meta\b(?=(?:[^>]*\b(?<![\w:.-])name=)["']cover["'])(?:(?:"[^"]*"|'[^']*'|[^>])*+)>""",
     re.IGNORECASE,
 )
 _COVER_CONTENT_RE = re.compile(
@@ -789,7 +803,9 @@ def fix_cover_meta(opf_text: str, opf_dir: str) -> tuple[str, dict[str, int]]:
     guide_target: str | None = None
     for m in _GUIDE_REF_RE.finditer(opf_text):
         tag = m.group(0)
-        if not re.search(r"""\btype\s*=\s*["']cover["']""", tag, re.IGNORECASE):
+        if not re.search(
+            r"""\b(?<![\w:.-])type\s*=\s*["']cover["']""", tag, re.IGNORECASE
+        ):
             continue
         hm = _HREF_ATTR_RE.search(tag)
         if not hm:

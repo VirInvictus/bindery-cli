@@ -21,6 +21,7 @@ from bindery.epub import (
     encode_bracket_refs_css,
     encode_delim_refs,
     encode_delim_refs_css,
+    fix_cover_meta,
     fix_doctype,
     fix_manifest_ids,
     fix_manifest_item_properties,
@@ -4547,3 +4548,209 @@ class TestStripDeadFontFacesReviewEdges(unittest.TestCase):
         css = "@font-face{font-family:X;src:url(dead.woff)/* } */;}\np{margin:0}"
         out, n = strip_dead_font_faces(css, "OEBPS", frozenset())
         self.assertEqual((out, n), (css, 0))
+
+
+class TestIssue34AttrLookbehind(unittest.TestCase):
+    """issue #34: the #30 lookbehind class generalized to fix_manifest_ids'
+    edge-attribute matchers, the dtb:uid sync pair, and _COVER_META_RE --
+    `\\b` fires right after a hyphen, so data-* attributes read as the
+    manifest edge attribute and a rename-plan collision would rewrite
+    arbitrary data."""
+
+    OPF = (
+        '<?xml version="1.0"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="id">'
+        "<metadata>"
+        '<meta name="cover" content="c"/>'
+        "</metadata>"
+        '<manifest><item id="c1" href="c1.xhtml" '
+        'media-type="application/xhtml+xml"/></manifest>'
+        "<spine><itemref idref='c1'/></spine></package>"
+    )
+
+    def test_data_fallback_and_data_media_overlay_untouched(self):
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            '<manifest><item data-fallback="0-f" data-media-overlay="0-m" '
+            'id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            "</manifest></package>"
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_real_fallback_renamed_beside_a_data_fallback(self):
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            '<manifest><item data-fallback="0-item" fallback="0-item" '
+            'id="0-item" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            "</manifest></package>"
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('data-fallback="0-item"', out)
+        self.assertIn('fallback="id_0-item"', out)
+        self.assertIn('id="id_0-item"', out)
+
+    def test_spine_data_toc_untouched(self):
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            '<manifest><item id="0-item" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest>'
+            '<spine data-toc="0-item" toc="0-item">'
+            "<itemref idref='0-item'/></spine></package>"
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('data-toc="0-item"', out)
+        self.assertIn('toc="id_0-item"', out)
+
+    def test_cover_content_renamed_beside_a_data_content(self):
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            '<manifest><item id="0-item" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest>'
+            '<metadata><meta data-content="0-item" name="cover" content="0-item"/>'
+            "</metadata></package>"
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('data-content="0-item"', out)
+        self.assertIn('content="id_0-item"', out)
+
+    def test_reverse_cover_content_renamed(self):
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            '<manifest><item id="0-item" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest>'
+            '<metadata><meta content="0-item" name="cover"/></metadata></package>'
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('content="id_0-item"', out)
+
+    def test_dtb_uid_data_attributes_ignored(self):
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
+            '<meta data-name="dtb:uid" data-content="urn:uuid:WRONG"/>'
+            "</head></ncx>"
+        )
+        out, synced = sync_ncx_uid(ncx, "urn:uuid:RIGHT")
+        self.assertFalse(synced)
+        self.assertEqual(out, ncx)
+
+    def test_cover_meta_data_name_not_wired_or_removed(self):
+        # fix_cover_meta's hybrid: a dangling data-name="cover" meta is not
+        # the cover convention; nothing is repointed or removed
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="id">'
+            '<metadata><meta data-name="cover" data-content="ghost"/></metadata>'
+            '<manifest><item id="c1" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest>'
+            "<spine><itemref idref='c1'/></spine>"
+            '<guide><reference type="cover" title="c" href="c1.xhtml"/></guide>'
+            "</package>"
+        )
+        out, counts = fix_cover_meta(opf, "OEBPS")
+        self.assertEqual(counts, {})
+        self.assertIn('data-name="cover"', out)
+
+
+class TestIssue34AttrLookbehindCompletion(unittest.TestCase):
+    """The review pass over #34 probed three more same-class matchers that
+    still fired on data-* attributes; these pin them (and the interleaved
+    attribute orders the first fixtures did not cover)."""
+
+    def test_package_data_version_not_rewritten(self):
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'data-version="1.0" version="1.0" unique-identifier="id">'
+            "</package>"
+        )
+        out, n = fix_package_version(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('data-version="1.0"', out)
+        self.assertIn('version="2.0"', out)
+
+    def test_package_only_data_version_untouched(self):
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf" '
+            'data-version="1.0" unique-identifier="id"></package>'
+        )
+        out, n = fix_package_version(opf)
+        self.assertEqual((out, n), (opf, 0))
+
+    def test_guide_data_type_cover_not_the_cover_statement(self):
+        # a reference whose only cover claim is data-type is NOT the
+        # producer's cover statement: the dangling meta is removed (the old
+        # matcher read data-type and re-pointed at the reference's target)
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="id">'
+            '<metadata><meta name="cover" content="ghost"/></metadata>'
+            '<manifest><item id="c1" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest>'
+            "<spine><itemref idref='c1'/></spine>"
+            '<guide><reference data-type="cover" type="text" title="t" '
+            'href="c1.xhtml"/></guide></package>'
+        )
+        out, counts = fix_cover_meta(opf, "OEBPS")
+        self.assertEqual(counts.get("cover_meta_removed"), 1)
+        self.assertNotIn("cover_meta_repointed", counts)
+        self.assertNotIn('name="cover"', out)
+        self.assertIn('data-type="cover"', out)
+
+    def test_pagelist_data_id_and_data_class_satisfy_nothing(self):
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>'
+            '<pageList data-id="x" data-class="pages">'
+            '<pageTarget id="p1"/><pageTarget id="p2"/></pageList>'
+            "</navMap></ncx>"
+        )
+        out, n = fix_pagelist_class(ncx)
+        self.assertEqual(n, 1)
+        self.assertIn('data-id="x"', out)
+        self.assertIn('data-class="pages"', out)
+        self.assertIn('<pageList id="bindery-pagelist" class="pages"', out)
+
+    def test_pagelist_real_id_gets_only_class(self):
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>'
+            '<pageList id="real" data-class="pages">'
+            '<pageTarget id="p1"/></pageList>'
+            "</navMap></ncx>"
+        )
+        out, n = fix_pagelist_class(ncx)
+        self.assertEqual(n, 1)
+        self.assertIn('<pageList class="pages" id="real"', out)
+
+    def test_forward_cover_interleaved_data_content(self):
+        # the order where the lookbehind must discriminate INSIDE the
+        # matcher's [^>]* run: name=cover first, then data-content, then
+        # the real content
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf">'
+            '<manifest><item id="0-item" href="c1.xhtml" '
+            'media-type="application/xhtml+xml"/></manifest>'
+            '<metadata><meta name="cover" data-content="0-item" content="0-item"/>'
+            "</metadata></package>"
+        )
+        out, n = fix_manifest_ids(opf)
+        self.assertEqual(n, 1)
+        self.assertIn('data-content="0-item"', out)
+        self.assertIn('content="id_0-item"', out)
+
+    def test_reverse_dtb_uid_interleaved_data_name(self):
+        ncx = (
+            '<?xml version="1.0"?>'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><head>'
+            '<meta data-name="dtb:uid" content="urn:uuid:OLD" '
+            'name="dtb:uid"/></head></ncx>'
+        )
+        out, synced = sync_ncx_uid(ncx, "urn:uuid:NEW")
+        self.assertTrue(synced)
+        self.assertIn('data-name="dtb:uid"', out)
+        self.assertIn('content="urn:uuid:NEW"', out)

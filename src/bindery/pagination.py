@@ -68,12 +68,16 @@ ROMAN_MAX = 100
 # An element carrying an id is a navigation target (page-list, internal link); it must
 # survive even when its visible number is removed, or the nav breaks. That covers both
 # <a id=...> anchors inside a removed block and an id on the removed <p> itself.
+# The anchor is the #30 lookbehind class generalized to xml:id (v1.2.1, issue #34):
+# `\bid=` fires right after a hyphen, so `data-id="page7"` -- arbitrary data no
+# reader can resolve -- over-protected a number block from the strip, while
+# `xml:id` IS a real XML id the oracle resolves fragments against and stays.
 _ID_ANCHOR_RE = re.compile(
-    r"<a\b[^>]*\bid=(?:\"[^\"]*\"|'[^']*')[^>]*>.*?</a>"
-    r"|<a\b[^>]*\bid=(?:\"[^\"]*\"|'[^']*')[^>]*/>",
+    r"<a\b[^>]*(?:\s)(?:xml:)?id=(?:\"[^\"]*\"|'[^']*')[^>]*>.*?</a>"
+    r"|<a\b[^>]*(?:\s)(?:xml:)?id=(?:\"[^\"]*\"|'[^']*')[^>]*/>",
     re.IGNORECASE | re.DOTALL,
 )
-_OPEN_ID_RE = re.compile(r"\bid=(\"[^\"]*\"|'[^']*')", re.IGNORECASE)
+_OPEN_ID_RE = re.compile(r"(?:^|\s)(?:xml:)?id=(\"[^\"]*\"|'[^']*')", re.IGNORECASE)
 # strip a trailing hyphen that ends the visible text, even if closing tags follow it
 _TRAIL_HYPHEN_RE = re.compile(r"-(\s*(?:</[a-zA-Z][^>]*>\s*)*)\Z")
 

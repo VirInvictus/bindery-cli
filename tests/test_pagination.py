@@ -252,3 +252,32 @@ class TestSelfClosingParagraphs(unittest.TestCase):
         self.assertEqual(n, 1)
         self.assertIn('<p class="divider"/>', out)
         self.assertIn("and sometimes", _texts(out))
+
+
+class TestIssue34DataIdProtection(unittest.TestCase):
+    """issue #34: pagination's id guards carried the bare `\\bid=` class --
+    `data-id="page7"` (arbitrary data no reader can resolve) over-protected
+    a number block from the strip. The anchor is the #30 class generalized
+    to xml:id: `xml:id` IS a real XML id and stays protected, `data-id`
+    does not."""
+
+    def test_data_id_block_is_strippable(self):
+        body = f'<p>{LONG}.</p><p data-id="page7">7</p><p>The next thing. {LONG}.</p>'
+        out, n = strip_pagination_doc(_doc(body), set(), delete_layer=True)
+        self.assertEqual(n, 1)
+        self.assertNotIn("data-id", out)
+        self.assertNotIn(">7<", out)
+
+    def test_real_id_block_still_protected(self):
+        body = f'<p>{LONG}.</p><p id="page7">7</p><p>The next thing. {LONG}.</p>'
+        out, n = strip_pagination_doc(_doc(body), set(), delete_layer=True)
+        self.assertEqual(n, 1)
+        self.assertNotIn(">7<", out)
+        self.assertIn('id="page7"', out)
+
+    def test_xml_id_anchor_still_hoisted(self):
+        body = f"<p>{LONG}.</p><p><a xml:id='pg7'/>7</p><p>The next thing. {LONG}.</p>"
+        out, n = strip_pagination_doc(_doc(body), set(), delete_layer=True)
+        self.assertEqual(n, 1)
+        self.assertNotIn(">7<", out)
+        self.assertIn("xml:id='pg7'", out)
