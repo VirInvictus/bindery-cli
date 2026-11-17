@@ -133,7 +133,10 @@ A safe opt-in: it renames manifest `item` ids that are not valid XML names
 (digit-led, as when a converter stamps ids from UUIDs; colon-bearing) with the
 deterministic `id_` scheme, and updates every reference to them: spine `idref`
 and `toc`, item `fallback` and `media-overlay`, and the EPUB 2 cover meta, in
-both quote styles. NCX ids are renamed by the same pass (`fix_ncx_ids`);
+both quote styles. The reference matchers carry the same `data-*` lookbehind
+guard the id matchers do (v1.2.1): `data-fallback`, `data-media-overlay`,
+`data-toc`, and `data-content` values are arbitrary data and are never
+rewritten, whatever the rename plan contains. NCX ids are renamed by the same pass (`fix_ncx_ids`);
 NCName-invalid fragments follow the rename via `--fix-id-colons`' NCX half (the
 same predicate and `id_` rename as the content ids, v1.1.1). Href
 paths and filenames are untouched, and the human-facing `dc:` metadata is never
@@ -505,7 +508,8 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   literal qualifies: a missing attribute (the OEB-1.0-namespace package is a
   migration, not an attribute bump) or any other spelling refuses the
   document untouched, and the gate decides whether the profile
-  revalidation the bump buys is a real decrease.
+  revalidation the bump buys is a real decrease. A `data-version` is
+  arbitrary data and is never rewritten (v1.2.1).
 
 - **`--fix-doctype`**: replace a content document's DOCTYPE when it carries a
   public identifier its package profile forbids. EPUB 3 requires any DOCTYPE
@@ -788,7 +792,10 @@ the block (v1.1.1). For each book:
   internal-link target) is preserved: `<a id=...>` anchors are hoisted into the merged
   paragraph, an id on the removed `<p>` itself becomes an empty anchor there, and a
   delete-only removal keeps an emptied `<p id=...></p>` shell instead of deleting
-  outright. Single- and double-quoted ids are both recognized.
+  outright. Single- and double-quoted ids are both recognized. The anchors are real
+  ids only: `id` and `xml:id` count (xml:id is an id the oracle resolves fragments
+  against); a `data-id` is arbitrary data no reader can resolve and never protects a
+  block (v1.2.1).
 
 ### Safety nets
 

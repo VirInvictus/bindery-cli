@@ -1,5 +1,50 @@
 # bindery-cli Patch Notes
 
+## v1.2.1 (2026-11-16)
+
+### The latent-lookbehind cleanup (issue #34)
+
+Issue #30 (v1.1.1) fixed the three id-attribute matchers, but the pre-commit
+review had also flagged two adjacent matcher families sharing the same
+`\b`-fires-after-a-hyphen shape, left out of scope there and filed as issue
+#34. This patch release is that cleanup: no CLI surface change, behavior
+tightened to what the docs already promised.
+
+- **`--fix-ids` edge matchers**: the `fallback=`, `media-overlay=`, spine
+  `toc=`, and both `meta content=` cover matchers in `fix_manifest_ids`
+  anchored on bare `\b<attr>=`, so `data-fallback="0-item"` /
+  `data-media-overlay=` / `data-toc=` / `data-content=` read as the manifest
+  edge attribute; a value colliding with the rename plan would have rewritten
+  arbitrary data while the real edge attribute beside it stayed. All five now
+  carry the `(?<![\w:.-])` guard (unprefixed-only, the `_IDREF_ATTR_RE`
+  precedent: OPF edge attributes are never namespaced).
+- **The NCX uid sync and the cover-meta hybrid**: `_DTB_UID_RE`,
+  `_DTB_UID_RE_REV`, and `_COVER_META_RE`'s lookahead carried the same shape
+  (`data-name="dtb:uid"` / `data-name="cover"` read as the real thing). The
+  same guard lands there; `data-name="cover"` is no longer wired or removed
+  by `--fix-cover`, and a data-attribute dtb:uid no longer answers the uid
+  sync. (`_EDGE_ATTR_RES` and `_COVER_CONTENT_RE` were already
+  whitespace-anchored and needed nothing.)
+- **Pagination anchor guards**: `_ID_ANCHOR_RE` and `_OPEN_ID_RE` matched
+  `\bid=`, so `data-id="page7"` -- arbitrary data no reader can resolve --
+  over-protected a number block from the strip (kept when it should have been
+  removable). The anchor is the #30 class generalized to xml:id now: `id` and
+  `xml:id` both count (xml:id is an id the oracle resolves fragments against,
+  per the v1.1.1 anchor-index ruling), `data-id` protects nothing.
+- **The completion pass** (the v1.2.1 review probed three more same-class
+  matchers that still fired, so the release is honestly "every remaining"):
+  `--fix-package-version` rewrote a `data-version="1.0"` on the `<package>`
+  element; the guide's cover-statement scan read `data-type="cover"` as the
+  producer's cover reference (a misfire, not just conservativeness: a
+  dangling cover meta was re-pointed at the data-type reference's target);
+  and `fix_pagelist_class`'s satisfaction checks accepted `data-class` /
+  `xml:id` as the plain `class`/`id` epubcheck demands, suppressing the
+  insertion the flag exists for. All three carry the anchor now: a
+  data-* attribute never satisfies or triggers, and an xml:id pageList gets
+  the plain `id` inserted beside it.
+
+Suite: 1002 tests.
+
 ## v1.2.0 (2026-11-16)
 
 ### The CSS dead-font drop (issue #27)
