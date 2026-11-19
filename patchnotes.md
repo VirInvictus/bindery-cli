@@ -1,5 +1,15 @@
 # bindery-cli Patch Notes
 
+## v1.2.3 (2026-11-19)
+
+### Resolve cover references relative to the package (issue #36)
+
+The cover audit now uses the OPF directory rather than a manifest item's
+directory when resolving image hrefs. Existing covers in nested EPUB2/3
+packages are no longer reported missing, and an unrelated root-level image
+cannot satisfy a missing nested cover. Percent-decoding, fragments and
+relative path normalization are preserved. This changes audit reports only.
+
 ## v1.2.2 (2026-11-17)
 
 ### The half-spine veto (issue #35): the shell census read the wrong layout

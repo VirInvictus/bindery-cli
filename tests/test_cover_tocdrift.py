@@ -23,21 +23,24 @@ DOC = (
 )
 
 
-def _epub(tmp, opf, files, name="t.epub"):
+def _epub(tmp, opf, files, name="t.epub", opf_path="content.opf"):
     p = pathlib.Path(tmp) / name
     with zipfile.ZipFile(p, "w") as z:
         z.writestr("mimetype", "application/epub+zip")
-        z.writestr("META-INF/container.xml", CONTAINER)
-        z.writestr("content.opf", opf)
+        z.writestr(
+            "META-INF/container.xml",
+            CONTAINER.replace('full-path="content.opf"', f'full-path="{opf_path}"'),
+        )
+        z.writestr(opf_path, opf)
         for entry, data in files.items():
             z.writestr(entry, data)
     return p
 
 
-def _opf(manifest, spine_ref="c1", meta="", guide=""):
+def _opf(manifest, spine_ref="c1", meta="", guide="", version="3.0"):
     return (
         '<?xml version="1.0"?>'
-        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+        f'<package xmlns="http://www.idpf.org/2007/opf" version="{version}" '
         'unique-identifier="id">'
         '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
         "<dc:title>t</dc:title><dc:language>en</dc:language>"
@@ -98,6 +101,63 @@ class CoverAnalyzerTests(unittest.TestCase):
         self.assertFalse(r["epub2_dangling"])
         self.assertEqual(r["cover_file"], "cover.jpg")
         self.assertEqual(audit._cover_dir(r)[1], "OK")
+
+    def test_cover_paths_are_relative_to_the_opf(self):
+        cases = (
+            ("content.opf", "cover.jpg", "cover.jpg"),
+            ("content.opf", "Images/cover.jpg", "Images/cover.jpg"),
+            ("OEBPS/content.opf", "cover.jpg", "OEBPS/cover.jpg"),
+            ("OEBPS/content.opf", "Images/cover.jpg", "OEBPS/Images/cover.jpg"),
+            (
+                "OEBPS/content.opf",
+                "Images/cover%20art.jpg#front",
+                "OEBPS/Images/cover art.jpg",
+            ),
+            (
+                "OEBPS/Package/content.opf",
+                "../Images/cover.jpg",
+                "OEBPS/Images/cover.jpg",
+            ),
+        )
+        for epub3 in (False, True):
+            for opf_path, href, entry in cases:
+                with self.subTest(epub3=epub3, opf_path=opf_path, href=href):
+                    props = ' properties="cover-image"' if epub3 else ""
+                    meta = "" if epub3 else '<meta name="cover" content="ci"/>'
+                    opf = _opf(
+                        '<item id="c1" href="Text/chapter.xhtml" '
+                        'media-type="application/xhtml+xml"/>'
+                        f'<item id="ci" href="{href}" media-type="image/jpeg"{props}/>',
+                        meta=meta,
+                        version="3.0" if epub3 else "2.0",
+                    )
+                    with tempfile.TemporaryDirectory() as tmp:
+                        book = load_book(
+                            _epub(tmp, opf, {entry: "JPG"}, opf_path=opf_path)
+                        )
+                    r = analyze_cover(book)
+                    self.assertEqual(r["cover_file"], href)
+                    self.assertFalse(r["cover_file_absent"])
+                    self.assertEqual(audit._cover_dir(r)[1], "OK")
+
+    def test_root_image_does_not_satisfy_a_nested_cover_reference(self):
+        for epub3 in (False, True):
+            with self.subTest(epub3=epub3):
+                props = ' properties="cover-image"' if epub3 else ""
+                meta = "" if epub3 else '<meta name="cover" content="ci"/>'
+                opf = _opf(
+                    '<item id="c1" href="text.xhtml" media-type="application/xhtml+xml"/>'
+                    f'<item id="ci" href="cover.jpg" media-type="image/jpeg"{props}/>',
+                    meta=meta,
+                    version="3.0" if epub3 else "2.0",
+                )
+                with tempfile.TemporaryDirectory() as tmp:
+                    book = load_book(
+                        _epub(
+                            tmp, opf, {"cover.jpg": "JPG"}, opf_path="OEBPS/content.opf"
+                        )
+                    )
+                self.assertTrue(analyze_cover(book)["cover_file_absent"])
 
     def test_no_wiring_at_all_is_advisory(self):
         opf = _opf(
