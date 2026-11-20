@@ -1,5 +1,30 @@
 # bindery-cli Patch Notes
 
+## v1.2.4 (2026-11-20)
+
+### The cover analyzer resolves hrefs against the OPF (issue #36)
+
+Every EPUB whose package document lives in a subdirectory had its cover
+judged `cover file absent from the archive`: the analyzer resolved the
+manifest item's href against the archive root instead of the OPF's own
+directory. Manifest hrefs are OPF-relative by specification, so on the
+common publisher layout (`OEBPS/content.opf` with the cover at
+`OEBPS/Images/cover.jpg`) the lookup missed, and 6 of 8 EPUBs in the
+2026-11-18 cookbook batch read as coverless while their covers sat exactly
+where the package said they were. The analyzer now resolves through the
+loader's own OPF path (the same basis the spine resolution already uses),
+keeping percent-decoding, fragment stripping, and path normalization. The
+inverse hazard is covered by test: a root-level image can no longer satisfy
+a nested package's cover reference.
+
+Fix adopted from PR #37 (OpenDeernet) with its test matrix: both EPUB 2
+meta and EPUB 3 `properties="cover-image"` wiring, nested packages,
+parent-relative hrefs, percent-encoded names, fragments, and the
+root-image negative case. Audit reports only; no repair or gate behavior
+changes, and the record vocabulary is additive (`Book.opf_path`).
+
+Suite: 1014 tests.
+
 ## v1.2.3 (2026-11-20)
 
 ### The census cap fix: observe against epubcheck 5.4.0

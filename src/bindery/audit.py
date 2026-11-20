@@ -174,6 +174,7 @@ class Book:
         "obfuscated",
         "obfuscated_declared",
         "opf",
+        "opf_path",
         "spine",
         "spine_missing",
         "spine_missing_delim",
@@ -201,6 +202,7 @@ class Book:
         ncx=None,
         nav_html="",
         extra_docs=None,
+        opf_path="",
     ):
         self.spine = spine  # resolved, in-order, in-archive spine doc paths
         self.nav = nav  # the nav document path, or None
@@ -244,6 +246,7 @@ class Book:
         # NCX<->nav drift analyzers read the package's own wiring (v0.44.0).
         # Both are None on a shell book.
         self.opf = opf
+        self.opf_path = opf_path  # archive-relative package path for manifest hrefs
         self.ncx = ncx
         self.nav_html = nav_html
         # Non-spine content documents (v0.50.0): archive html the spine never
@@ -630,6 +633,7 @@ def load_book(path: Path) -> Book:
         obfuscated=obfuscated,
         obfuscated_declared=obfuscated_declared,
         opf=opf,
+        opf_path=opf_path,
         ncx=ncx_text,
         nav_html=nav_html or "",
         extra_docs=extra_docs,
@@ -1664,17 +1668,7 @@ def analyze_cover(book: Book) -> dict:
     if out["cover_file"]:
         # resolve against the OPF's directory, percent-decoded, fragment-
         # less -- the same shape the loader resolves spine hrefs with
-        base = os.path.dirname(
-            next(
-                (
-                    it.get("href")
-                    for it in book.opf.iter(OPF_NS + "item")
-                    if it.get("id") == cover_prop_id or out["epub2_meta"]
-                ),
-                "",
-            )
-            or ""
-        )
+        base = os.path.dirname(book.opf_path)
         target = _pct_decode(out["cover_file"].split("#", 1)[0])
         resolved = os.path.normpath(f"{base}/{target}" if base else target).replace(
             "\\", "/"
