@@ -153,8 +153,22 @@ public class ObserveSweep {
                     // The census counts entries and summed locations, so the
                     // cap would silently shrink repetitive-code books and
                     // poison --against trend diffs against 5.3.0-era
-                    // artifacts (which had no cap). Pin the uncapped scale.
-                    report.setMaxOfEachMessage(Integer.MAX_VALUE);
+                    // artifacts (which had no cap). Pin the uncapped scale --
+                    // via REFLECTION, deliberately: the harness compiles
+                    // against the resolved jar's classpath, and a direct call
+                    // to the 5.4-only setter fails compilation outright on a
+                    // pre-5.4 classpath, killing the whole census JVM (every
+                    // book died as "unreadable"; live-replicated against the
+                    // 5.3.0 jar). Reflection compiles everywhere and resolves
+                    // at run time: found on 5.4+, NoSuchMethodException (a
+                    // no-op) on older oracles, which are uncapped by nature.
+                    try {
+                        report.getClass()
+                              .getMethod("setMaxOfEachMessage", int.class)
+                              .invoke(report, Integer.MAX_VALUE);
+                    } catch (Throwable t) {
+                        // pre-5.4 oracle: uncapped by nature
+                    }
                     new EpubCheck(epub, report).doValidate();
                     report.generate();
                     String json = sw.toString();
