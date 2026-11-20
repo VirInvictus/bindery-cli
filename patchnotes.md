@@ -1,5 +1,37 @@
 # bindery-cli Patch Notes
 
+## v1.2.3 (2026-11-20)
+
+### The census cap fix: observe against epubcheck 5.4.0
+
+The oracle moved and the observatory had to follow it safely. epubcheck
+5.4.0 caps serialized JSON message entries at 25 per ID-and-text
+combination by default (the new `--maxOfEachMessage` option). The observe
+census counts those entries and their summed locations, so the default cap
+would have silently shrunk repetitive-code books and poisoned every
+`--against` trend diff taken against 5.3.0-era artifacts, which had no cap.
+ObserveSweep now pins the uncapped scale before `generate()`. The repair
+gate was never exposed: its counters come from the checker totals block,
+not the messages array.
+
+The pin itself had to survive compilation. The census harness compiles
+against the resolved jar's classpath, so a direct call to the 5.4-only
+`setMaxOfEachMessage` setter failed compilation outright on any pre-5.4
+oracle and killed the whole census JVM: every book surfaced as "unreadable"
+in a clean, exit-0 artifact (live-replicated against the 5.3.0 jar: 3 real
+books, clean 0, unreadable 3). The call now goes through reflection: it
+compiles against any classpath, lifts the cap on 5.4 and later, and no-ops
+on older oracles, which are uncapped by nature. Verified identical counts
+under both the 5.3.0 and 5.4.0 jars.
+
+The release also carries the day's records: the roadmap's 2.0 program (the
+library updater, planned and decided) and the 2026-11-20 opportunities
+census (four measured 1.x roads with specimens), and 2.0-A marked partially
+done: epubcheck 5.4.0 is the machine's default oracle with `update_epubcheck`
+added to the update suite, and the baseline observe ran under the 3.4 rules.
+
+Suite: 1012 tests.
+
 ## v1.2.2 (2026-11-17)
 
 ### The half-spine veto (issue #35): the shell census read the wrong layout
