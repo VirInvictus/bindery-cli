@@ -148,6 +148,13 @@ public class ObserveSweep {
                     CheckingReport report = new CheckingReport(new PrintWriter(sw),
                             epub.getName());
                     report.initialize();
+                    // epubcheck 5.4.0 caps serialized message entries at 25 per
+                    // ID-and-text combination by default (--maxOfEachMessage).
+                    // The census counts entries and summed locations, so the
+                    // cap would silently shrink repetitive-code books and
+                    // poison --against trend diffs against 5.3.0-era
+                    // artifacts (which had no cap). Pin the uncapped scale.
+                    report.setMaxOfEachMessage(Integer.MAX_VALUE);
                     new EpubCheck(epub, report).doValidate();
                     report.generate();
                     String json = sw.toString();
