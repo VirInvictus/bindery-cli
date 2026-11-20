@@ -75,6 +75,44 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
       migration lane under a recorded charter amendment; groundwork (2.0-A) runs
       first; annotations and the 3.4-rules gating layer are parked; the
       azw3/mobi box below is absorbed as a parked lane.
+      *(2.0-A partial 2026-11-20, accelerated by Brandon's order: epubcheck
+      5.4.0 installed as the default oracle (the 5.3.0 dir kept as rollback),
+      `update_epubcheck` added to the update suite, the suite green (1012), and
+      the baseline re-run done via observe-2026-11-20-epubcheck540.observe.
+      The census-cap discovery and fix rode the same day (commit ee0b4df).
+      Remaining 2.0-A items: the version census as a first-class audit
+      analyzer, the annotations presence scan.)*
+- [ ] **NCX src in the undeclared-resource census** (found 2026-11-20 from the
+      5.4 observe sampling): the RSC-008 remainder is 20 books / 133 messages,
+      and the sampled shape is content docs the NCX references and the OPF
+      never declared (Courtship Rite proof: `split_001` in the NCX src, absent
+      from the manifest, present in the archive). `collect_undeclared_resources`
+      scans content img/link, inline and stylesheet url(), and OPF guide refs;
+      the NCX `<content src>` targets are not in the census, so
+      `--declare-missing-items` never sees this class. Extending the census
+      with NCX src targets (same blessed media types, same no-itemref rule)
+      closes it.
+- [ ] **Dangling-itemref pairing for OPF-049** (found 2026-11-20): 11 books /
+      148 messages of spine `<itemref idref>` pointing at manifest ids that do
+      not exist (Cursor's Fury: a numbered `_v2.0NN` id series whose tail is
+      missing). The v0.55.0 refusal ("an itemref with no manifest item stays
+      unrepaired; which file it meant is underdetermined") can be refined:
+      the spine position is already committed by the existing itemref, so
+      when the undeclared-file census finds files whose count or name pattern
+      provably pairs with the dangling idrefs, declaring the item under the
+      referenced id answers exactly what the itemref meant. Spine position
+      never changes; the spine veto and the gate guard the outcome.
+- [ ] **Dead-font magic predicate** (found 2026-11-20): the CSS-007 census
+      splits 47 books three ways: 28 books are an APPLY GAP (real fonts whose
+      manifest declares `text/plain`; the shipped `--fix-media-types` font
+      half clears them -- Pre-Suasion specimen), 11 books hit files that are
+      not fonts at all (magic `FONT` = classic Mac OS font resources; no
+      reader loads them; the same rendering-neutrality argument as v1.2.0
+      applies), and 6 mixed books are correctly refused by the every-url rule.
+      The new work is a `--strip-dead-font-faces` extension: a block whose
+      every live url() resolves to a file that fails the font-magic check
+      (00 01 00 00 / OTTO / true / ttcf / wOFF / wOF2) drops. The 2 remote-only
+      books stay measured; the KaTeX/.eot shape stays measured (1 book).
 - [ ] **Percent-encode illegal URL characters in references**: the RSC-020 class
       beyond spaces. Opened by issue #10's My Enemy My Ally fixture: once
       `--encode-url-spaces` clears the spaces, the fan conversion's brackets and
@@ -91,6 +129,14 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
       repairs cleanly. The no-rename shape remains: entries with brackets
       but no spaces never enter the rename map, and the flag stays a
       no-op on such books.)*
+      *(Measured 2026-11-20 under the 5.4 oracle: the remaining RSC-020 mass is
+      44 books / 520 messages, and the dominant shape is brackets-without-spaces
+      (Eisenhorn Omnibus x90: `[Eisenhorn]_..._split_NNN.html` fan names) --
+      entries with brackets but no spaces never enter the space-driven rename
+      map, so the proven rename-and-rewrite machinery never forms for them.
+      That is the next slice of this box: generalize the rename-map derivation
+      beyond spaces to the illegal-character classes, reusing the bracket
+      encode rule and the ambiguity refusals.)*
 - [ ] **Kindle-container conversion support (azw3/mobi -> epub): a possible
       x.0.0 release candidate** (Brandon, 2026-11-13). The acquisition
       pipeline keeps meeting Kindle-container sources (the 2026-11-13
@@ -254,6 +300,13 @@ measure what actually fires (OBS_001 outdated classes, deprecation reports) inst
 of assuming; the version census promoted into a first-class audit analyzer; the
 annotations presence scan (`META-INF/annotations.json`, payload sniff). Output: a
 counts report that finalizes the flag inventory below.
+*(Partially done 2026-11-20, accelerated by Brandon's order: the full swap landed
+instead of side-by-side -- 5.4.0 is the default oracle with 5.3.0 kept as rollback
+-- `update_epubcheck` joined the update suite, the suite ran green (1012), and the
+baseline re-run is done (observe-2026-11-20-epubcheck540.observe against the 11-09
+artifact; OBS_001 never fired library-wide). The census-cap discovery and fix rode
+the same lane (commit ee0b4df). Remaining: the version-census analyzer, the
+annotations presence scan.)*
 
 ### 2.0-B The migration flags (EPUB 2.0.1 to EPUB 3)
 
