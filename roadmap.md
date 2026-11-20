@@ -70,6 +70,11 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
 
 ## Open work
 
+- [ ] **The 2.0 program: the library updater** (planned and decided 2026-11-20; see
+      the 2.0 program section below). Native, pilot-first EPUB 2/1.x to EPUB 3
+      migration lane under a recorded charter amendment; groundwork (2.0-A) runs
+      first; annotations and the 3.4-rules gating layer are parked; the
+      azw3/mobi box below is absorbed as a parked lane.
 - [ ] **Percent-encode illegal URL characters in references**: the RSC-020 class
       beyond spaces. Opened by issue #10's My Enemy My Ally fixture: once
       `--encode-url-spaces` clears the spaces, the fan conversion's brackets and
@@ -109,6 +114,8 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
       question of whether conversion is a bindery verb or a companion tool
       (bindery's charter is repair, not format conversion - this is the
       biggest scope question the project has faced).
+      *(Absorbed 2026-11-20 as the parked mobi/azw3 lane of the 2.0 program
+      below; entry conditions unchanged, no work scheduled by 2.0.)*
 - [ ] **Obfuscation-aware encryption.xml repair**: prune stale obfuscation entries
       when font magic bytes prove the fonts are decrypted in place; drop
       encryption.xml when only obfuscation entries remain and fonts verify. NEVER
@@ -161,6 +168,163 @@ The plugin vendors the core and never gates (the epubcheck latency ruling).
       ci.yml's module comment covers all eleven stack-free modules, and the
       plugin's `customization_help` names `max_log_mb`. *(SHIPPED v0.46.1:
       text plus the one plugin string; no surface change.)*
+
+## The 2.0 program: the library updater (planned 2026-11-20)
+
+Brandon's idea: rebuild every EPUB in the library to a current, clean state, "clean
+first, then convert, then clean again", with the house method (census first, then one
+surgical gated flag per repeated defect class) and a manual remainder. Researched
+2026-11-20 (assay idea-mode grade plus the latro landscape report at
+`~/docs/reports/bindery-cli-epub34/2026-11-20-epub-3.4-migration-landscape.md`, all
+keyless sources, the two streams cross-confirming) and decided the same day. The
+research reshaped the goal before any code:
+
+- **There is no `version="3.4"` package.** EPUB 3.4 mandates `version="3.0"` verbatim
+  ("each new 3.X specification is a continuation of the EPUB 3 format"); writing 3.4
+  is a spec violation epubcheck rejects (verified locally: OPF-001 on the installed
+  5.3.0, and the version-string constants are identical in 5.4.0 source). The real
+  migration is EPUB 2.0.1/1.x to EPUB 3. The target spec's MUST list is small: the
+  version attr at 3.0, exactly one `dcterms:modified` (UTC, `YYYY-MM-DDThh:mm:ssZ`),
+  and a mandatory nav document with exactly one toc nav (`properties="nav"`).
+- **3.4 invalidates nothing conforming in 3.3.** Every substantive change since 3.3
+  moves features to outdated or deprecated classes, both still conforming; a
+  3.3-conforming book already is a 3.4-conforming book. The 3.4 layer is advisory
+  (epubcheck 5.4's OBS_001 usage class), not obligation.
+- **The installed oracle gates the real migration today.** epubcheck 5.3.0 validates
+  `version="3.0"` under "EPUB version 3.3 rules", and the migration introduces no
+  3.4-only features, so 5.3.0 suffices; epubcheck 5.4.0 (2026-09-15) adds the 3.4
+  rules mode. Any 5.x oracle rejects 1.x version strings outright, so the 10 OEBPS
+  1.2 books are ungateable until their packages upgrade.
+- **Census (read-only, 2026-11-20, full library):** 7,387 epubs: 5,593 EPUB 2.0
+  (including 30 prefixed `<opf:package>` spellings), 1,784 EPUB 3.0, 10 OEBPS 1.2,
+  zero unreadable archives. Migration surface: ~5,600 full migrations plus 10
+  special cases; the 3.0 shelf is already conformant.
+- **KOReader (the household reader):** crengine classifies any package version whose
+  first character is "3" as EPUB 3 and prefers the nav TOC over the NCX when a nav
+  exists; the NCX stays legal in 3.4 (legacy/outdated). Posture: correct nav, NCX
+  kept.
+- **EPUB Annotations 1.0 is a Working Draft** (latest 2026-10-15) with no
+  package-document wiring at all (embedded sets are `META-INF/annotations.json`) and
+  no consumer or writer found anywhere; KOReader keeps highlights in sidecar
+  `metadata.lua` files. Scaffolding today is bytes no reader reads.
+- **Prior art:** DAISY Pipeline 2's EPUB Upgrader (XProc; the same transform
+  inventory, validation off by default), ePub3-itizer (Sigil-bound), calibre's
+  epub-to-epub (lossy full re-serialization defaulting to EPUB 2, the source of the
+  converter artifact classes bindery already repairs). Nothing found combines
+  in-place operation, determinism, content conservation, and an epubcheck gate: the
+  niche bindery would occupy is unoccupied.
+- **Assay idea-mode verdict: not worth it as stated** (draft-spec timing, the
+  annotations category error, charter collisions), with kill conditions; the
+  decisions below answer them.
+
+**Decisions recorded 2026-11-20 (Brandon):**
+
+1. **Vehicle: native lane, pilot-first.** bindery grows the gated upgrade lane
+   itself, under a deliberate charter amendment, with a 50-100 book pilot batch
+   before any library wave. (Assay kill-condition 3 answered up front: the charter
+   amendment is recorded here, and the fidelity axis, 2.0-C, is specified before any
+   converter code.)
+2. **Annotations: parked** until Annotations 1.0 reaches Recommendation AND a reader
+   the household runs consumes it. Only the presence-detector ships now.
+3. **Groundwork: this week** (decision-independent; phase 2.0-A).
+
+**Scope boundary (the parity ruling, reconciled).** "Conversion stays out,
+permanently" declines the Calibre conversion ENGINE lane (cross-format input by
+orchestration; CalibreQuarry territory) and ebook-polish's content-improving
+actions. The 2.0 lane is neither: it is EPUB-to-EPUB version migration by bindery's
+own deterministic transforms, gated by the same oracle. The charter amendment, to
+land with the first flag:
+
+- The upgrade lane is a first-class surface (an `upgrade` verb plus flags),
+  additive to the 1.x contract (the stability contract explicitly allows new
+  opt-in flags); "2.0" is the milestone where the updater is declared stable, as
+  1.0 was a contract statement rather than a feature claim.
+- **Derived-navigation exception:** nav-from-NCX and landmarks-from-guide are
+  translation of navigation data the book already carries, never invention. The
+  ToC-synthesis non-goal stands unchanged (tocdrift stays detector-only).
+- Visible-text conservation remains absolute; the conversion gate (2.0-C) is the
+  acceptance axis.
+
+### 2.0-A Groundwork (this week, decision-independent)
+
+epubcheck 5.4.0 installed side-by-side in `~/.local/opt` (the wrapper stays 5.3.0
+default until its baseline re-run; changing the oracle means re-running the library
+dry run, the standing rule); a sample-library observe under the 3.4-rules mode to
+measure what actually fires (OBS_001 outdated classes, deprecation reports) instead
+of assuming; the version census promoted into a first-class audit analyzer; the
+annotations presence scan (`META-INF/annotations.json`, payload sniff). Output: a
+counts report that finalizes the flag inventory below.
+
+### 2.0-B The migration flags (EPUB 2.0.1 to EPUB 3)
+
+Each flag gated like every repair, built on existing precedents
+(`--fix-package-version` does the literal 1.0 to 2.0 bump today;
+`--fix-unique-identifier` wires the uid; the NCX pipeline already synchronizes
+dtb:uid; `--fix-item-properties` computes EPUB 3 properties from a whole-book
+census; `--fix-container` set the constant-epoch determinism rule):
+
+- `--upgrade-package`: version attr to 3.0, exactly one `dcterms:modified`
+  (constant-epoch, byte-idempotent), uid wiring reuse. Content docs untouched.
+- `--nav-from-ncx`: the mandatory nav document, derived by translating the NCX
+  navMap (the NCX tokenizer already exists), `properties="nav"` wired through the
+  properties census; refusals where the NCX is unusable land the book on the manual
+  list.
+- `--landmarks-from-guide`: derived from the guide's own references. The guide, the
+  OPF 2 meta elements, and the NCX all STAY (legacy-legal in 3.4); their removal is
+  separate opt-in work, never bundled with the upgrade.
+- Optional forward moves, each its own flag grown from the pilot census: cover meta
+  to `properties="cover-image"`, `opf:` attribute translations, OEBPS 1.2-era
+  media-type normalization (the `--fix-media-types` precedent).
+
+NCX policy: keep. KOReader prefers the nav when present but resolves spine@toc to
+the NCX; EPUB 2-only tools elsewhere keep their data; never-break-userspace.
+
+### 2.0-C The conversion gate (specified before the verb ships)
+
+A third acceptance bar beside `gate` and `no_worse`. Accept iff: post-conversion
+fatals == 0 (still-fatal lands partial, the manual list); visible-text conservation
+across the spine (the audit battery's own primitives); spine resolution preserved
+(both veto arms apply unchanged); byte-idempotent re-run. Errors and warnings MAY
+rise: the new ruleset legitimately introduces new check classes, so the conversion
+bar measures fatals, content, and spine, never the error axis. The masked-axis
+reclassification (a noop on a still-fatal book reads partial) applies.
+
+### 2.0-D The `upgrade` verb
+
+Single-file plus library modes; per-book pipeline clean (the default pass, its own
+gate) then convert (the migration flags, the conversion gate) then clean again (the
+default pass over the new profile's classes); one atomic write, one backup ring
+entry; dry-run default; `--install-to-calibre`; additive per-book/per-stage record
+vocabulary (CalibreQuarry's mirror floors move when it consumes). The plugin never
+runs upgrades (the latency ruling, unchanged). Acquisition-pipeline wiring (`run`
+verb slices) comes after the library wave.
+
+### 2.0-E The pilot
+
+50-100 books, stratified (clean EPUB 2, damaged EPUB 2, 3.0 controls): dry-run,
+census what the conversion broke or left, build the missing surgical flag, re-run.
+No library wave until the pilot's accept rate is measured. THE WAVE ops template
+(the v0.61 lane: 1,170 books in one night, backups plus metadata.db) is the rollout
+shape; the learning loop is the wave cadence.
+
+### 2.0-F The wave and the manual remainder
+
+Batched rollout with backups and before/after observe. The remainder lands on the
+manual list: the 10 OEBPS 1.2 books (any 5.x oracle rejects their version strings
+outright, so they need the package upgrade before the pipeline can even gate them; a
+dedicated flag only if the pilot census shows a repeated shape), still-fatal
+conversions, and the shell books (detected, re-source, unchanged).
+
+### Parked lanes
+
+- **Annotations 1.0 scaffolding:** opens at Recommendation plus a consumer reader
+  the household runs (nothing reads it today; KOReader uses sidecars). The
+  presence-detector ships with 2.0-A.
+- **3.4-rules gating layer:** opens when the default oracle flips to 5.4.0 after its
+  baseline re-run; until then the migration produces 3.3-conformant packages that
+  are already 3.4-conforming.
+- **mobi/azw3 input:** the 2026-11-13 open box below, unchanged (entry conditions
+  stand; absorbed here for the record, no work scheduled by 2.0).
 
 ## The repair domain in the ecosystem parity program (recorded 2026-09-29)
 
