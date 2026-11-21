@@ -1,5 +1,71 @@
 # bindery-cli Patch Notes
 
+## v1.2.5 (2026-11-21)
+
+### The pagination strip refuses layout it does not own (the All About Cake cookbook)
+
+The testing facility gained a new fixture on 2026-11-20: All About Cake
+(Penguin Random House, 138 MB), and the phase-1 sweep REJECTED it. The
+`--all` candidate regressed 0f/1e/0w -> 1f/2e/0w: a net-new RSC-016 fatal
+(an unterminated element where a table used to open) plus new RSC-012
+broken-fragment errors, and the gate correctly refused to apply it.
+Isolating the fired flags one at a time pinned the whole regression on
+`--strip-pagination` alone; every other fix came back clean.
+
+The strip's text-shape signals are blind to structure, and this book is
+nothing but structure. Three failures compounded:
+
+- **The merge swallowed a table (the fatal).** A recipe-intro paragraph
+  followed by the ingredient table and a lowercase cell after it read as a
+  confident interrupt (`lower_cont`), and the merge splice
+  `[first.start, last.end]` replaced everything between the two prose
+  paragraphs with one merged `<p>` -- including the
+  `<p class="rec_line"/><table><tr><td>` opener run the block model never
+  saw (`_P_RE` cannot match a self-closing start, and `<table>` markup is
+  not a block at all). The rest of the table survived as orphaned closers
+  behind the merged paragraph. Character conservation passed (the consumed
+  markup carries no visible text) and the p/a tag-balance net passed (it
+  reads only two names).
+- **The page layer licensed a recipe sweep.** Hundreds of bare-digit
+  quantity cells (`<p class="rilf">5</p>`) satisfied the ">= 20 standalone
+  arabic numbers" signal and lowercase ingredient cells satisfied the
+  interrupt signal (4 "confident interrupts" book-wide), so
+  `detect_page_layer` fired and the aggressive path deleted 110 blocks of
+  ingredient quantities.
+- **The runhead classifier harvested the cells.** `1 tsp`, `large eggs`,
+  `110g`: short non-numeric text repeated >= 8 times across a cookbook is
+  exactly the running-header signature, and the cascade dropped them as
+  page furniture hugging the deleted digits.
+
+The fix is one principle applied at every destructive decision point:
+**prose flow**. A number block sits in prose flow when at least one of its
+immediate gaps (to the previous or next block) is pure whitespace; a digit
+enclosed by foreign markup on both sides (a lone table cell) is layout
+content, never page furniture, and one-sided furniture (the issue #31
+divider-adjacent shape) stays in scope. A confident interrupt additionally
+requires a flat corridor -- every gap between the prose, the number, and
+the continuation prose is whitespace -- so the merge splice can never
+consume markup the block model does not own (a self-closing divider inside
+the corridor now degrades the merge to delete-only instead of swallowing
+the divider). The runhead cascade only reaches runheads in the number's own
+prose run. On the real bytes the signals now score zero across the board,
+the sweep never licenses, and the strip finds nothing to remove: the book
+reads `accept`.
+
+A fourth safety net rides in `_safe`: the splice may not change ANY
+element's open/close balance (the all-tag delta net). The p/a net reads two
+names; the table-opener loss sailed straight through it. The net compares
+per-tag deltas, not absolute counts, so a pre-existing stray close keeps
+the strip running instead of reading as a splice error.
+
+Tests: the prose-flow gate class (the table-boundary merge refused, cell
+digits never swept and never licensed as a layer, divider-adjacent numbers
+still swept but never merged, the runhead cascade stays inside the prose
+run and still works inside it), the delta-net class (a foreign-tag balance
+change refused, a pre-existing stray close tolerated, a legitimate merge
+clean), and a skip-gated regression over the real facility fixture
+asserting the strip finds nothing to remove. Suite: 1024 tests.
+
 ## v1.2.4 (2026-11-20)
 
 ### The cover analyzer resolves hrefs against the OPF (issue #36)

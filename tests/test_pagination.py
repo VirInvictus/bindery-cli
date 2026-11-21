@@ -3,6 +3,7 @@ the conservative (merge-only) and aggressive (whole-layer) removal, roman-numera
 preservation, prose conservation, and an end-to-end repair_epub pass."""
 
 import re
+import shutil
 import tempfile
 import unittest
 import zipfile
@@ -10,6 +11,9 @@ from pathlib import Path
 
 from bindery.epub import RepairFlags, repair_epub
 from bindery.pagination import (
+    _P_RE,
+    _Block,
+    _safe,
     collect_runheads,
     detect_page_layer,
     number_value,
@@ -281,3 +285,138 @@ class TestIssue34DataIdProtection(unittest.TestCase):
         self.assertEqual(n, 1)
         self.assertNotIn(">7<", out)
         self.assertIn("xml:id='pg7'", out)
+
+
+class TestProseFlowGates(unittest.TestCase):
+    """v1.2.5, the All About Cake cookbook fixture: the strip's text-shape signals
+    merged a prose paragraph across a <p class="rec_line"/><table><td> boundary,
+    discarded the table openers, and orphaned the rest of the table behind the
+    merged paragraph (an RSC-016 fatal the gate correctly rejected); under a
+    licensed page layer the same text-shape signals swept 110 ingredient-quantity
+    cells as "page numbers" and harvested their cell text ("1 tsp", "large eggs")
+    as running headers. Every destructive decision now requires prose flow: no
+    splice may consume markup the block model does not own, and a digit enclosed
+    by foreign markup on both sides is layout content, never page furniture."""
+
+    # The PRH recipe-card shape from the real book (c03.xhtml): the self-closing
+    # rec_line paragraph and the table openers are invisible to _P_RE, so the
+    # corridor between the prose paragraph and the first ingredient cell is
+    # nothing the block model can see.
+    COOKBOOK_ROW = (
+        '<p class="rec_line"/><table>\r\n\t\t\t\t<tr class="grayline">\r\n'
+        "\t\t\t\t\t<td>\r\n\t\t\t\t\t\t"
+        '<p class="rilf">\t5</p>\r\n\t\t\t\t\t</td>\r\n\t\t\t\t\t<td>\r\n'
+        "\t\t\t\t\t\t"
+        '<p class="rilb">starlight peppermint candies</p>\r\n\t\t\t\t\t</td>\r\n'
+        "\t\t\t\t\t<td>\r\n\t\t\t\t\t\t"
+        '<p class="ril"/></td>\r\n\t\t\t\t</tr>\r\n\t\t\t</table>'
+    )
+
+    def _cookbook_body(self) -> str:
+        return f'<p class="bodymain">{LONG} and I believe</p>{self.COOKBOOK_ROW}'
+
+    def test_cell_digit_never_merges_across_the_table_boundary(self):
+        # the RSC-016 shape: the lowercase cell after the table used to read as a
+        # confident continuation of the prose paragraph, and the merge consumed
+        # the table openers it cannot model
+        out, n = strip_pagination_doc(_doc(self._cookbook_body()), set())
+        self.assertEqual(n, 0)
+        self.assertEqual(out, _doc(self._cookbook_body()))
+
+    def test_cell_digits_are_never_page_layer_furniture(self):
+        out, n = strip_pagination_doc(
+            _doc(self._cookbook_body()), set(), delete_layer=True
+        )
+        self.assertEqual(n, 0)
+        self.assertIn("starlight peppermint candies", out)
+        self.assertEqual(out.count("<td>"), 3)
+
+    def test_table_cell_digits_do_not_license_the_page_layer(self):
+        rows = "".join(
+            f'<p class="rec_line"/><table><tr><td><p class="rilf">\t{n}</p></td>'
+            f'<td><p class="rilb">finely ground almonds</p></td></tr></table>'
+            for n in range(1, 26)
+        )
+        html = _doc(f'<p class="bodymain">{LONG}</p>{rows}')
+        self.assertFalse(detect_page_layer([html], set()))
+
+    def test_divider_adjacent_number_still_swept_but_never_merged(self):
+        # one-sided furniture stays in scope (the #31 contract), but the merge
+        # span owns the whole corridor and must not swallow the divider: the
+        # merge is refused and the number degrades to delete-only
+        body = (
+            f'<p>{LONG} and</p><p>7</p><p class="divider"/>\n<p>sometimes {LONG}.</p>'
+        )
+        out, n = strip_pagination_doc(_doc(body), set())
+        self.assertEqual(n, 1)
+        self.assertNotIn(">7<", out)
+        self.assertIn('<p class="divider"/>', out)
+        # the continuation paragraph survives as its own element (a merged
+        # output would swallow it into the pp paragraph)
+        self.assertIn("<p>sometimes", out)
+
+    def test_runhead_cascade_stays_inside_the_prose_run(self):
+        # a runhead cell across a table boundary is not the removed number's
+        # furniture: the cascade must not cross the cell markup to reach it
+        body = (
+            f"<p>{LONG} and</p><p>7</p>"
+            f"<table><tr><td><p>1 tsp</p></td><td><p>{LONG}.</p></td></tr></table>"
+        )
+        out, n = strip_pagination_doc(_doc(body), {"1 tsp"}, delete_layer=True)
+        self.assertEqual(n, 1)
+        self.assertNotIn(">7<", out)
+        self.assertIn("1 tsp", out)
+
+    def test_flat_runhead_still_cascades(self):
+        body = f"<p>{LONG} and</p><p>7</p><p>1 tsp</p><p>{LONG}.</p>"
+        out, n = strip_pagination_doc(_doc(body), {"1 tsp"}, delete_layer=True)
+        self.assertEqual(n, 1)
+        self.assertNotIn("1 tsp", out)
+
+
+class TestTagDeltaNet(unittest.TestCase):
+    """v1.2.5: the fourth safety net. The p/a balance net reads only two names;
+    the All About Cake merge discarded a <table>/<tr>/<td> opener run the p/a
+    net cannot see, and the orphaned closers rode through as an epubcheck fatal
+    on the candidate. The splice may not change ANY element's open/close balance."""
+
+    def test_changed_foreign_tag_balance_is_refused(self):
+        before = _doc("<table><tr><td><p>word</p></td></tr></table>")
+        after = _doc("</td></tr></table>")  # opener run lost, closers orphaned
+        blocks = [_Block(m) for m in _P_RE.finditer(before)]
+        self.assertFalse(_safe(before, after, blocks, {0}))
+
+    def test_pre_existing_stray_close_is_not_a_splice_error(self):
+        # a messy source with an unbalanced close keeps its balance untouched:
+        # the net compares deltas, not absolute counts, so the strip still runs
+        before = _doc("<table><tr><td></td></tr></table></td><p>word</p>")
+        after = _doc("<table><tr><td></td></tr></table></td>")
+        blocks = [_Block(m) for m in _P_RE.finditer(before)]
+        self.assertTrue(_safe(before, after, blocks, {0}))
+
+    def test_legitimate_merge_keeps_every_elements_balance(self):
+        before = _doc(f"<p>{LONG} and</p><p>7</p><p>sometimes {LONG}.</p>")
+        after = _doc(f"<p>{LONG} and sometimes {LONG}.</p>")
+        blocks = [_Block(m) for m in _P_RE.finditer(before)]
+        self.assertTrue(_safe(before, after, blocks, {1}))
+
+
+_COOKBOOK_FIXTURE = Path(__file__).resolve().parent.parent / (
+    "testing_facility/books_to_fix/all-about-cake-pagination-table-cell-strip.epub"
+)
+HAVE_COOKBOOK_FIXTURE = _COOKBOOK_FIXTURE.exists()
+
+
+@unittest.skipUnless(HAVE_COOKBOOK_FIXTURE, "local issue fixture not present")
+class TestPaginationCookbookFixture(unittest.TestCase):
+    """The real All About Cake cookbook (added to the facility 2026-11-20). It
+    carries NO baked page numbers (the PRH pagebreaks are epub:type spans inside
+    heading paragraphs), so --strip-pagination must find nothing to remove."""
+
+    def test_strip_pagination_finds_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            dst = Path(td) / "out.epub"
+            shutil.copyfile(_COOKBOOK_FIXTURE, src)
+            report = repair_epub(src, dst, RepairFlags(strip_pagination=True))
+            self.assertEqual(report.fixes.get("stripped_pagination", 0), 0)

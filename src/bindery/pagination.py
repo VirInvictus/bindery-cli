@@ -20,12 +20,21 @@ number_value here excludes year ranges 1500-2099 outright, while the audit
 compensates for years at its call site. A third caller must copy one, not
 invent a third.)
 
-Three independent safety nets, any failure aborts the edit and returns the
+Four independent safety nets, any failure aborts the edit and returns the
 document unchanged:
   1. character conservation: every visible character of real prose is preserved
      (only the removed numbers/headers disappear, and word-split hyphens close up);
-  2. tag balance: <p> and <a> stay balanced after splicing;
-  3. the caller's epubcheck gate (no net-new fatals or errors) is the final oracle.
+  2. tag balance: <p> and <a> stay balanced after splicing, and no element's
+     open/close balance changes at all (the all-tag delta net, v1.2.5);
+  3. prose flow: every destructive decision operates inside a verified prose
+     corridor -- gaps between consecutive owned blocks are pure whitespace. A
+     tag in a gap (a self-closing divider, table cell markup) is layout the
+     block model does not own, and no merge, sweep, or runhead cascade crosses
+     it. This is what makes the "<p> elements only" scope below real rather
+     than aspirational: the All About Cake cookbook (2026-11-21) merged across
+     a <p class="rec_line"/><table><td> boundary, discarded the table openers,
+     and orphaned the rest of the table behind the merged paragraph;
+  4. the caller's epubcheck gate (no net-new fatals or errors) is the final oracle.
 
 Scope is intentionally `<p>` elements only, which is where the defect is carried
 in every observed case; this keeps the splicing well understood.
@@ -80,6 +89,10 @@ _ID_ANCHOR_RE = re.compile(
 _OPEN_ID_RE = re.compile(r"(?:^|\s)(?:xml:)?id=(\"[^\"]*\"|'[^']*')", re.IGNORECASE)
 # strip a trailing hyphen that ends the visible text, even if closing tags follow it
 _TRAIL_HYPHEN_RE = re.compile(r"-(\s*(?:</[a-zA-Z][^>]*>\s*)*)\Z")
+# The all-tag delta net (see _safe): non-self-closing open tags and close tags,
+# name captured for per-element balance comparison.
+_OPEN_TAG_RE = re.compile(r"<([a-zA-Z][\w:.-]*)\b[^>]*?(?<!/)>")
+_CLOSE_TAG_RE = re.compile(r"</([a-zA-Z][\w:.-]*)")
 
 
 def roman_value(s: str) -> int | None:
@@ -140,6 +153,11 @@ def detect_page_layer(htmls: list[str], runheads: set[str]) -> bool:
     2. several confident sentence interrupts (>= 3), the fingerprint of page numbers
        bleeding into the text flow. Chapter numbers open chapters with a capital, so a
        chapter-numbered book scores zero here regardless of how many chapters it has.
+       A confident interrupt also requires a flat prose corridor (every gap between
+       the prose, the number, and the next prose is whitespace), so a cookbook's
+       quantity cells beside lowercase ingredient cells -- the All About Cake shape
+       (v1.2.5: 110 cell digits, 4 cell-boundary "interrupts") -- never license
+       the sweep.
 
     The interrupt count, not an ascending run, is the discriminator, because content
     documents are visited in archive order (not reading order), which scrambles any
@@ -155,7 +173,7 @@ def detect_page_layer(htmls: list[str], runheads: set[str]) -> bool:
             if b.kind == "number":
                 if b.text.isdigit():
                     vals += 1
-                if _is_baked(blocks, i)[1]:
+                if _is_baked(blocks, i, html_text)[1]:
                     confident += 1
     return vals >= 20 and confident >= 3
 
@@ -195,8 +213,12 @@ def _nearest(blocks: list[_Block], i: int, step: int):
     return None
 
 
-def _is_baked(blocks: list[_Block], i: int) -> tuple[bool, bool]:
-    """Return (baked, confident_interrupt) for the number block at index i."""
+def _is_baked(blocks: list[_Block], i: int, html_text: str) -> tuple[bool, bool]:
+    """Return (baked, confident_interrupt) for the number block at index i. Both
+    verdicts require the number to sit in prose flow: a digit enclosed by foreign
+    markup on both sides (a lone table cell) is recipe/layout content, never a
+    page-number interrupt (v1.2.5, the All About Cake cookbook)."""
+    flow = _in_prose_flow(html_text, blocks, i)
     pp = _nearest_prose(blocks, i, -1)
     np = _nearest_prose(blocks, i, +1)
     prose_prev = pp is not None and len(blocks[pp].text) > PROSE_MIN
@@ -211,6 +233,16 @@ def _is_baked(blocks: list[_Block], i: int) -> tuple[bool, bool]:
         and blocks[next_ne].is_prose
         and blocks[next_ne].text[:1].islower()
     )
+    # A confident interrupt merges pp through np: the splice owns the whole
+    # corridor, so every gap inside must be blank. Text shape alone merged
+    # across <p class="rec_line"/><table><td> boundaries and discarded the
+    # table openers the block model never saw (v1.2.5).
+    confident = (
+        (word_split or lower_cont)
+        and pp is not None
+        and np is not None
+        and _flat_run(html_text, blocks, pp, np)
+    )
     prev_runhead = prev_ne is not None and blocks[prev_ne].kind == "runhead"
     next_runhead = next_ne is not None and blocks[next_ne].kind == "runhead"
     prev_unfinished = bool(
@@ -218,12 +250,11 @@ def _is_baked(blocks: list[_Block], i: int) -> tuple[bool, bool]:
         and pp is not None
         and (blocks[pp].text[-1].islower() or blocks[pp].text[-1] == ",")
     )
-    confident = word_split or lower_cont
     baked = (
         confident
         or (prev_unfinished and (prose_next or next_runhead))
         or (prev_runhead and next_runhead)
-    )
+    ) and flow
     return baked, confident
 
 
@@ -236,6 +267,34 @@ def _nearest_prose(blocks: list[_Block], i: int, step: int):
     return None
 
 
+def _flat_run(html_text: str, blocks: list[_Block], a: int, b: int) -> bool:
+    """True when every gap between consecutive blocks in [min(a, b), max(a, b)] is
+    pure whitespace: the corridor holds only the block model's own <p> spans.
+    Any other tag in a gap (a self-closing divider, table cell markup) is layout
+    the model does not own, so no splice that spans a..b may consume it."""
+    lo, hi = (a, b) if a <= b else (b, a)
+    pos = blocks[lo].end
+    for j in range(lo + 1, hi + 1):
+        if html_text[pos : blocks[j].start].strip():
+            return False
+        pos = blocks[j].end
+    return True
+
+
+def _in_prose_flow(html_text: str, blocks: list[_Block], i: int) -> bool:
+    """True when at least one of the block's immediate gaps (to the previous or
+    next block; the document edge counts as markup) is pure whitespace. A digit
+    enclosed by foreign markup on BOTH sides -- a lone recipe-quantity cell --
+    is layout content, never a page number interrupting text; one-sided furniture
+    (a divider beside the number) stays in scope."""
+    if i > 0 and not html_text[blocks[i - 1].end : blocks[i].start].strip():
+        return True
+    return (
+        i + 1 < len(blocks)
+        and not html_text[blocks[i].end : blocks[i + 1].start].strip()
+    )
+
+
 def strip_pagination_doc(
     html_text: str, runheads: set[str], delete_layer: bool = False
 ) -> tuple[str, int]:
@@ -246,7 +305,11 @@ def strip_pagination_doc(
     it is an arabic page number sitting in the body text. Paragraphs are rejoined ONLY
     on a confident interrupt (lowercase continuation or word split); every other removal
     is delete-only, leaving the paragraph break as-is. Roman numerals are removed only on
-    a confident interrupt, so roman chapter/front-matter numbering is preserved.
+    a confident interrupt, so roman chapter/front-matter numbering is preserved. Both
+    paths require prose flow (v1.2.5): a digit enclosed by foreign markup on both sides
+    -- a lone recipe-quantity table cell -- is never page furniture, and a confident
+    merge additionally requires a flat corridor between the merged paragraphs, so the
+    splice can never consume markup the block model does not own.
 
     Returns (new_html, blocks_removed); the input unchanged (count 0) if a safety net
     fails."""
@@ -266,21 +329,32 @@ def strip_pagination_doc(
     for i, b in enumerate(blocks):
         if b.kind != "number":
             continue
-        baked, confident = _is_baked(blocks, i)
+        baked, confident = _is_baked(blocks, i, html_text)
         is_arabic = b.text.isdigit()
         pp = _nearest_prose(blocks, i, -1)
         np = _nearest_prose(blocks, i, +1)
         # In a confirmed page-layer book every standalone arabic <p>N</p> is a page
         # number (char conservation guarantees only digits are lost), so the layer path
         # needs no prose-proximity gate; that gate would miss numbers among short
-        # dialogue lines. Roman numerals still fall through (chapter numbers preserved).
-        removable = baked or (delete_layer and is_arabic)
+        # dialogue lines. It still requires prose flow: a digit enclosed by cell
+        # markup on both sides is a recipe quantity, not page furniture (v1.2.5,
+        # the All About Cake cookbook swept 110 ingredient cells under this path).
+        # Roman numerals still fall through (chapter numbers preserved).
+        removable = baked or (
+            delete_layer and is_arabic and _in_prose_flow(html_text, blocks, i)
+        )
         if not removable:
             continue  # roman chapter numbers, sparse-book numbers, year-range values
         drop.add(i)
-        # a running header/footer hugging a removed number is the same page furniture
+        # a running header/footer hugging a removed number is the same page furniture,
+        # but only when it sits in the number's own prose run: the cascade must not
+        # reach across cell boundaries into a neighbouring table cell
         for side in (_nearest(blocks, i, -1), _nearest(blocks, i, +1)):
-            if side is not None and blocks[side].kind == "runhead":
+            if (
+                side is not None
+                and blocks[side].kind == "runhead"
+                and _flat_run(html_text, blocks, i, side)
+            ):
                 drop.add(side)
         if confident and pp is not None and np is not None:
             unions.append((pp, np))
@@ -367,6 +441,16 @@ def strip_pagination_doc(
     return out, removed
 
 
+def _tag_deltas(s: str) -> Counter:
+    """Per-element open/close balance of a document, negative values kept (a
+    pre-existing stray close must survive the splice, not read as a splice error)."""
+    opens = Counter(t.lower() for t in _OPEN_TAG_RE.findall(s))
+    closes = Counter(t.lower() for t in _CLOSE_TAG_RE.findall(s))
+    return Counter(
+        {name: opens[name] - closes[name] for name in set(opens) | set(closes)}
+    )
+
+
 def _safe(before: str, after: str, blocks: list[_Block], drop: set[int]) -> bool:
     """Character conservation + tag balance. Either failing means the splice went
     wrong, so the caller keeps the original document."""
@@ -384,5 +468,14 @@ def _safe(before: str, after: str, blocks: list[_Block], drop: set[int]) -> bool
         opens = len(re.findall(rf"<{tag}\b[^>]*?(?<!/)>", after, re.IGNORECASE))
         closes = len(re.findall(rf"</{tag}\b", after, re.IGNORECASE))
         if opens != closes:
+            return False
+    # All-tag delta net (v1.2.5): the splice must not change ANY element's open/close
+    # balance. The p/a net above reads only two names; the All About Cake merge
+    # discarded a <table>/<tr>/<td> opener run the p/a net cannot see, and the
+    # orphaned closers then rode through as an epubcheck fatal on the candidate.
+    before_deltas = _tag_deltas(before)
+    after_deltas = _tag_deltas(after)
+    for name in set(before_deltas) | set(after_deltas):
+        if before_deltas[name] != after_deltas[name]:
             return False
     return True

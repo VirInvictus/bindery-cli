@@ -798,7 +798,13 @@ the block (v1.1.1). For each book:
   when it is **baked** (interrupts prose: a lowercase continuation after it, a word
   split across it where the previous block ends in a hyphen, an unfinished previous
   sentence, or it sits between two running headers) or, when the book has a confirmed
-  **page-number layer**, when it is any arabic page number in the body.
+  **page-number layer**, when it is any arabic page number in the body. Every removal
+  requires **prose flow** (v1.2.5): at least one of the candidate's immediate gaps (to
+  the previous or next block) is pure whitespace. A digit enclosed by foreign markup on
+  both sides -- a lone recipe-quantity table cell -- is layout content, never page
+  furniture (the All About Cake cookbook's 110 quantity cells read as a page layer and
+  4 cell boundaries read as interrupts); one-sided furniture stays in scope (a divider
+  beside the number).
 - A **page-number layer** is confirmed only when BOTH hold: >= 20 standalone arabic
   numbers AND >= 3 confident interrupts. A chapter-numbered book has zero interrupts, so
   its chapter numbers are never touched. Roman numerals are removed only as a confident
@@ -807,8 +813,13 @@ the block (v1.1.1). For each book:
   ordinary words built from roman letters (`mid`, `mix`, `civil`) are never read as
   pages. Year-range values (1500-2099) are never page numbers.
 - **Merging:** only a confident interrupt (lowercase continuation or word split) rejoins
-  the two surrounding prose paragraphs (a word split closes up its hyphen). Every other
-  removal is delete-only, leaving the existing paragraph break.
+  the two surrounding prose paragraphs (a word split closes up its hyphen), and the
+  merge additionally requires a **flat corridor** (v1.2.5): every gap between the two
+  prose paragraphs and the number between them is pure whitespace, so the splice can
+  never consume markup the block model does not own. A self-closing divider inside the
+  corridor degrades the merge to delete-only instead of swallowing the divider. The
+  running-header cascade reaches only runheads in the number's own prose run.
+  Every other removal is delete-only, leaving the existing paragraph break.
 - **Navigation targets survive.** An `id` anywhere in a removed block (a page-list or
   internal-link target) is preserved: `<a id=...>` anchors are hoisted into the merged
   paragraph, an id on the removed `<p>` itself becomes an empty anchor there, and a
@@ -825,7 +836,10 @@ Any failure aborts the edit and returns the document unchanged:
 1. **Character conservation**: the visible text after the strip equals the text before
    minus exactly the removed numbers/headers (whitespace and hyphens normalized away),
    so not one character of prose can be lost or fabricated.
-2. **Tag balance**: `<p>` and `<a>` remain balanced after splicing.
+2. **Tag balance**: `<p>` and `<a>` remain balanced after splicing, and no element's
+   open/close balance changes at all (the all-tag delta net, v1.2.5: the merge that
+   discarded a `<table>` opener run passed the p/a net). The net compares per-tag
+   deltas, not absolute counts, so a pre-existing stray close is not a splice error.
 3. **The `no_worse` gate** (below) is the final oracle.
 
 ### Acceptance: `no_worse`
