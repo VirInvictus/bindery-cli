@@ -26,7 +26,12 @@ from urllib.parse import unquote
 from xml.sax.saxutils import escape as _xml_escape
 from xml.sax.saxutils import unescape as _xml_unescape
 
-from .pagination import collect_runheads, detect_page_layer, strip_pagination_doc
+from .pagination import (
+    collect_internal_numbering,
+    collect_runheads,
+    detect_page_layer,
+    strip_pagination_doc,
+)
 from .reserialize import reserialize_if_broken
 from .transforms import (
     _PROTECTED_RE,
@@ -2652,6 +2657,7 @@ def repair_epub(
         # collect content text once up front. Only when the lossy strip is requested.
         runheads: set[str] = set()
         delete_layer = False
+        internal_numbering: list[bool] = []
         if flags.strip_pagination:
             htmls = [
                 zin.read(i).decode("utf-8", "replace")
@@ -2659,7 +2665,14 @@ def repair_epub(
                 if i.filename.lower().endswith(CONTENT_SUFFIXES)
             ]
             runheads = collect_runheads(htmls)
-            delete_layer = detect_page_layer(htmls, runheads)
+            # Documents whose standalone numbers are verse/stanza/section numbering
+            # (values shared across documents) never contribute page numbers
+            # (v1.2.6, issue #38: Don Juan lost 62 stanza numbers to the baked
+            # signals before this existed).
+            internal_numbering = collect_internal_numbering(htmls)
+            delete_layer = detect_page_layer(
+                htmls, runheads, internal_flags=internal_numbering
+            )
 
         # The CSS precondition for --unwrap-illegal-tags is a whole-book property:
         # a stylesheet anywhere can style a content document, so scan every stylesheet
@@ -2923,6 +2936,7 @@ def repair_epub(
         # An entry is re-encoded only when a fix actually fired; an untouched entry is
         # copied byte-for-byte. Re-encoding the decode("utf-8", "replace") round-trip
         # of an unchanged file would silently swap any non-UTF-8 bytes for U+FFFD.
+        content_idx = 0  # the htmls/numbering lists are in this same infolist order
         for item in zin.infolist():
             name = item.filename
             if name == "mimetype":
@@ -3309,6 +3323,10 @@ def repair_epub(
                     report.files_changed += 1
                     data = text.encode("utf-8")
             elif low.endswith(CONTENT_SUFFIXES):
+                # the strip's book-level lists (runheads, per-doc numbering flags)
+                # are built from this same infolist order, so the index aligns
+                doc_index = content_idx
+                content_idx += 1
                 text, counts = apply_transforms(text, HTML_TRANSFORMS)
                 if flags.cdata_terminator:
                     text, n = fix_cdata_terminator(text)
@@ -3424,7 +3442,12 @@ def repair_epub(
                     if n:
                         counts["stripped_broken_tags"] = n
                 if flags.strip_pagination:
-                    text, n = strip_pagination_doc(text, runheads, delete_layer)
+                    text, n = strip_pagination_doc(
+                        text,
+                        runheads,
+                        delete_layer,
+                        internal_numbering=internal_numbering[doc_index],
+                    )
                     if n:
                         counts["stripped_pagination"] = n
                 if flags.encode_ref_brackets:

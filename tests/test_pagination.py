@@ -14,6 +14,7 @@ from bindery.pagination import (
     _P_RE,
     _Block,
     _safe,
+    collect_internal_numbering,
     collect_runheads,
     detect_page_layer,
     number_value,
@@ -418,5 +419,112 @@ class TestPaginationCookbookFixture(unittest.TestCase):
             src = Path(td) / "in.epub"
             dst = Path(td) / "out.epub"
             shutil.copyfile(_COOKBOOK_FIXTURE, src)
+            report = repair_epub(src, dst, RepairFlags(strip_pagination=True))
+            self.assertEqual(report.fixes.get("stripped_pagination", 0), 0)
+
+
+def _canto(first: int, last: int) -> str:
+    """A canto-shaped document: standalone stanza numbers, one paragraph per
+    stanza, some stanzas ending in commas (Byron's enjambment) and some
+    starting lowercase."""
+    parts = []
+    for n in range(first, last + 1):
+        tail = "," if n % 3 == 0 else "."
+        head = "and" if n % 5 == 0 else "The"
+        parts.append(f"<p>{n}</p><p>stanza {n} of the poem runs {LONG}{tail}</p>")
+        parts.append(f"<p>{head} second half continues {LONG}.</p>")
+    return "".join(parts)
+
+
+class TestInternalNumberingDocs(unittest.TestCase):
+    """v1.2.6, issue #38: stanza/section numbers restart per unit, so their values
+    reappear across documents; page numbers are unique by construction. A document
+    whose standalone-number values are substantially shared with other documents
+    carries internal numbering, and the strip takes no numbers from it. Don Juan
+    lost 62 stanza numbers to the baked signals before this existed: enjambed
+    stanzas (comma-ended, lowercase-starting) are the exact verse analogue of a
+    page-number sentence interrupt, and no text-shape signal can tell them apart."""
+
+    def test_canto_docs_are_flagged_internal(self):
+        htmls = [_doc(_canto(1, 40)) for _ in range(3)]
+        flags = collect_internal_numbering(htmls)
+        self.assertEqual(len(flags), 3)
+        self.assertTrue(all(flags))  # values 1..40 shared by every canto
+
+    def test_disjoint_page_values_are_never_flagged(self):
+        # Roman Blood's shape: per-doc page ranges are disjoint by construction
+        htmls = [_doc(_canto(139, 160)), _doc(_canto(161, 180))]
+        self.assertFalse(any(collect_internal_numbering(htmls)))
+
+    def test_front_matter_restart_protects_front_only(self):
+        # front matter restarts arabic numbering at 1; the body's unique values
+        # stay strippable while the front doc's shared values are protected
+        front = _doc(_canto(1, 10))
+        body = _doc(_canto(1, 60))
+        flags = collect_internal_numbering([front, body])
+        self.assertTrue(flags[0])
+        self.assertFalse(flags[1])
+
+    def test_verse_numbers_survive_the_strip(self):
+        # every stanza shape the baked signals take: comma-ended predecessor,
+        # lowercase-starting successor; the aggressive path too
+        htmls = [_doc(_canto(1, 40)) for _ in range(3)]
+        rh = collect_runheads(htmls)
+        layer = detect_page_layer(htmls, rh)
+        self.assertFalse(layer)  # internal numbering never licenses the sweep
+        for html in htmls:
+            out, n = strip_pagination_doc(html, rh, True, internal_numbering=True)
+            self.assertEqual(n, 0)
+            self.assertEqual(out, html)
+        # and the conservative path (the class the old code fired on)
+        for html in htmls:
+            out, n = strip_pagination_doc(html, rh, False, internal_numbering=True)
+            self.assertEqual(n, 0)
+            self.assertEqual(out, html)
+
+    def test_paginated_prose_still_strips_beside_a_verse_doc(self):
+        # a book can carry both: verse docs share their values, the paginated
+        # doc's numbers are disjoint by construction and still strip under the
+        # baked comma-ended-prose signal
+        verse_docs = [_doc(_canto(1, 40)) for _ in range(3)]
+        paged = _doc(
+            f"<p>{LONG} and</p><p>145</p><p>sometimes {LONG}.</p>"
+            f"<p>{LONG} and</p><p>146</p><p>more {LONG}.</p>"
+        )
+        htmls = [*verse_docs, paged]
+        flags = collect_internal_numbering(htmls)
+        self.assertEqual(flags, [True, True, True, False])
+        rh = collect_runheads(htmls)
+        layer = detect_page_layer(htmls, rh, internal_flags=flags)
+        out, n = strip_pagination_doc(paged, rh, layer, internal_numbering=flags[3])
+        self.assertEqual(n, 2)
+        self.assertNotIn(">145<", out)
+        self.assertNotIn(">146<", out)
+
+    def test_detect_page_layer_self_computes_the_flags(self):
+        # no flags passed: the detector computes them itself and still refuses
+        # a verse book
+        htmls = [_doc(_canto(1, 40)) for _ in range(3)]
+        self.assertFalse(detect_page_layer(htmls, set()))
+
+
+_DJ_FIXTURE = Path(__file__).resolve().parent.parent / (
+    "testing_facility/books_to_fix/don-juan-stanza-number-loss.epub"
+)
+HAVE_DJ_FIXTURE = _DJ_FIXTURE.exists()
+
+
+@unittest.skipUnless(HAVE_DJ_FIXTURE, "local issue fixture not present")
+class TestDonJuanFixture(unittest.TestCase):
+    """The real Don Juan copy (issue #38): 62 stanza numbers were stripped by the
+    old code before v1.2.6. The current copy's surviving 1,948 stanza numbers are
+    shared across its canto documents, so every content document reads as
+    internal-numbering and the strip must find nothing to remove."""
+
+    def test_strip_pagination_finds_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            dst = Path(td) / "out.epub"
+            shutil.copyfile(_DJ_FIXTURE, src)
             report = repair_epub(src, dst, RepairFlags(strip_pagination=True))
             self.assertEqual(report.fixes.get("stripped_pagination", 0), 0)

@@ -812,6 +812,7 @@ the block (v1.1.1). For each book:
   number only when it is well-formed (explicit subtractive pairs) and under 100, so
   ordinary words built from roman letters (`mid`, `mix`, `civil`) are never read as
   pages. Year-range values (1500-2099) are never page numbers.
+- **Internal numbering is never page furniture** (v1.2.6): a document whose standalone-number values are substantially shared with other documents (>= 25%: verse stanzas and sections restart per unit, so their values reappear; page numbers are unique by construction) carries internal numbering, and the strip takes no numbers from it; such documents also contribute neither page-layer signal. A single-document book can never be flagged, and front matter that restarts arabic numbering at 1 gets protected at the cost of missing those page numbers.
 - **Merging:** only a confident interrupt (lowercase continuation or word split) rejoins
   the two surrounding prose paragraphs (a word split closes up its hyphen), and the
   merge additionally requires a **flat corridor** (v1.2.5): every gap between the two

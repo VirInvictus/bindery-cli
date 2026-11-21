@@ -1,5 +1,61 @@
 # bindery-cli Patch Notes
 
+## v1.2.6 (2026-11-21)
+
+### The strip never takes a document's own numbering (issue #38: Don Juan lost 62 stanza numbers)
+
+The pre-v1.2.5 damage audit (prompted by the All About Cake REJECT) asked which
+library books the strip had ever touched and whether the old gate could have
+missed damage. Structural damage never applied: five books were REJECTED on
+every historical run (The Sheik 205 blocks, The Prelude 999, The Science of
+Good Cooking 1,770, Strange Code 12, The Tangled Web 1). But two applied books
+carry real, minor damage the gate could never see, because epubcheck measures
+well-formedness, not content semantics:
+
+- **Don Juan (62 stanza numbers, issue #38).** The verse class: stanza numbers
+  sit between blank-gap paragraphs in plain prose flow, and an enjambed stanza
+  (Byron's comma-ended or lowercase-started stanzas) is the exact verse
+  analogue of a page-number sentence interrupt, so both baked signals fired.
+  The removals were delete-only: the stanza text is 100% intact, but 62 of
+  2,011 stanza numbers are gone (63 gap sites in the current copy; the
+  selection-effect proof is that 0 of 1,859 surviving adjacent stanza pairs
+  follow a comma-ended stanza while 45 of the 63 gap sites do).
+- **Roman Blood (one welded sentence).** The source OCR had page 145 both
+  glued into the sentence and duplicated as a standalone paragraph; the old
+  confident-merge welded the sentence around the leftover, and the applied
+  copy reads "instead it's some rich 145  man down in Rome who comes up twice
+  a year to play farmer." -- one stray number embedded mid-sentence. The
+  second merge in the same book ("By Hercules," / 190 / "he said") was
+  correct, and v1.2.5's flat-corridor gate now refuses both shapes.
+
+v1.2.5 does not fix the verse class: stanza numbers sit in genuine prose flow
+(blank gaps), so the flow gate never fires, and no text-shape signal can tell
+an enjambed stanza's number from a real page bleed. The discriminator is
+book-level and order-independent: **stanza/section numbers restart per unit,
+so their values reappear across documents; page numbers are unique by
+construction (pages never repeat).** `collect_internal_numbering` flags every
+document whose standalone-number values are substantially shared with other
+documents (>= 25%), and the strip takes no numbers from a flagged document;
+`detect_page_layer` excludes them from both license signals. A single-document
+book can never be flagged; front matter that restarts arabic numbering at 1
+gets protected at the cost of missing those page numbers, never at the cost of
+stripping verse numbers. The paginated shape keeps working: Roman Blood's
+per-doc page ranges are disjoint, so its docs are never flagged, and the dense
+page-layer fixture (unique values between many paragraphs) is untouched.
+
+Re-run verification against every book the strip ever touched: Don Juan 0
+(19/45 canto docs flagged), Kwaidan 0, Other Worlds Than These 0, Roman Blood
+0, All About Cake 0 -- no behavior change on any current library copy. Kwaidan
+and Other Worlds show no damage signatures; their historical removals were
+genuine page furniture. Both damaged books stay as-is per Brandon's call; the
+full audit trail lives in issue #38.
+
+Tests: the internal-numbering class (canto docs flagged, disjoint page values
+never flagged, front-matter restart protects the front doc only, verse numbers
+survive both strip paths, paginated prose still strips beside verse docs, the
+detector self-computes its flags) and a skip-gated regression over the real
+Don Juan copy asserting the strip finds nothing. Suite: 1031 tests.
+
 ## v1.2.5 (2026-11-21)
 
 ### The pagination strip refuses layout it does not own (the All About Cake cookbook)

@@ -37,7 +37,10 @@ document unchanged:
   4. the caller's epubcheck gate (no net-new fatals or errors) is the final oracle.
 
 Scope is intentionally `<p>` elements only, which is where the defect is carried
-in every observed case; this keeps the splicing well understood.
+in every observed case; this keeps the splicing well understood. Numbers belonging
+to a document's own numbering system (verse stanzas, sections) are out of scope
+entirely: their values repeat across documents, unlike page numbers, which are
+unique by construction (v1.2.6).
 """
 
 from __future__ import annotations
@@ -143,7 +146,53 @@ def collect_runheads(htmls: list[str]) -> set[str]:
     return {t for t, n in counter.items() if n >= RUNHEAD_MIN_REPEAT}
 
 
-def detect_page_layer(htmls: list[str], runheads: set[str]) -> bool:
+# Internal-numbering detection (v1.2.6, issue #38): stanza/section numbers restart
+# per unit (canto, chapter, section), so their VALUES reappear across documents;
+# page numbers are unique by construction (pages never repeat). A document whose
+# standalone-number values are substantially shared with other documents carries
+# internal numbering, and the strip takes no numbers from it. Cross-doc sequence
+# resets are unusable directly (content docs are visited in archive order, which
+# scrambles cross-file sequence), but value-sharing is order-independent. Don Juan
+# lost 62 stanza numbers to the baked signals before this existed: enjambed
+# stanzas end in commas, which is the exact verse analogue of a page-number
+# sentence interrupt.
+INTERNAL_SHARE_MIN = 0.25
+
+
+def collect_internal_numbering(htmls: list[str]) -> list[bool]:
+    """Per-document internal-numbering verdicts, aligned with htmls order.
+
+    A document is internal-numbering when at least INTERNAL_SHARE_MIN of its
+    standalone number values also appear in other documents. A single-document
+    book can never be flagged (there is nothing to share against); front matter
+    that restarts arabic numbering at 1 gets protected at the cost of missing
+    those page numbers, never at the cost of stripping verse numbers."""
+    doc_values: list[set[str]] = []
+    for html_text in htmls:
+        doc_values.append(
+            {
+                b.text
+                for b in (_Block(m) for m in _P_RE.finditer(html_text))
+                if b.kind == "number"
+            }
+        )
+    seen_docs: Counter[str] = Counter()
+    for values in doc_values:
+        for v in values:
+            seen_docs[v] += 1
+    flags = []
+    for values in doc_values:
+        if not values:
+            flags.append(False)
+            continue
+        shared = sum(1 for v in values if seen_docs[v] > 1)
+        flags.append(shared / len(values) >= INTERNAL_SHARE_MIN)
+    return flags
+
+
+def detect_page_layer(
+    htmls: list[str], runheads: set[str], internal_flags: list[bool] | None = None
+) -> bool:
     """Decide whether a book has a genuine print-page-number layer, which licenses the
     aggressive between-paragraph deletion. Two signals must BOTH hold, so a merely
     chapter-numbered book is never mistaken for a paginated one:
@@ -159,12 +208,22 @@ def detect_page_layer(htmls: list[str], runheads: set[str]) -> bool:
        (v1.2.5: 110 cell digits, 4 cell-boundary "interrupts") -- never license
        the sweep.
 
+    Documents whose numbers are internal numbering (stanza/section values shared
+    across documents, v1.2.6) contribute neither signal: Don Juan's 1,948+ stanza
+    numbers must never license a sweep over verse numbering.
+
     The interrupt count, not an ascending run, is the discriminator, because content
     documents are visited in archive order (not reading order), which scrambles any
     cross-file sequence."""
+    if internal_flags is None:
+        internal_flags = collect_internal_numbering(htmls)
     vals = 0
     confident = 0
-    for html_text in htmls:
+    # strict: the flags are aligned with htmls by construction (epub.py builds
+    # both from the same infolist filter); a mismatch is a wiring bug
+    for html_text, internal in zip(htmls, internal_flags, strict=True):
+        if internal:
+            continue
         blocks = [_Block(m) for m in _P_RE.finditer(html_text)]
         for b in blocks:
             if b.kind == "prose" and b.text in runheads:
@@ -296,7 +355,10 @@ def _in_prose_flow(html_text: str, blocks: list[_Block], i: int) -> bool:
 
 
 def strip_pagination_doc(
-    html_text: str, runheads: set[str], delete_layer: bool = False
+    html_text: str,
+    runheads: set[str],
+    delete_layer: bool = False,
+    internal_numbering: bool = False,
 ) -> tuple[str, int]:
     """Remove baked page numbers/running headers from one content document.
 
@@ -310,6 +372,12 @@ def strip_pagination_doc(
     -- a lone recipe-quantity table cell -- is never page furniture, and a confident
     merge additionally requires a flat corridor between the merged paragraphs, so the
     splice can never consume markup the block model does not own.
+
+    `internal_numbering` (v1.2.6, issue #38) marks a document whose standalone numbers
+    are verse/stanza/section numbering -- values shared across documents -- and skips
+    every number in it: Don Juan's enjambed stanzas (comma-ended or lowercase-starting)
+    are homologous with real page-number sentence interrupts, and no text-shape signal
+    can tell them apart, so the discriminator is the book-level numbering detector.
 
     Returns (new_html, blocks_removed); the input unchanged (count 0) if a safety net
     fails."""
@@ -327,7 +395,7 @@ def strip_pagination_doc(
     # Block-centric: decide each number independently, so page numbers are caught
     # wherever they sit (between prose, beside a heading, next to a chapter number).
     for i, b in enumerate(blocks):
-        if b.kind != "number":
+        if b.kind != "number" or internal_numbering:
             continue
         baked, confident = _is_baked(blocks, i, html_text)
         is_arabic = b.text.isdigit()
