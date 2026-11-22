@@ -585,7 +585,7 @@ with the specimen-first discipline:
   files the archive never carried -- 738/752 and 736/752 on the two
   shells -- at or over 50% reads SHELL: re-source, never repair. The
   manual handling of the two shells (Brandon re-sources; the spine guard
-  was CORRECT to refuse) is documented in OBSERVE-RESEARCH.md and the
+  was CORRECT to refuse) is documented in docs/OBSERVE-RESEARCH.md and the
   report.
 
 Also moved: the XML NCName check and sanitize scheme now live in
@@ -1158,7 +1158,7 @@ Twenty-five structural repairs. Suite: 768 tests.
 
 The error-code surgery left six open issues; this release works all of
 them, each on its own evidence (the census lanes and live gate runs are
-recorded in `OBSERVE-RESEARCH.md`, specimens in the gitignored testing
+recorded in `docs/OBSERVE-RESEARCH.md`, specimens in the gitignored testing
 facility).
 
 **`--strip-epub3-attrs` covers `role` and `aria-hidden` (issue #11).** The
@@ -1241,7 +1241,7 @@ correctly leaves. OPF-030 (27 books), CSS-007 (114 books, INFO), and
 RSC-004 (84 books, all font obfuscation, zero DRM, the audit's benign
 OBFUSCATED verdict) are recorded leave-measured with their mechanisms and,
 where one exists, the recipe for a future pass. The full census, wordings,
-and per-book tables live in `OBSERVE-RESEARCH.md`.
+and per-book tables live in `docs/OBSERVE-RESEARCH.md`.
 
 
 ## v0.54.0 (2026-10-24)
@@ -1249,7 +1249,7 @@ and per-book tables live in `OBSERVE-RESEARCH.md`.
 ### The error-code surgery fixes: the core pass stopped breaking valid books
 
 The 2026-10-24 whole-library surgery (the record lives in
-`OBSERVE-RESEARCH.md`, specimens in the gitignored testing facility)
+`docs/OBSERVE-RESEARCH.md`, specimens in the gitignored testing facility)
 proved that the tool's two worst whole-library behaviors, 313 gate
 rejections and a wall of no-change rewrites, were both self-inflicted.
 Two always-on core transforms carried bugs; the epubcheck gate correctly

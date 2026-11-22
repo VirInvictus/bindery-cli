@@ -28,59 +28,38 @@ bindery-cli makes accidentally broken markup well-formed again. It does not rewr
 
 ### Opt-in repairs
 
-Everything below is off until its flag is passed (or all at once via `--all`). They go further than well-formedness (altering structure or adding minimal content), so they never run by default:
+The remaining 45 fixes are opt-in: off until their flag is passed, or all at
+once via `--all`. They go further than well-formedness (altering structure or
+adding minimal content), so they never run by default. They group the way the
+CLI help groups them:
 
-- **`--fix-ids`**: rewrite ids that are not valid XML names (start with a digit, contain a colon, or carry any character outside the XML NameChar set, like the apostrophes calibre copies from filenames) in the OPF manifest, updating every reference to them (spine, fallback, media-overlay, the EPUB 2 cover meta), and in the NCX (where old conversions stamp navPoint ids from UUIDs). The reference matchers carry the same `data-*` guard the id matchers do (v1.2.1), so `data-fallback`/`data-toc`/`data-content` values are never rewritten. Touches the OPF, so it is off by default; the dc: metadata is never altered.
-- **`--add-img-alt`**: add `alt=""` to `<img>` elements missing the required attribute. Renders identically, but it adds markup the author never wrote, and an empty alt tells a screen reader the image is decorative; hence opt-in.
-- **`--reserialize`**: rebuild content documents that are still malformed by re-parsing them with html5lib and re-emitting XHTML, closing unclosed `<p>`/`<div>`/`<span>`/`<blockquote>` that the regex transforms cannot. Runs only on documents that are not already well-formed, so good files are untouched.
-- **`--strip-bad-attrs`**: drop attributes that are invalid XML (a name starting with a digit, or a namespaced name whose prefix is never declared, like Office VML `v:shapes`). Surgical and a no-op on well-formed files.
-- **`--escape-unknown-entities`**: escape entity names that are not in the HTML5 table (`&foo;` becomes `&amp;foo;`), which renders exactly as browsers already render an unknown entity. Documents whose DOCTYPE carries an internal subset are skipped wholesale, since a subset can declare custom entities.
-- **`--fix-id-colons`**: translates illegal colons in `id="X:Y"` and their matching internal `#X:Y` fragment references to valid underscores. External URL fragments are left verbatim (they name positions in other documents), `data-id` values are never touched, and the NCX's `content src` fragments follow the rename (under the same invalid-NCName predicate since v1.1.1) so the table of contents never dangles against the ids it references.
-- **`--fix-empty-body`**: gives a strictly empty `<body></body>` one minimal paragraph (`<p>&#160;</p>`) to clear the "body incomplete" error. The numeric character reference needs no DTD and the wrapping `p` is the block element XHTML 1.1's body content model requires.
-- **`--fix-missing-title`**: injects a `<title>Unknown</title>` fallback in the `<head>` if missing, handling both empty `<title/>` self-closing tags and entirely absent tags.
-- **`--unwrap-block-in-inline`**: safely unwraps `<span>` tags that illegally contain a block-level element (e.g. `<div>` or `<p>`), leaving the block element intact.
-- **`--strip-invalid-value`**: systematically strips invalid `value="..."` attributes from elements like `<div>`, `<span>`, `<p>`, etc.
-- **`--fix-page-map`**: normalizes legacy page-map markup: drops the non-standard `page-map="..."` attribute from the OPF `<spine>` and adds `class="pages"` to classless NCX `<pageList>` elements (epubcheck rejects both on older HarperCollins / Anna's Archive conversions). The satisfaction checks read the plain attributes only (v1.2.1): a `data-class`/`data-id` never suppresses the insertion epubcheck's demand needs.
-- **`--strip-epub3-attrs`**: scrubs the EPUB3-only attributes epubcheck rejects on an EPUB2 package: `page-progression-direction`, `epub:type`, `aria-label`, `role`, `aria-hidden` (a fixed, documented set; rendering is unchanged, and lookalikes like `type` or `aria-labelledby` survive; `hidden` stays, since stripping it would reveal hidden content). The edit is anchored to real start tags, so prose that merely mentions `epub:type="chapter"` is preserved.
-- **`--downgrade-epub3-tags`**: downgrades EPUB3/HTML5 semantic elements to their EPUB2 equivalents (`figure`/`section` to `div`, `figcaption` to `p`), keeping existing classes and appending the semantic name (`class="figure"`) as the styling hook. Tag names a stylesheet styles as an element selector are protected book-wide, so styled formatting is never destroyed. Comments and CDATA are never rewritten, and a `data-class` attribute is never mistaken for the class hook. Both EPUB2-targeted fixes are gated on the package version declared in the OPF: on an EPUB 3 book they do nothing, because their target defects only exist below EPUB 3.
-- **`--unwrap-illegal-tags`**: strips completely invalid or deprecated HTML tags that break EPUB3 validation (`<st>`, `<sentence>`, `<o>`, `<w>`, `<pagebreak>`) while retaining their inner text. Any of those names styled as an *element selector* by an EPUB stylesheet (`.css` entries and inline `<style>` blocks alike; class/id selectors like `.st`/`#w` don't count) is protected for the whole book, guaranteeing format preservation.
-- **`--declare-missing-items`**: the RSC-008 inverse of the prune: adds the manifest `<item>` declarations the OPF never wrote for files the archive carries and the book references (content `<img src>`/`<link href>` targets, CSS `url()` resources, OPF guide references). Deterministic ids, media types from a blessed extension map only, and no `<itemref>` is ever written: the spine is untouched. Namespace-prefixed packages (`</opf:manifest>`) declare too (v1.1.1).
-- **`--fix-unique-identifier`**: wires the dangling OPF unique-identifier (OPF-030): adds the id the package names to the first `dc:identifier` when no element carries it, and aligns the NCX `dtb:uid` the broken wiring was masking in the same run. The `dc:` values are never touched; ambiguous shapes refuse.
-- **`--prune-missing-resources`**: removes references to files the archive does not contain (RSC-007/PKG-010): dead `<link>` elements, anchors' `href` to absent files (anchor text preserved), absent `<img>` sources (replaced by their alt text when they carry one), and orphaned non-spine OPF manifest items (with every package edge that pointed at them rewritten: `spine@toc`, `item@media-overlay`, `item@fallback`, and the EPUB2 cover meta). Spine documents are never pruned: a missing spine document is reported as a damaged fragment, not silently dropped.
-- **`--strip-dead-font-faces`**: drops every `@font-face` block in a stylesheet whose `url()` references ALL miss the archive (v1.2.0, issue #27). ebook-convert's azw3→epub carries the source's font declarations without the font payloads, filling `page_styles.css` with `url(styles/XXXXXXXXXXXXXXXX)` placeholders: hundreds of RSC-007s per book that the manifest prune cannot reach (the OPF never declared the fonts) and where `--all` never converges. The font never loaded, so the fallback rendering is what the file already does and the drop is rendering-neutral. One live `url()` keeps the whole block; scheme, query, fragment, raw-space, and `local()`-only blocks are never guessed at; comments (XML and CSS alike) are never rewritten. Runs on `.css` entries.
-- **`--strip-broken-anchors`**: strips href attributes that cannot resolve, keeping the anchor text byte-for-byte: a `#fragment` the target document does not define (RSC-020/RSC-012; NCX navTargets fall back to the document target, so chapter navigation survives) and unresolvable URI schemes (`kindle:`, `file:`). Fragments are percent-decoded before the existence check, so valid links to non-ASCII ids (`#caf%C3%A9` naming `id="café"`) are kept (v1.1.1).
-- **`--encode-url-spaces`**: percent-encodes raw spaces in `src`/`href` attribute values across the package (OPF manifest, NCX, content documents). A URL with a literal space is not a valid URL (RSC-020) and unresolvable on strict readers; the encoded form denotes the same file. Since v0.44.0 the flag also renames archive entries whose names carry raw spaces to their underscore spellings and rewrites every reference to them (OPF, NCX, content, CSS `url()`), clearing the PKG-010 space-in-filename advisories: underscore, never percent-encoding, because epubcheck decodes references before entry lookup.
-- **`--fix-container`**: generates `META-INF/container.xml` at the located OPF when the container is missing or names a file the archive does not contain. This is the gateway defect: epubcheck stays fatal while the OPF is unfindable, so no repair can be gate-accepted on such a book until the container exists.
-- **`--fix-media-types`**: normalizes wrong manifest media-type declarations (OPF-029, e.g. a jpg stamped `image/png` by an aggregator). Attribute-only and quote-preserving; it fires only when the file's magic bytes confirm the extension, so a misnamed-but-consistent file (a PNG renamed .jpg) is never made worse. Since v0.56.0 it also covers the CSS-007 font slice (a `ttf`/`otf`/`woff`/`woff2` declared outside epubcheck's blessed font set is rewritten to its `font/*` spelling when the magic bytes confirm; `.eot` is never touched), and the flag is accepted under the no-worse bar because that half's gain sits on the INFO axis.
-- **`--fix-cover`**: repairs dangling EPUB2 cover wiring. A `<meta name="cover">` whose content names no manifest item is re-pointed when the OPF guide's own cover reference names an existing item, and removed when nothing identifies it; EPUB3 `properties="cover-image"` is deliberately audit-only (guessing which image is the cover is not deterministic). Cover wiring is invisible to epubcheck, so cover-only repairs are accepted under the same no-worse bar the lossy strips use.
-- **`--fix-comment-double-hyphen`**: replaces `--` sequences inside XML comments with en-dashes. `--` is illegal inside an XML comment (epubcheck fatal RSC-016: the book opens in lenient readers but never passes epubcheck). The edit stays inside the comment bodies: text nodes and CDATA sections are never touched, and each comment's terminator is left intact.
-- **`--fix-svg-dup-ids`**: renames duplicate `id` values inside standalone `.svg` entries (old calibre SVG page renders repeat glyph ids within one document; the intake wave that found this carried 445 to 1,339 'Duplicate "glNNNN"' errors per book). The first occurrence keeps its name, later ones gain `_2`/`_3`, and internal references are deliberately untouched: they already resolve to the first definition under every reader's first-match lookup.
-- **`--fix-duplicate-ids`**: the same first-keeps-name rename for duplicate `id` values in the content documents themselves (RSC-005 "Duplicate id" on `.xhtml`/`.html` carriers). Every reference to the name still resolves to the first definition, exactly as readers resolved it before.
-- **`--fix-cdata-terminator`**: completes a truncated CDATA-terminator comment in an inline `<style>` block (`/*]]>` becomes `/*]]>*/`). A comment-wrapped CDATA block whose closing `*/` the converter dropped leaves the CSS parser inside an unterminated comment: one CSS-008 'Premature end of file' per affected document. Only the malformed-terminator token class is rewritten; invalid CSS stays unfixed, and stylesheet files are not touched.
-- **`--fix-misnested-inline`**: rewrites the Mobipocket drop-cap mis-nest `<i><b>X</i></b>` to `<i><b>X</b></i>` (em/strong variants and either tag order). Only the both-open-then-reversed-close shape is touched; a punctuation run caught between the reversed closers (`<i><b>xile</i>,</b>`) survives outside both spans, and a letter run there is refused (which span keeps the letters has no deterministic answer).
-- **`--fix-stray-close`**: removes an end tag whose element has no open start tag anywhere above it (the stray extra `</div>` on a shell page, which cascades into 'body must be terminated by the matching end-tag'). Merely mis-nested pairs are never touched: a close is removed only when nothing by that name is open.
-- **`--fix-unterminated-attr`**: closes an attribute value left open to the tag's own `>` (`<p class="footnote>` becomes `<p class="footnote">`). The parser swallows prose into the value until the next quote and dies on the first `<` it meets. Guards keep it off legal `>`-bearing values: bare-word values only, and no quote may close before the next `<`.
-- **`--fix-unbound-prefix`**: binds a prefix the OPF never declares in scope inline on the element that uses it (the Calibre embed scar: `ns0:scheme` on a `dc:identifier` whose `xmlns:ns0` sits on a sibling, out of XML scope; the later writer build's unbound `dc:` element names). The declaration is inserted on the user in the shape the file's own healthy siblings use, from URI evidence only (the same prefix declared elsewhere with every declaration agreeing, or the use site's own namespace); anything else refuses the document untouched. Runs on the OPF only.
-- **`--prune-dangling-ncx-targets`**: removes NCX `navPoint`/`navTarget`/`pageTarget` elements whose `<content src>` names a document the archive never contained (RSC-007 at the toc: the OPF never declared the file, so the manifest prune has no item to prune). Node-exact: a dead subtree drops as one span, a dead parent above live children is spliced (its navLabel goes with it, the children re-home one level up), scheme URLs and bare fragments are never this class, an unbalanced walk aborts unchanged, and a prune that would empty a container refuses. The always-on playOrder pass re-runs when it fires.
-- **`--fix-package-version`**: rewrites the literal `version="1.0"` on the `<package>` element to `"2.0"` -- an EPUB version epubcheck cannot parse (OPF-001). Only the exact literal qualifies; a missing attribute (an OEB-1.0-namespace package) or any other spelling refuses the document untouched, and a `data-version` is arbitrary data, never rewritten (v1.2.1).
-- **`--fix-doctype`**: replaces a content document's DOCTYPE when it carries a public identifier its package profile forbids (EPUB 3 requires `<!DOCTYPE html>`; EPUB 2's OPS content docs are XHTML 1.1, so an XHTML 1.0 doctype is flagged). Whitespace-equal declarations are no-ops, an absent DOCTYPE is legal and left alone, and an internal subset is never touched.
-- **`--prune-invalid-guide-refs`**: removes guide `<reference>` elements whose target is declared in the manifest but is not an OPS content document (OPF-032: the Random House `msr` guide block pointing cover references at JPEGs is the dominant fingerprint). The guide is furniture, so removal is content-neutral; undeclared targets (OPF-031) and external schemes are left alone.
-- **`--fix-item-properties`**: scans each content document for what epubcheck wants declared (OPF-014: `scripted` from a `<script>` element or a `<form>`, `svg` from an `<svg>`, `remote-resources` from an absolute-scheme src/link/CSS url()) and merges the tokens into the owning manifest item's `properties` attribute, sorted and deduplicated. EPUB 3 packages only: on EPUB 2 the attribute is itself illegal, so those carriers refuse and stay measured.
-- **`--fix-double-colon-tags`**: escapes the `<`/`>` around pseudo-tags whose name contains a double colon -- an XML name can carry at most one colon, so such a construct is never markup and the parser dies on it with a fatal RSC-016 (C++ code samples like `std::vector<std::shared_ptr>`). Escaping both ends restores exactly the text the author wrote; real markup is unreachable because the double colon lives in the name grammar itself.
+- **Safe opt-ins** (6, markup-neutral): `--fix-ids`, `--add-img-alt`,
+  `--reserialize`, `--strip-bad-attrs`, `--escape-unknown-entities`,
+  `--fix-double-colon-tags`.
+- **Structural repairs: markup and nesting** (13): from `--fix-empty-body`,
+  `--fix-missing-title`, and `--fix-id-colons` to the mis-nest/stray-close/
+  unterminated-attr family, the EPUB2 downgrades, and
+  `--strip-presentational-attrs`.
+- **Structural repairs: references and resources** (11): the prune/declare/
+  encode family, from `--prune-missing-resources` and `--encode-url-spaces` to
+  `--strip-dead-font-faces` and the `--prune-dead-spine` shell repair.
+- **Structural repairs: package wiring** (11): `--fix-container` (the gateway
+  defect), `--fix-media-types`, `--declare-missing-items`, `--fix-cover`,
+  `--fix-unique-identifier`, and the OPF-version/doctype/guide family.
+- **Lossy strips** (4), which stand apart because they delete converter-injected
+  content rather than correcting XML:
 
-- **`--strip-presentational-attrs`**: strips the deprecated presentational hints the XHTML 1.1 DTD rejects wherever they appear (`align`, `valign`, `border`, `bgcolor`, `vspace`, `hspace`, `compact`; body's `link`/`vlink`/`alink`/`text`/`background`; `type` on list elements; Amazon `data-AmznRemoved` junk). Honest caveat: these are presentational hints, and readers that honor them render differently after the strip.
-- **`--encode-ref-brackets`**: percent-encodes raw `[`/`]` in the path portion of internal references whose archive target exists with the raw brackets (RSC-020). Fragments, queries, entry names, and unresolvable/external references stay as written. Runs on content documents, the OPF, the NCX, and stylesheet `url()` tokens.
-- **`--fix-id-colons`** also renames any content-document `id` that cannot be an XML NCName (digit-led scraped ids, apostrophe-bearing calibre ids) since v0.63.0, syncing internal fragments with the same `id_` scheme as the manifest half. Since v1.1.1 the NCX half follows the same predicate (a digit-led ToC fragment follows the `id_` rename instead of dangling against it) and the quote-tempered fragment matchers translate an apostrophe-bearing value (`href="c1.xhtml#Lisey's_story"`) whole. An escaped fragment (a percent-escape like `#caf%C3%A9` or an entity reference) passes through untouched: it names its target under decoding, and renaming the encoded form would manufacture a target that exists nowhere.
-- **`--prune-dead-spine`**: the shell repair — fires ONLY when half or more of the manifest's content hrefs name files the archive never carried (the audit battery's `shell` analyzer names the same shape). The census reads the layout its hrefs are written in (v1.2.2): when `--encode-url-spaces` co-fires, a raw-space href whose file exists in the source archive is rename material, never a fake "dead" item. Drops the dead manifest items, the spine itemrefs that name them, and the dead NCX navPoints, then re-sequences the surviving playOrders to 1..K. A lone missing chapter never crosses the signature: the spine non-goal stays in force for ordinary damage. The Wandering Inn serial shells (738 and 736 of 755/752 items dead) are the design case; proven at 742e → 5e with 0 fatals.
-
-Four opt-in fixes are **lossy** and stand apart from the semantics-preserving rest:
-
-- **`--strip-pagination`**: remove print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs (so they reflow into the middle of a sentence: "where the hay cart **16** was taking him"). It removes only that injected furniture, never the author's prose: where a number split a sentence it rejoins the two paragraphs (closing up a word split like `compli-` / `mentary`), and it preserves roman chapter numbers, page-list nav anchors, and years. A roman numeral counts as a page number only when it is well-formed and under 100, so ordinary words (`mid`, `mix`, `civil`) are never mistaken for pages. A book is only treated as paginated when it has both a dense run of arabic numbers and several confident mid-sentence interrupts, so a merely chapter-numbered book is left alone. Navigation anchors are real ids only (`id` and `xml:id`; a `data-id` is arbitrary data no reader can resolve, v1.2.1). Every removal requires prose flow: a digit enclosed by foreign markup on both sides (a lone recipe-quantity table cell) is layout content, never page furniture, and a confident merge only runs when the whole corridor between the merged paragraphs is plain text (v1.2.5). Documents whose standalone numbers are a book's own numbering (verse stanzas, sections -- their values reappear across documents, unlike page numbers, which are unique) never lose numbers (v1.2.6). Four safety nets guard every edit (character conservation, p/a tag balance, an all-tag open/close delta check, and an epubcheck no-regression check); any failure leaves the document untouched.
-- **`--strip-broken-tags`**: remove leaked HTML closing tags missing their open brackets (e.g. `</p>`) that render as raw text.
-- **`--strip-watermarks`**: remove known producer and distributor watermarks (e.g. OceanofPDF, ABC Amber LIT Converter) and stray marker files. It locates the stamp and deletes the outermost wrapper whose entire visible text is the watermark, ensuring prose that merely mentions the URL is preserved. An inline stamp link is deleted only when it holds nothing but the stamp; a match too large to be safe (an unclosed stamp anchor that swallowed prose) is refused and reported for manual repair rather than deleted.
-- **`--strip-stub-docs`**: drop spine documents whose entire visible body text is one identical short placeholder repeated across the spine: the Bookmate-style export whose chapters are all the same "content unavailable" notice, passing epubcheck because the placeholder is valid XHTML. The drop cascades (archive entries, manifest items, spine order, NCX navPoints, nav toc entries), so the book opens straight into its real chapters. The identity rule is deliberately conservative (same body text, at least 3 docs, at least 30% of the spine, each doc short but not blank; the pool is the `<body>` span, and image-carrier pages with no body text are exempt, so illustrated part-divider pages are never candidates) and a book whose *every* spine doc is the stub is refused outright: that book is empty and needs a re-source, never a repair.
+  - **`--strip-pagination`**: remove print page numbers and running headers that a PDF/OCR conversion baked into the body text as literal paragraphs (so they reflow into the middle of a sentence: "where the hay cart **16** was taking him"). Roman chapter numbers, page-list anchors, and years are preserved; every removal requires prose flow, and four safety nets guard every edit.
+  - **`--strip-broken-tags`**: remove leaked HTML closing tags missing their open brackets (e.g. `</p>`) that render as raw text.
+  - **`--strip-watermarks`**: remove known producer and distributor watermarks (OceanofPDF, ABC Amber LIT Converter) and stray marker files, deleting only wrappers whose entire visible text is the stamp.
+  - **`--strip-stub-docs`**: drop spine documents whose whole body is the same short placeholder repeated across the spine (the Bookmate-style export), cascading the drop through archive, manifest, spine, and ToC. A book whose *every* spine doc is the stub is refused outright: it needs a re-source, never a repair.
 
 All lossy edits are invisible to epubcheck, so they are accepted when the result is *no worse* rather than measurably better.
+
+The full per-flag reference (each flag's rules, refusals, and history) is
+[docs/repairs.md](docs/repairs.md); `bindery repair --help-repairs` renders the
+same reference in the CLI, and `bindery repair --help` lists the one-line
+summaries.
 
 ## The safety contract
 
@@ -138,54 +117,15 @@ uv tool install "bindery-cli[reserialize]"             # incl. --reserialize
 
 ## The Calibre plugin (Bindery Repair)
 
-Each release also ships **BinderyRepair-v<VERSION>.zip**, a Calibre plugin that
-repairs EPUBs as they are imported: it is attached to the GitHub release beside
-the PyPI wheel (install it via Calibre's Preferences, Plugins, "Load plugin
-from file"). The plugin is the CLI's always-on core pass only: the five
-well-formedness fixes, the NCX pipeline, and the mimetype fix. The structural
-repairs and lossy
-strips stay CLI-only, because their acceptance is the epubcheck gate and
-epubcheck cannot run inside Calibre; nothing runs ungated in the plugin, ever.
-
-Compatibility: the plugin declares a minimum Calibre of **7.0** and
-`supported_platforms` is Linux. Both floors state what is actually verified, no more:
-released Calibre embeds Python 3.11 through the whole 8.x series and 3.14 from
-9.0 on, and CI byte-compiles the shipped plugin zip under Python 3.11, 3.12,
-3.13 and 3.14, so the plugin parses on every current Calibre series; 7.x is
-the oldest whose interpreter CI covers, 2.x-6.x embed interpreters nothing
-verifies. The Calibre API surface the plugin uses is the long-stable
-`FileTypePlugin` shape, exercised against test stubs only; the plugin is
-developed and tested on Linux (v0.39.0 shipped the 3.14-only except syntax
-and silently failed to load on every released Calibre, which is the failure
-this floor and CI now guard against).
-
-Behavior and guarantees:
-
-- `run()` never raises and never touches the original file or `metadata.db`: a
-  repaired copy is built in a persistent temp file and handed back for import;
-  any trouble returns the original path and logs one line.
-- Byte-idempotent: an already-clean book yields zero fixes and the original
-  path, so re-adding a format re-runs the plugin harmlessly.
-- The rewritten archive is `testzip()`-verified before it is handed back.
-- One log line per book (fixed / no fixes / refused / errored), appended to
-  `bindery_repair.log` in Calibre's config directory by default.
-- Files over the size cap are refused (default 150MB) rather than stalling an
-  import.
-
-Configuration is the plugin's customization string, parsed as JSON:
-
-```json
-{"log": true, "log_path": "/path/bindery_repair.log", "max_size_mb": 150,
- "max_log_mb": 2, "epubcheck_path": null}
-```
-
-The log rotates at `max_log_mb` (default 2MB, one `.old` generation kept;
-`0` disables rotation), so years of imports cannot grow it without bound.
-
-`epubcheck_path` opts into the experimental on-PATH validation mode: the
-repaired copy is re-measured with your epubcheck binary and refused unless it
-is no worse than the original. It defaults to off; the default pass is safe
-without a gate, and the mode costs two epubcheck runs per imported book.
+Each release also ships **BinderyRepair-v<VERSION>.zip**, a Calibre plugin
+that repairs EPUBs as they are imported (attached to the GitHub release beside
+the PyPI wheel; load it via Calibre's Preferences, Plugins, "Load plugin from
+file"). The plugin runs the CLI's always-on core pass only: the five
+well-formedness fixes, the NCX pipeline, and the mimetype fix. Nothing runs
+ungated: the structural repairs and lossy strips stay CLI-only, because their
+acceptance is the epubcheck gate and epubcheck cannot run inside Calibre.
+Minimum Calibre 7.0, Linux. Behavior guarantees, the JSON configuration
+string, and compatibility notes are in [docs/plugin.md](docs/plugin.md).
 
 ## Usage
 
@@ -246,48 +186,11 @@ bindery audit contamination ~/docs/Calibre\ Library
 cd ~/docs/Calibre\ Library && bindery audit all
 ```
 
-**Completeness spot-check:** the `completeness` audit answers the pre-import question "does this book reach its end?" It reports, per book: the prose-document count against the spine (docs with 400+ visible characters), the opening and closing text of the first/middle/last prose doc, a trailing-ToC classification of the final spine doc (a link-dense chapter list after the real back matter), and the fraction of unreadable docs. A trailing ToC is reported as an advisory, never a failure: the closing excerpt always comes from the real back matter, so a human can confirm the book ends where the author ended it.
+A directory of loose `.epub` files works too (`bindery audit pagenumbers /path/to/loose/epubs`), and one or more library books can be audited by Calibre id (`cd <library> && bindery audit all --id 1234,1235`; `--id` composes with `--tag`: the book is tagged only if the audit flags it).
 
-**Contamination scan:** the `contamination` audit is advisory too: fan-bundle cosmetics are the judge-and-import class. Three sweeps over the archive's content documents (spine plus the non-spine html a broken manifest can strand): another series' name where the book's own identity belongs, judged against the package's own metadata (the head-`<title>` template stamps a sloppy fan bundle leaves on every doc, a volume marker with named words in front of it, a repeated foreign running header); known fan-bundle ad signatures (jnovels, kokoro connect, zerobooks, light-novel download plugs); and pasted review-site text in the first few content docs (helpful counts, "was this review helpful", "out of 5 stars", verified purchase). Every finding is a report a human judges, never a failure.
+Tagging is the audit's only write path and it is opt-in: `--tag "Audit Flagged"` tags every flagged book through cquarry's trigger-safe write module, and the write is REFUSED with exit 1 while Calibre is running (a fail-closed pgrep guard: close Calibre and re-run).
 
-Audits can also be run on a directory of loose `.epub` files by passing the path as the second argument:
-```sh
-bindery audit pagenumbers /path/to/loose/epubs
-```
-
-Or on one or more library books by Calibre id (comma-separated), fetched through cquarry's single-entity `get_book()` (no library-wide scan), with the EPUB resolved via cquarry's own path logic:
-```sh
-cd ~/docs/Calibre\ Library && bindery audit all --id 1234,1235
-```
-`--id` composes with `--tag`: the book is tagged only if the audit flags it.
-
-**Machine-readable reports:** `--json FILE` writes the run's verdicts in the same shape `library --json` uses: one record per book with a `status` (`clean`/`problem`/`error`) and per-analyzer verdicts (`problem`, `status`, `details`), plus the always-on archive/spine verdicts (OK when they were silent). This is the contract downstream consumers of the pre-import vetting slice read.
-```sh
-bindery audit all ~/Downloads/epubs --json vetting-report.json
-```
-With `--id`, `--json` accepts exactly one book id (each single-book run writes the file wholesale).
-
-**Thresholds:** `--min-chars N` and `--thin-chars N` are the EMPTY and THIN body-text thresholds (defaults 2000 and 20000); `--min-chars` above `--thin-chars` is a usage error. `--max-doc-chars N` is the monolithic-document flag threshold (default 300,000). All three belong to the audit parser only (`bindery library --min-chars …` is an unknown-flag error).
-
-**Spine-integrity reporting:** Both `audit` and `library` reports now classify manifest/NCX references that point to absent files. A `convention` verdict means the ToC is bloated but the present documents form a consecutive chapter span (e.g., the Wandering Inn official-build pattern, safe). A `fragment` verdict means the span itself is broken.
-
-**Archive integrity:** every audit fully reads each archive entry (CRC + decompression), so a damaged download is reported CORRUPT, with the first broken entry named, instead of being mislabeled EMPTY by `emptytext`. `library --sweep` splits its `unreadable` bucket into `not_a_zip` / `truncated` / `encrypted` / `corrupt_entry`, so the right disease is visible without leaving the sweep.
-
-### Tagging flagged books (opt-in; the write is refused while Calibre runs)
-
-By default an audit writes nothing. With `--tag TAG` (library mode only), every book the audit
-flags is tagged in `metadata.db` through cquarry's trigger-safe write module, useful for piping
-flagged books back into Calibre views:
-
-```sh
-cd ~/docs/Calibre\ Library && bindery audit content --tag "Audit Flagged"
-```
-
-The audit itself stays read-only; only the final tagging pass writes, it skips books that already
-carry the tag, and THIN emptytext advisories are never tagged. The write is REFUSED with exit 1
-while Calibre is running (a fail-closed pgrep guard: close Calibre and re-run). Tagged books are recorded in Calibre's `metadata_dirtied` queue, so the
-desktop app regenerates their sidecar `.opf`s (and re-pushes metadata to wireless readers) on its
-next startup: no manual resync needed.
+The analyzer detail (completeness and contamination sweeps, thresholds, the machine-readable `--json` shape, spine-integrity and archive-integrity verdicts, the tagging contract) is in [docs/audits.md](docs/audits.md).
 
 
 ## Repairing a book
@@ -336,17 +239,19 @@ bindery library ~/docs/Calibre\ Library --only all --apply --all --install-to-ca
 - `--only {fatals,ncx,all}` restricts the candidate set. `ncx` targets NCX-001 mismatches (detected without epubcheck); `fatals` needs `--audit` or `--sweep`.
 - `--id <ids>` limits the sweep to a comma-separated list of Calibre book IDs, skipping the full library walk.
 - `--audit CSV` (the `fatals,errors,warnings,path` format produced by an epubcheck sweep) skips clean books so a run is fast. Paths are resolved on both sides, and a CSV that matches nothing triggers a loud warning instead of silently selecting zero books.
-- `--limit N` processes at most N candidates and stops opening archives after them (lazy within one worker window). A value below 1 is a usage error.
-- `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. bindery-cli may serve checks from a small persistent Java daemon (see the gate section above for how it is bounded and how it fails safe); wherever the daemon cannot serve, the run falls back to the standard per-book epubcheck subprocess at the usual seconds per book. Combine with `--only fatals` for a self-contained "find and fix the broken books" run.
-- `--workers N` runs the sweep's candidate pass through N concurrent epubcheck workers (default 1: serial, unchanged). The subprocess releases the GIL, so threads parallelize the oracle truthfully; books are checked in windows of N consumed in order, so the candidate set matches the serial sweep and `--limit` stays lazy within one window of overshoot. The repair phase stays serial: that is where the shared workdir and the atomic-replacement contract live.
+- `--sweep` replaces the CSV step entirely: it runs a live epubcheck sweep for candidate selection and reuses each result as that book's before-measurement, so no book is checked twice. Checks are served from a small persistent Java daemon where possible (see the gate section above for how it is bounded and how it fails safe); wherever the daemon cannot serve, the run falls back to the standard per-book epubcheck subprocess. Combine with `--only fatals` for a self-contained "find and fix the broken books" run.
+- `--limit N` processes at most N candidates and stops opening archives after them (a value below 1 is a usage error). `--workers N` parallelizes the sweep's candidate pass in windows of N consumed in order, so the candidate set matches the serial sweep and `--limit` stays lazy within one window of overshoot; the repair phase stays serial, since that is where the shared workdir and the atomic-replacement contract live.
 - `--json FILE` writes a machine-readable report of the whole run (per-book status, before/after counts, applied flag, summary totals). `--manual-list FILE` writes the paths of every book that was not auto-repaired, one per line, ready for manual follow-up.
 - `--apply` is required to write; the default is a dry run. `--backup DIR` mirrors originals before replacing; `--backup-inplace` writes `.epub.bak` beside each file. `--backup-keep N` bounds the rotation: at most N backup files per book (the author original `.epub.bak` is never deleted), so a years-long apply habit cannot grow backups without bound.
-- `--install-to-calibre` resolves the Calibre book id from `metadata.db` via cquarry (one read-only path→id map per run), so a hand-renamed `Author/Title (id)/` directory can never send the repaired file to the wrong book. The directory-name regex is only a no-catalog fallback; with neither, the file is saved atomically in place.
-- `--install-to-calibre` installs the repaired EPUB through cquarry's write module: the file is placed atomically at the catalogued path (same filename, Calibre's layout never changes) and the format row is re-registered in one transaction, so the stored size stays truthful and the book lands in `metadata_dirtied`; Calibre regenerates its sidecar .opf on next start. No external `calibredb` call is involved. It falls back to atomic file replacement if the Calibre database ID cannot be resolved, and a database failure degrades to the in-place save with a warning. A directory-name-guessed id is trusted only when `metadata.db` corroborates it (the book exists and the file is that book's catalogued EPUB); an uncatalogued stray file inside a book directory is saved in place and the catalog row is left untouched.
-- `--all` automatically turns on all opt-in non-fatal fixes and lossy strips (pagination, watermarks, bad attributes, unknown entities, image alt tags, etc.) in a single run.
+- `--install-to-calibre` installs the repaired EPUB through cquarry's write module: the book id resolves from `metadata.db` via one read-only path→id map per run (the directory-name regex is only a no-catalog fallback, and a guessed id is trusted only when `metadata.db` corroborates it: the book exists and the file is that book's catalogued EPUB), the file is placed atomically at the catalogued path, and the format row is re-registered in one transaction, so the stored size stays truthful and the book lands in `metadata_dirtied` (Calibre regenerates its sidecar .opf on next start). No external `calibredb` call is involved. A database failure degrades to the atomic in-place save with a warning; an uncatalogued stray file inside a book directory is saved in place and the catalog row is left untouched.
+- `--all` automatically turns on all opt-in non-fatal fixes and lossy strips in a single run.
 - Only the `.epub` is replaced. `metadata.opf`, `cover.jpg`, and `metadata.db` are left for Calibre's Quality Check sync to reconcile.
 - A per-book progress line goes to stderr (stdout stays a clean report); `--quiet` suppresses it. A corrupt or unreadable book is reported and skipped, never aborting the sweep.
-- Exit codes, per verb (for scripts and cron; `--help-json`'s `exit_contract` carries this machine-side): `repair` exits 0 when clean, probed, OR written (a probe writes nothing and exits 0; a PARTIAL repair writes its best output and exits 0; the `--json` record's status says so) and 1 on trouble (gate-rejected, epubcheck failure, unreadable input) or invocation problems (bad args, an existing output without `--force`); it never exits 2. `library`, `run phase1`, and `run phase3` use the unified contract: 0 clean, 2 when any book was flagged, rejected, unreadable, errored, or partial, 1 for invocation problems. `audit` runs the inverse contract: 0 clean, 1 when any book was flagged (a flag is the audit's trouble), 2 for its own usage errors, 3 when findings coexist with a failed `--json`/`--tag` write. `audit --tag` and `library --apply --install-to-calibre` are lock-class doors: they are REFUSED with exit 1 while Calibre is running. Argparse-level misuse exits 2 everywhere before any validation runs.
+- Exit codes, per verb (for scripts and cron; `--help-json`'s `exit_contract` carries this machine-side):
+  - `repair`: 0 when clean, probed, OR written (a probe writes nothing and exits 0; a PARTIAL repair writes its best output and exits 0; the `--json` record's status says so) and 1 on trouble (gate-rejected, epubcheck failure, unreadable input) or invocation problems (bad args, an existing output without `--force`); it never exits 2.
+  - `library`, `run phase1`, and `run phase3`: 0 clean, 2 when any book was flagged, rejected, unreadable, errored, or partial, 1 for invocation problems.
+  - `audit`: 0 clean, 1 when any book was flagged (a flag is the audit's trouble), 2 for its own usage errors, 3 when findings coexist with a failed `--json`/`--tag` write.
+  - `audit --tag` and `library --apply --install-to-calibre` are lock-class doors: REFUSED with exit 1 while Calibre is running. Argparse-level misuse exits 2 everywhere before any validation runs.
 - A `partial` book (improved but still unable to open) is reported for manual follow-up and fails the run with exit 2, in `library`, `run phase1`, and `run phase3` alike: a book that still needs a human is trouble.
 - `repair` refuses to overwrite an existing output file unless `--force` is given.
 
@@ -441,7 +346,10 @@ loose local books that stay on disk but out of git (untracked since v0.33.0,
 forward-only, because 9 of the 10 are commercial and one untracked leak on a public
 repo is one too many).
 
-See [spec.md](spec.md) for the full contract and [roadmap.md](roadmap.md) for what is planned.
+See [docs/repairs.md](docs/repairs.md) for the opt-in repair reference,
+[docs/audits.md](docs/audits.md) for the audit analyzers,
+[docs/plugin.md](docs/plugin.md) for the Calibre plugin,
+[spec.md](spec.md) for the full contract, and [roadmap.md](roadmap.md) for what is planned.
 
 ## License
 
