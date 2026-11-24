@@ -6,6 +6,8 @@ instead of shipping.
 """
 
 import ast
+import datetime
+import re
 import unittest
 from pathlib import Path
 
@@ -122,3 +124,49 @@ class TestSyntaxFloor(unittest.TestCase):
             line.strip() for line in patchnotes.splitlines() if line.startswith("## v")
         )
         self.assertIn(CODE_VERSION, heading)
+
+
+class TestPatchnotesEntryShape(unittest.TestCase):
+    """The newest patchnotes entry follows the house pattern. The tag message
+    IS the entry (verbatim), so a malformed entry ships to every release page.
+
+    The pattern was unwritten until the 2026-11-24 docs audit and was not
+    always followed: 23 entries before v0.24.0 carry no `###` headline, six
+    carry several. Published entries are frozen with their tags, so only the
+    entry that can still change is pinned.
+    """
+
+    HEADING = re.compile(r"^## (v\d+\.\d+\.\d+) \((\d{4}-\d{2}-\d{2})\)$")
+
+    def _newest_entry(self):
+        lines = (
+            (Path(__file__).resolve().parent.parent / "patchnotes.md")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        start = next(i for i, line in enumerate(lines) if line.startswith("## v"))
+        end = next(
+            i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")
+        )
+        return lines[start], lines[start + 1 : end]
+
+    def test_heading_is_dated_and_carries_the_version(self):
+        heading, _ = self._newest_entry()
+        m = self.HEADING.match(heading)
+        self.assertIsNotNone(m, f"{heading!r} is not `## vX.Y.Z (YYYY-MM-DD)`")
+        self.assertEqual(m.group(1), "v" + CODE_VERSION)
+        datetime.date.fromisoformat(m.group(2))  # raises on an impossible date
+
+    def test_entry_has_exactly_one_headline(self):
+        _, body = self._newest_entry()
+        headlines = [line for line in body if line.startswith("### ")]
+        self.assertEqual(len(headlines), 1, f"found {len(headlines)} `###` headlines")
+
+    def test_entry_closes_with_the_suite_count(self):
+        _, body = self._newest_entry()
+        last = next(line for line in reversed(body) if line.strip())
+        self.assertRegex(last, r"^Suite: \d+ tests\.$")
+
+    def test_entry_has_no_em_dash(self):
+        _, body = self._newest_entry()
+        self.assertNotIn("\u2014", "\n".join(body))

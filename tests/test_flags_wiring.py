@@ -9,6 +9,7 @@ silently. The dest-to-field pairs are spelled here on purpose: an
 intentional remap updates both copies, and an accidental one fails
 here."""
 
+import re
 import unittest
 from argparse import ArgumentParser, _StoreTrueAction
 from dataclasses import fields
@@ -127,6 +128,67 @@ class WiringTests(unittest.TestCase):
     def test_all_enables_every_field(self):
         flags = self._flags_for_argv("--all")
         self.assertTrue(all(getattr(flags, f.name) for f in fields(RepairFlags)))
+
+
+class DocInventoryTests(unittest.TestCase):
+    """The flag inventory also lives in prose: spec.md names every opt-in
+    flag, and README states the per-group counts. Nothing tied either to the
+    table before the 2026-11-24 docs audit, so both lagged behind it (seven
+    flags missing from the README and four from spec.md at v0.62.0). The
+    reference page needs no pin here: tests/test_repairs_doc.py pins it to
+    the table byte for byte."""
+
+    # (CLI group title prefix, the README phrase that states its count)
+    README_COUNTS = (
+        ("safe opt-ins", r"\*\*Safe opt-ins\*\* \((\d+)\)"),
+        (
+            "structural repairs: markup and nesting",
+            r"\*\*Structural repairs: markup and nesting\*\* \((\d+)\)",
+        ),
+        (
+            "structural repairs: references and resources",
+            r"\*\*Structural repairs: references and resources\*\* \((\d+)\)",
+        ),
+        (
+            "structural repairs: package wiring",
+            r"\*\*Structural repairs: package wiring\*\* \((\d+)\)",
+        ),
+        ("lossy strips", r"\*\*Lossy strips\*\* \((\d+)\)"),
+    )
+
+    @classmethod
+    def _doc(cls, name):
+        return (Path(__file__).resolve().parent.parent / name).read_text(
+            encoding="utf-8"
+        )
+
+    def test_spec_names_every_opt_in_flag(self):
+        spec = self._doc("spec.md")
+        for _title, rows in cli._REPAIR_FLAG_TABLE.items():
+            for dest, _short, _long in rows:
+                flag = "--" + dest.replace("_", "-")
+                # a whole token: `--fix-page-maps` must not answer for
+                # `--fix-page-map`
+                named = re.search(r"(?<![\w-])" + re.escape(flag) + r"(?![\w-])", spec)
+                self.assertIsNotNone(named, f"spec.md does not name {flag}")
+
+    def test_readme_total_matches_the_table(self):
+        readme = self._doc("README.md")
+        total = sum(len(rows) for rows in cli._REPAIR_FLAG_TABLE.values())
+        m = re.search(r"remaining (\d+) fixes are opt-in", readme)
+        self.assertIsNotNone(m, "README no longer states the opt-in total")
+        self.assertEqual(int(m.group(1)), total)
+
+    def test_readme_group_counts_match_the_table(self):
+        readme = self._doc("README.md")
+        for prefix, phrase in self.README_COUNTS:
+            groups = [t for t in cli._REPAIR_FLAG_TABLE if t.startswith(prefix)]
+            self.assertEqual(len(groups), 1, f"no CLI group starts with {prefix!r}")
+            m = re.search(phrase, readme)
+            self.assertIsNotNone(m, f"README no longer states a count for {prefix!r}")
+            self.assertEqual(
+                int(m.group(1)), len(cli._REPAIR_FLAG_TABLE[groups[0]]), prefix
+            )
 
 
 if __name__ == "__main__":
