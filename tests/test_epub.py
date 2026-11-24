@@ -3315,6 +3315,43 @@ class TestStripStubDocs(unittest.TestCase):
             report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
         self.assertNotIn("stub_docs_dropped", report.fixes)
 
+    def test_links_into_dropped_stubs_read_absent(self):
+        # the Goldfinger class (2026-11-23): a surviving doc linking into a
+        # dropped stub doc sailed through the prune -- its existence set
+        # still described the source archive, where the stub files exist --
+        # and dangled on the pruned book (26 RSC-007s, every repair of
+        # these books gate-rejected since the stub strip shipped). The
+        # prune's set is the stub drop's set: the href strips, the anchor
+        # text stays.
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td, stubs=3, chapters=5)
+            linked = Path(td) / "linked.epub"
+            with zipfile.ZipFile(src) as zin, zipfile.ZipFile(linked, "w") as zout:
+                for item in zin.infolist():
+                    data = zin.read(item)
+                    if item.filename.endswith("c0.xhtml"):
+                        data = data.replace(
+                            b"</body>",
+                            b'<p>Continued <a href="s0.xhtml#filepos1">here</a>'
+                            b" in the next placeholder.</p></body>",
+                        )
+                    zout.writestr(item, data)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(
+                linked,
+                dst,
+                RepairFlags(
+                    strip_stub_docs=True, prune_missing=True, strip_anchors=True
+                ),
+            )
+            with zipfile.ZipFile(dst) as z:
+                c0 = z.read("OEBPS/c0.xhtml").decode()
+        self.assertEqual(report.fixes.get("stub_docs_dropped"), 3)
+        self.assertEqual(report.fixes.get("missing_file_hrefs_stripped"), 1)
+        self.assertNotIn("s0.xhtml", c0)
+        self.assertIn("Continued", c0)
+        self.assertIn("here", c0)
+
 
 SCARRED_OPF = (
     '<?xml version="1.0" encoding="UTF-8"?>'

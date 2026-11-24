@@ -2924,6 +2924,17 @@ def repair_epub(
         stub_hrefs: frozenset[str] = frozenset()
         if flags.strip_stub_docs and opf_text is not None:
             stub_hrefs = detect_stub_docs(zin, opf_text, opf_dir)
+        # The stub drop's view of the broken-reference existence sets: links
+        # into a dropped stub doc must read as ABSENT to the prune and the
+        # anchor pass, or the drop manufactures the dangling links the gate
+        # then rejects (the Goldfinger class, 2026-11-23: 27 stub docs gone
+        # while surviving docs' links into them sailed through the prune
+        # whose existence set still described the source archive). The
+        # rename/encode passes keep the full sets deliberately: they read
+        # the SOURCE layout by design (the #10/v1.2.2 layout rule), and a
+        # stub doc's file exists there.
+        anchor_present = present - stub_hrefs
+        anchor_present_src = present_src - stub_hrefs
         if flags.strip_anchors:
             for i in zin.infolist():
                 if i.filename.lower().endswith(CONTENT_SUFFIXES):
@@ -2953,11 +2964,16 @@ def repair_epub(
                         t, _ = prune_missing_resources_doc(
                             t,
                             posixpath.dirname(i.filename),
-                            present_src if space_renames else present,
+                            anchor_present_src if space_renames else anchor_present,
                         )
                     ids_by_doc[
                         _norm_path(space_renames.get(i.filename, i.filename))
                     ] = frozenset(m.group(2) for m in _ANCHOR_ID_RE.finditer(t))
+        # a dropped stub doc's id set must not survive into the fragment
+        # cleaners: a link naming dropped-doc#frag reads against ids the
+        # drop is about to remove
+        if stub_hrefs:
+            ids_by_doc = {k: v for k, v in ids_by_doc.items() if k not in stub_hrefs}
 
         # The mimetype content is an OCF constant, so adding a missing entry and
         # normalizing wrong or whitespace-padded content is deterministic and
@@ -3582,8 +3598,11 @@ def repair_epub(
                     if n:
                         counts["renamed_refs_rewritten"] = n
                 if flags.prune_missing:
+                    # the anchor view (stub docs subtracted): a link into a
+                    # doc this same run is about to drop reads as absent,
+                    # never as a live reference (the Goldfinger class)
                     text, pcounts = prune_missing_resources_doc(
-                        text, posixpath.dirname(out_item.filename), present
+                        text, posixpath.dirname(out_item.filename), anchor_present
                     )
                     if pcounts:
                         counts.update(pcounts)

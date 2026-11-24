@@ -1,5 +1,42 @@
 # bindery-cli Patch Notes
 
+## v1.2.8 (2026-11-24)
+
+### The stub drop's existence set reaches the prune: links into dropped stubs read as absent (the Goldfinger ten)
+
+The first real work v1.2.7 unblocked exposed the fifth member of the same
+defect family. A scoped dry run over the ten library books whose repairs had
+been gate-rejected since the stub strip shipped (Goldfinger, both Dexters, The
+Eye of the World, three Robin Hobb books, The Elegant Universe, Surely You're
+Joking, Mr. Feynman!) still rejected all ten: 0f/3e -> 0f/29e on Goldfinger.
+The manufactured errors were never guide references on these books -- they are
+surviving content documents LINKING into the dropped stub docs (split_054's
+`<a href="..._split_002.html#filepos476">`): `--prune-missing-resources`
+kept every one because its existence set (`present`) still described the
+SOURCE archive, where the stub files exist. The drop removed the files; the
+prune's set did not follow; the candidate carried one RSC-007 per dropped
+doc, and the gate refused.
+
+The fix: the prune's existence set is now the stub drop's set
+(`anchor_present` / `anchor_present_src` = `present` minus `stub_hrefs`,
+wired at both `prune_missing_resources_doc` call sites), and the dropped
+docs' id sets leave `ids_by_doc` so no fragment cleaner reads against ids the
+drop is removing. The rename/encode passes deliberately keep the full sets
+(they read the SOURCE layout by design; the #10/v1.2.2 layout rule). The
+href strips and the anchor text stays, which is exactly the
+`--prune-missing-resources` contract.
+
+Result: all ten books repair accepted (Goldfinger's 26 dangling links strip;
+the stub shells' own malformed-XHTML mass leaves with them). Alongside, the
+damage audit these books prompted answered the question that motivated it:
+no library book was ever damaged by the v1.2.7 defect classes -- the only two
+books a stub drop ever applied to (You Had Me at Hola, 41 docs; The Age of
+Innocence, 3 docs) carry zero orphaned images, resolving cover references,
+and full prose, and every candidate that manufactured errors was REJECTED by
+the gate, untouched.
+
+Suite: 1044 tests.
+
 ## v1.2.7 (2026-11-23)
 
 ### The EPUB2 fixes read a prefixed package, image carriers keep their placeholder text, and every prune drops the guide references it orphans (the Morimoto cookbook)
