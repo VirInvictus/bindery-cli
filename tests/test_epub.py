@@ -473,6 +473,59 @@ class TestPackageVersion(unittest.TestCase):
         self.assertEqual(package_version("<package version='3.0.1'/>"), 3)
         self.assertEqual(package_version('<package version="1.2"/>'), 1)
 
+    def test_prefixed_package_reads_the_same(self):
+        # the issue #20 matcher class: some writers declare
+        # `<opf:package version="2.0">`, and the bare-`<package` regex read
+        # every such book as unversioned -- the EPUB2-targeted fixes inert
+        # while the book's whole error mass is EPUB3-on-EPUB2 (2026-11-23,
+        # the Morimoto cookbook: 2,600 findings behind one prefix)
+        self.assertEqual(package_version('<opf:package version="2.0"/>'), 2)
+        self.assertEqual(
+            package_version("<opf:package xmlns:opf='u' version='3.0.1'/>"), 3
+        )
+
+    def test_prefixed_epub2_licenses_the_scrub(self):
+        opf = (
+            '<?xml version="1.0"?><opf:package '
+            'xmlns:opf="http://www.idpf.org/2007/opf" '
+            'version="2.0" unique-identifier="bookid">'
+            "<opf:metadata/><opf:spine/></opf:package>"
+        )
+        content = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml">'
+            '<body epub:type="chapter" aria-label="c"><p>x</p></body></html>'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", content)
+            report = repair_epub(src, dst, RepairFlags(strip_epub3_attrs=True))
+            self.assertEqual(report.fixes.get("epub3_attrs_stripped"), 2)
+
+    def test_prefixed_epub3_stays_licensed_nothing(self):
+        opf = (
+            '<?xml version="1.0"?><opf:package '
+            'xmlns:opf="http://www.idpf.org/2007/opf" '
+            'version="3.0" unique-identifier="bookid">'
+            "<opf:metadata/><opf:spine/></opf:package>"
+        )
+        content = (
+            '<?xml version="1.0"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml">'
+            '<body epub:type="chapter"><p>x</p></body></html>'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/c1.xhtml", content)
+            report = repair_epub(src, dst, RepairFlags(strip_epub3_attrs=True))
+            self.assertNotIn("epub3_attrs_stripped", report.fixes)
+
     def test_unknown_is_none(self):
         self.assertIsNone(package_version(None))
         self.assertIsNone(package_version("<package/>"))
@@ -644,6 +697,25 @@ class TestDowngradeEpub3Tags(unittest.TestCase):
     def test_self_closing_form(self):
         out, n = downgrade_epub3_tags("<figure/>")
         self.assertEqual((out, n), ('<div class="figure"/>', 1))
+
+    def test_nav_and_header_become_divs(self):
+        # the 2026-11-23 additions: nav on the named RSC-005 element finding
+        # (EPUB3-on-EPUB2 toc/landmarks/page-list navs), header through the
+        # unmasking door (epubcheck never reported it while the enclosing
+        # illegal <section> held the parse)
+        text = '<nav epub:type="toc" id="toc"><ol><li>x</li></ol></nav><header><p>y</p></header>'
+        out, n = downgrade_epub3_tags(text)
+        self.assertEqual(n, 4)
+        self.assertIn('<div epub:type="toc" id="toc" class="nav">', out)
+        self.assertIn('<div class="header"><p>y</p></div>', out)
+        self.assertNotIn("<nav", out)
+        self.assertNotIn("<header", out)
+
+    def test_css_protected_nav_untouched(self):
+        out, n = downgrade_epub3_tags(
+            '<nav id="toc">x</nav>', protected_tags=frozenset({"nav"})
+        )
+        self.assertEqual((out, n), ('<nav id="toc">x</nav>', 0))
 
     def test_css_protected_names_untouched(self):
         text = "<figure>x</figure><section>y</section>"
@@ -2486,6 +2558,74 @@ class TestPruneDanglingEdges(unittest.TestCase):
         out, n = prune_dangling_edges(opf, {"dead"})
         self.assertEqual((out, n), (opf, 0))
 
+    def test_guide_refs_to_gone_paths_drop(self):
+        # the prune cascade's href edge (2026-11-23): the guide names files,
+        # not ids, and a reference whose file a prune dropped reads
+        # OPF-031 + RSC-007 -- errors the prune manufactured
+        from bindery.epub import prune_guide_refs_to
+
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf"><guide>'
+            '<reference type="cover" href="text/cover.xhtml"/>'
+            '<reference type="toc" href="text/nav.xhtml"/>'
+            '<reference type="text" href="text/title.xhtml#start"/>'
+            '<reference type="site" href="https://example.com"/>'
+            "</guide></package>"
+        )
+        out, n = prune_guide_refs_to(opf, "OEBPS", {"OEBPS/text/cover.xhtml"})
+        self.assertEqual(n, 1)
+        self.assertNotIn("cover.xhtml", out)
+        self.assertIn('href="text/nav.xhtml"', out)
+        self.assertIn('href="text/title.xhtml#start"', out)  # live path, fragment kept
+        self.assertIn("https://example.com", out)  # a scheme is never this class
+
+    def test_guide_refs_accept_prefixed_elements(self):
+        from bindery.epub import prune_guide_refs_to
+
+        opf = (
+            '<package xmlns="http://www.idpf.org/2007/opf"><guide>'
+            '<opf:reference type="cover" href="c.xhtml"/>'
+            '<opf:reference type="toc" href="nav.xhtml"/>'
+            "</guide></package>"
+        )
+        out, n = prune_guide_refs_to(opf, "", {"c.xhtml"})
+        self.assertEqual(n, 1)
+        self.assertNotIn("c.xhtml", out)
+        self.assertIn('href="nav.xhtml"', out)
+
+    def test_end_to_end_prune_drops_guide_refs_to_pruned_files(self):
+        opf = (
+            '<?xml version="1.0"?>'
+            '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="bookid">urn:uuid:X</dc:identifier>'
+            "</metadata>"
+            "<manifest>"
+            '<item id="keep" href="k.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="dead" href="dead.xhtml" media-type="application/xhtml+xml"/>'
+            "</manifest>"
+            '<spine><itemref idref="keep"/></spine>'
+            "<guide>"
+            '<reference type="cover" href="dead.xhtml"/>'
+            '<reference type="text" href="k.xhtml"/>'
+            "</guide>"
+            "</package>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "in.epub", Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr("META-INF/container.xml", TestFixContainer.CONTAINER)
+                z.writestr("OEBPS/content.opf", opf)
+                z.writestr("OEBPS/k.xhtml", CONTENT)
+            report = repair_epub(src, dst, RepairFlags(prune_missing=True))
+            self.assertEqual(report.fixes.get("manifest_items_pruned"), 1)
+            self.assertEqual(report.fixes.get("prune_guide_refs_dropped"), 1)
+            with zipfile.ZipFile(dst) as z:
+                out = z.read("OEBPS/content.opf").decode("utf-8")
+        self.assertIn('href="k.xhtml"', out)
+        self.assertNotIn('type="cover"', out)
+
     def test_end_to_end_prune_rewrites_what_it_drops(self):
         opf = (
             '<?xml version="1.0"?>'
@@ -2911,9 +3051,23 @@ class TestStripStubDocs(unittest.TestCase):
         'media-type="application/oebps-package+xml"/></rootfiles></container>'
     )
 
-    def _build(self, td, *, stubs=3, chapters=5, stub_text=STUB_TEXT, interleave=True):
+    def _build(
+        self,
+        td,
+        *,
+        stubs=3,
+        chapters=5,
+        stub_text=STUB_TEXT,
+        interleave=True,
+        cover=False,
+        carriers=0,
+        guide=None,
+    ):
         """A Bookmate-like book: `chapters` real chapters plus `stubs` spine
-        docs carrying one identical short placeholder."""
+        docs carrying one identical short placeholder. `cover` adds an image
+        carrier whose only text is the placeholder itself (the oceanofpdf
+        cover shape); `carriers` adds that many image-carrier spine docs
+        carrying the same text; `guide` is appended after </spine>."""
         src = Path(td) / "in.epub"
         manifest = [
             f'<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>'
@@ -2926,6 +3080,15 @@ class TestStripStubDocs(unittest.TestCase):
                 f'<item id="{sid}" href="{sid}.xhtml" '
                 'media-type="application/xhtml+xml"/>'
             )
+        if cover:
+            manifest.append(
+                '<item id="cov" href="cover.xhtml" media-type="application/xhtml+xml"/>'
+            )
+        for j in range(carriers):
+            manifest.append(
+                f'<item id="im{j}" href="im{j}.xhtml" '
+                'media-type="application/xhtml+xml"/>'
+            )
         if interleave:
             # stubs woven through the spine, the real export's shape
             order = []
@@ -2935,6 +3098,9 @@ class TestStripStubDocs(unittest.TestCase):
                     order.append(f"s{i}")
         else:
             order = [f"c{i}" for i in range(chapters)] + stub_ids[:stubs]
+        if cover:
+            order.append("cov")
+        order += [f"im{j}" for j in range(carriers)]
         spine = [f'<itemref idref="{i}"/>' for i in order]
         opf = (
             '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">'
@@ -2942,7 +3108,7 @@ class TestStripStubDocs(unittest.TestCase):
             '<dc:identifier id="bookid">urn:uuid:STUB-BOOK</dc:identifier>'
             "</metadata>"
             f"<manifest>{''.join(manifest)}</manifest>"
-            f"<spine>{''.join(spine)}</spine></package>"
+            f"<spine>{''.join(spine)}</spine>{guide or ''}</package>"
         )
         ncx_points = "".join(
             f'<navPoint id="np-{i}" playOrder="{n + 1}">'
@@ -2979,6 +3145,23 @@ class TestStripStubDocs(unittest.TestCase):
                 z.writestr(
                     f"OEBPS/{sid}.xhtml",
                     f"<html><body><p>{stub_text}</p></body></html>",
+                )
+            if cover:
+                # the oceanofpdf cover shape: the book's cover image plus a
+                # one-line ad whose text is the very placeholder the stub
+                # class counts
+                z.writestr(
+                    "OEBPS/cover.xhtml",
+                    '<html><body><div id="cover"><img alt="image" '
+                    'src="cover.jpg"/></div><p><a href="https://oceanofpdf.com">'
+                    f"<i>{stub_text}</i></a></p></body></html>",
+                )
+                z.writestr("OEBPS/cover.jpg", b"\xff\xd8\xff\xe0")
+            for j in range(carriers):
+                z.writestr(
+                    f"OEBPS/im{j}.xhtml",
+                    '<html><body><img alt="image" src="im.jpg"/>'
+                    f"<p>{stub_text}</p></body></html>",
                 )
         return src
 
@@ -3071,6 +3254,63 @@ class TestStripStubDocs(unittest.TestCase):
         # 3 identical stubs across a 14-doc spine (21%) is under the 30% bar
         with tempfile.TemporaryDirectory() as td:
             src = self._build(td, stubs=3, chapters=12)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
+        self.assertNotIn("stub_docs_dropped", report.fixes)
+
+    def test_cover_carrier_with_placeholder_text_survives(self):
+        # the Morimoto shape (2026-11-23): the oceanofpdf shells stamp a
+        # one-line ad on every page they gut, so the COVER -- an image
+        # carrier whose only text is the ad line -- counted as the stub
+        # class and dropped, leaving the guide's cover reference dangling
+        # (OPF-031 + RSC-007, the -3-error regression the gate rejected).
+        # An image carrier is furniture whatever short text it carries.
+        guide = (
+            "<guide>"
+            '<reference type="cover" href="cover.xhtml"/>'
+            '<reference type="toc" href="c0.xhtml"/>'
+            "</guide>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td, stubs=3, chapters=5, cover=True, guide=guide)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
+            with zipfile.ZipFile(dst) as z:
+                names = z.namelist()
+                opf = z.read("OEBPS/content.opf").decode()
+        self.assertEqual(report.fixes.get("stub_docs_dropped"), 3)
+        self.assertIn("OEBPS/cover.xhtml", names)
+        self.assertIn('idref="cov"', opf)
+        self.assertIn('href="cover.xhtml"', opf)  # the guide reference survives
+        self.assertNotIn("stub_guide_refs_dropped", report.fixes)
+
+    def test_guide_ref_to_a_true_stub_drops(self):
+        # the cascade's href edge: a guide reference naming a doc the drop
+        # removed would read OPF-031 + RSC-007 on the pruned book
+        guide = (
+            "<guide>"
+            '<reference type="text" href="s0.xhtml"/>'
+            '<reference type="cover" href="cover.xhtml"/>'
+            "</guide>"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td, stubs=3, chapters=5, cover=True, guide=guide)
+            dst = Path(td) / "out.epub"
+            report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
+            with zipfile.ZipFile(dst) as z:
+                opf = z.read("OEBPS/content.opf").decode()
+        self.assertEqual(report.fixes.get("stub_docs_dropped"), 3)
+        self.assertEqual(report.fixes.get("stub_guide_refs_dropped"), 1)
+        self.assertNotIn('href="s0.xhtml"', opf)
+        self.assertIn('href="cover.xhtml"', opf)
+
+    def test_carriers_do_not_license_the_class(self):
+        # placeholder text on image-carrier pages never counts toward the
+        # stub license: 4 ad-stamped carriers + 2 true stubs read as a
+        # 6-doc class pre-fix and fired; the carriers stay out of the
+        # count, so 2 < STUB_MIN_REPEAT refuses
+        with tempfile.TemporaryDirectory() as td:
+            src = self._build(td, stubs=2, chapters=5, carriers=4)
             dst = Path(td) / "out.epub"
             report = repair_epub(src, dst, RepairFlags(strip_stub_docs=True))
         self.assertNotIn("stub_docs_dropped", report.fixes)

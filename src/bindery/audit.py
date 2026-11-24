@@ -1294,7 +1294,12 @@ def _visible_chars(html: str) -> int:
 # whole-document text welded unrelated docs into a fake stub class (the Great
 # Change divider-page misfire, issue #1). An image-carrier rule (empty body
 # text, an <img>/<image> present) marks divider pages: furniture, never
-# stubs. Mirrored by epub._stub_body_text / epub._stub_is_image_carrier.
+# stubs. Mirrored by epub._stub_body_text / epub._stub_is_image_carrier, with
+# one deliberate divergence since 2026-11-23: the repair side exempts ANY
+# image carrier (placeholder text on an image page never licenses a drop;
+# the oceanofpdf cover that read as the stub class), while this audit side
+# keeps the empty-text carrier rule so an ad-stamped gutting still reads as
+# the placeholder class it is.
 _BODY_SPAN_RE = re.compile(r"<body\b[^>]*>(.*)</body>", re.IGNORECASE | re.DOTALL)
 _IMAGE_CARRIER_RE = re.compile(r"<(?:img|image)\b", re.IGNORECASE)
 

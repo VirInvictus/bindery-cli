@@ -227,20 +227,27 @@ part of the default pipeline:
   anchored to real start tags and never touches CDATA sections or comments, so prose
   that merely mentions `epub:type="chapter"` is preserved.
 - **`--downgrade-epub3-tags`**: downgrade EPUB3/HTML5 semantic elements to their EPUB2
-  equivalents (`figure`/`section` to `div`, `figcaption` to `p`), keeping existing
-  classes and appending the semantic name (`class="figure"`) as the styling hook.
+  equivalents (`figure`/`section`/`nav`/`header` to `div`, `figcaption` to `p`), keeping
+  existing classes and appending the semantic name (`class="figure"`) as the styling hook.
   Names a stylesheet styles as an element selector are protected book-wide
   (`css_protected_tags`/`style_block_tags` are parameterized over the tag set), so
   styled formatting can never be silently destroyed; a protected book keeps its
   RSC-005 findings, which is the correct outcome. Comments and CDATA are never
   rewritten and the class merge cannot fire inside a `data-class` attribute
-  (v1.1.1).
+  (v1.1.1). nav and header joined v1.2.7: nav on the named RSC-005 element finding
+  (the EPUB3-on-EPUB2 toc/landmarks/page-list class), header through the unmasking
+  door (epubcheck never reported it while the enclosing illegal `<section>` held the
+  parse, so the section->div repair surfaced the findings; one gate pass must
+  converge).
 
 Both EPUB2-targeted fixes are gated on the package version carried in the OPF: they
 fire on EPUB 2 packages (major version 2 or 1) and are inert on EPUB 3 packages and
 when no version can be read, where their target defects do not exist and firing them
 would strip legal attributes and downgrade legal elements (the 2026-09-08 sweep found
-every EPUB3 book in an `--all` sweep taking exactly that damage).
+every EPUB3 book in an `--all` sweep taking exactly that damage). The version read
+accepts a namespace-prefixed package element (`<opf:package version="2.0">` is an
+EPUB 2 declaration; v1.2.7 -- the bare-`<package` spelling left every prefixed OPF
+unversioned and both fixes inert).
 - **`--unwrap-illegal-tags`**: delete `<st> <sentence> <o> <w> <pagebreak>` tags outright,
   inner text preserved. Its CSS precondition is enforced by the library itself:
   `transforms.css_protected_tags` scans every stylesheet entry in the book (nested at-rules
@@ -268,7 +275,11 @@ every EPUB3 book in an `--all` sweep taking exactly that damage).
   to be pruned, issue #10). The spine protection is derived from the very text the
   prune reads, never snapshotted earlier: `--fix-manifest-ids` may have renamed item
   ids and spine idrefs ahead of it in the OPF pipeline, and a guard describing the old
-  spelling protects nothing.
+  spelling protects nothing. Since v1.2.7 the prune also drops OPF guide `<reference>`
+  elements naming the files it confirmed absent (`prune_guide_refs_to`; a left-behind
+  reference would read OPF-031 + RSC-007 -- errors the prune manufactured), the same
+  href-edge sweep the stub cascade and the shell prune run beside their id-edge
+  rewrites.
 - **`--strip-dead-font-faces`** (v1.2.0, issue #27): drop every `@font-face` block in
   a stylesheet whose `url()` references ALL miss the archive (RSC-007 raised from CSS
   url(): ebook-convert azw3->epub carries the source's font declarations without the
@@ -680,9 +691,9 @@ Since this removes visible text from the reading experience, it is lossy by desi
 Strips known producer and redistributor watermarks out of EPUBs (e.g. OceanofPDF.com, ABC Amber LIT Converter). The removal is a balanced-element surgery rather than regex slicing: it locates the stamp and deletes the outermost wrapper whose *entire visible text* is the watermark, ensuring prose that merely mentions the URL is preserved. Also drops known zero-byte marker files. Like other lossy operations, this is verified via `no_worse`.
 
 ### Opt-in, lossy: stub-document strip (`--strip-stub-docs`)
-Drops spine documents whose entire visible BODY text is one identical short placeholder repeated across the spine: the Bookmate/DRM-sample export whose chapters are all the same "content unavailable" notice, valid XHTML that epubcheck passes. The identity rule mirrors the emptytext analyzer's placeholder signals and is deliberately conservative: a candidate doc's visible body text is 12-600 characters (short, not blank) and IDENTICAL to the text of at least two other spine docs, and the class covers at least 30% of the spine; only the single most common repeated class qualifies. The pool is the `<body>` span, not the whole document (whole document when a doc has none; a converter stamps the same head `<title>` on every shell page, which used to weld unrelated docs into a fake stub class), and an image-carrier page (empty body text, an `<img>`/`<image>` present) is exempt outright: those are illustrated part-divider pages, furniture the strip must never delete (the Great Change misfire, 2026-10-05).
+Drops spine documents whose entire visible BODY text is one identical short placeholder repeated across the spine: the Bookmate/DRM-sample export whose chapters are all the same "content unavailable" notice, valid XHTML that epubcheck passes. The identity rule mirrors the emptytext analyzer's placeholder signals and is deliberately conservative: a candidate doc's visible body text is 12-600 characters (short, not blank) and IDENTICAL to the text of at least two other spine docs, and the class covers at least 30% of the spine; only the single most common repeated class qualifies. The pool is the `<body>` span, not the whole document (whole document when a doc has none; a converter stamps the same head `<title>` on every shell page, which used to weld unrelated docs into a fake stub class), and an image-carrier page (an `<img>`/`<image>` present, whatever short text it carries) is exempt outright -- exempt from the license count AND from the drop, so placeholder text stamped onto an image page never licenses anything (v1.2.7: the oceanofpdf shells stamp a one-line ad on every page they gut, and the cover/titlepage are image carriers the book needs): those are illustrated part-divider pages, furniture the strip must never delete (the Great Change misfire, 2026-10-05).
 
-The drop cascades fully: the placeholder archive entries, their manifest items and spine itemrefs (with every package edge rewritten), their NCX navPoints (the always-on playOrder resequencing heals the sequence afterward), and their nav toc `<li>` entries. Refusals, each reported as a no-op: no repeated class, the class under the fraction bar, and the class covering the whole spine (a book whose every spine doc is the same stub is EMPTY; it needs a re-source, never a repair). Accepted under the `no_worse` bar with the partial rule intact.
+The drop cascades fully: the placeholder archive entries, their manifest items and spine itemrefs (with every package edge rewritten), their NCX navPoints (the always-on playOrder resequencing heals the sequence afterward), their nav toc `<li>` entries, and the OPF guide `<reference>` elements naming a dropped file (v1.2.7: a reference left behind would read OPF-031 + RSC-007 on the pruned book -- errors the drop manufactured; `prune_guide_refs_to` drops it with the manifest prune and the shell prune wired the same way). Refusals, each reported as a no-op: no repeated class, the class under the fraction bar, and the class covering the whole spine (a book whose every spine doc is the same stub is EMPTY; it needs a re-source, never a repair). Accepted under the `no_worse` bar with the partial rule intact.
 
 When the stamp link sits inline (no clean wrapper), the bare `<a>` element may be
 deleted only when the match demonstrably holds nothing but the stamp: a tag-free

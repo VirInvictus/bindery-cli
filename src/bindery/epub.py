@@ -902,6 +902,49 @@ def prune_dangling_edges(opf_text: str, pruned_ids: set[str]) -> tuple[str, int]
     return out, count
 
 
+def prune_guide_refs_to(
+    opf_text: str, opf_dir: str, gone_paths: set[str]
+) -> tuple[str, int]:
+    """Drop the guide `<reference>` elements whose target path is in
+    `gone_paths` (resolved archive paths, fragment-dropped).
+
+    The prune cascade's href edge. `prune_dangling_edges` rewrites the edges
+    that name pruned IDS (spine@toc, media-overlay, fallback, cover meta);
+    the guide references files by HREF, and a reference whose file a prune
+    dropped (the stub cascade) or whose absence a prune confirmed (the
+    manifest and shell prunes) reads OPF-031 + RSC-007 after the prune --
+    errors the prune manufactured, exactly what the gate then rejects the
+    book for (2026-11-23, the Morimoto cookbook: the stub drop amputated the
+    guide's cover/start references). The resource is gone; re-pointing at a
+    guess would fabricate a reference, so the element drops whole. The
+    comparison reuses `_resolve_href`'s decode chain (attribute entities,
+    then the fragment split) against the OPF's own directory, so an escaped
+    href matches its raw entry spelling. Comments and CDATA are never
+    rewritten (the strip_broken_guide_fragments shape: a commented-out
+    reference is not a live one). Returns (text, count).
+    """
+    count = 0
+
+    def fix(part: str) -> tuple[str, int]:
+        nonlocal count
+        before = count
+
+        def repl(m: re.Match) -> str:
+            nonlocal count
+            hm = _HREF_ATTR_RE.search(m.group(0))
+            if not hm:
+                return m.group(0)
+            resolved = _resolve_href(opf_dir, hm.group(2))
+            if resolved is None or resolved not in gone_paths:
+                return m.group(0)
+            count += 1
+            return ""
+
+        return _GUIDE_REF_RE.sub(repl, part), count - before
+
+    return outside_protected_map(opf_text, fix)
+
+
 # The media-type map: image types with an unambiguous magic at offset 0
 # (the aggregator prevalence class: a jpg stamped image/png), plus the v0.56.0
 # font half (issue #17's CSS-007 lane: @font-face srcs whose OPF declaration
@@ -984,8 +1027,14 @@ def strip_epub3_attributes(text: str) -> tuple[str, int]:
     return strip_attrs_in_start_tags(text, _EPUB3_ATTR_RE)
 
 
+# The optional namespace prefix is the issue #20 matcher lesson: some
+# writers declare `<opf:package version="2.0">`, and the bare-`<package`
+# spelling silently left every prefixed OPF unversioned -- the EPUB2-targeted
+# fixes unlicensed on books whose whole error mass is EPUB3-on-EPUB2
+# (2026-11-23, the Morimoto cookbook: 2,600 findings inert behind one prefix).
 _PACKAGE_VERSION_RE = re.compile(
-    r"""<package\b[^>]*?\bversion=(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE
+    r"""<(?:[\w.-]+:)?package\b[^>]*?\bversion=(?:"([^"]*)"|'([^']*)')""",
+    re.IGNORECASE,
 )
 
 
@@ -997,7 +1046,8 @@ def package_version(opf_text: str | None) -> int | None:
     only in packages declared below EPUB 3, and firing them on an EPUB3 book
     strips legal attributes and downgrades legal elements (reported
     2026-09-08). An absent or unparseable version licenses nothing: the fix
-    would be unmoored from its charter.
+    would be unmoored from its charter. A namespace-prefixed package element
+    reads the same as a bare one (see _PACKAGE_VERSION_RE).
     """
     if opf_text is None:
         return None
@@ -1013,8 +1063,25 @@ def package_version(opf_text: str | None) -> int | None:
 
 # The EPUB3/HTML5 semantic elements an EPUB2 (XHTML 1.1) document cannot
 # carry, and the element each downgrades to. figcaption becomes a paragraph
-# (its content is phrasing text); figure and section become divs.
-EPUB3_DOWNGRADE_TAGS = {"figure": "div", "figcaption": "p", "section": "div"}
+# (its content is phrasing text); figure, section, nav and header become
+# divs. nav joined on a named finding (RSC-005 "element nav not allowed
+# anywhere", the EPUB3-on-EPUB2 conversion class: 2026-11-23, the Morimoto
+# cookbook's toc/landmarks/page-list navs) and follows the same rules as
+# section: the children are block-level and stay untouched, the semantic
+# name lands in class as the styling hook, and a stylesheet that styles the
+# name as an element selector protects it book-wide. header joined the same
+# day through the unmasking door: epubcheck never reported it while the
+# enclosing illegal <section> held the file's parse, so the source census
+# showed no header findings -- the section→div repair surfaced 91 of them
+# (RSC-005 "element header not allowed anywhere"), and one gate pass must
+# converge, not trade one named class for another.
+EPUB3_DOWNGRADE_TAGS = {
+    "figure": "div",
+    "figcaption": "p",
+    "section": "div",
+    "nav": "div",
+    "header": "div",
+}
 
 
 def _append_class(attrs: str, name: str) -> str:
@@ -1043,9 +1110,10 @@ def downgrade_epub3_tags(
     """Downgrade EPUB3/HTML5 semantic elements to their EPUB2 equivalents.
 
     `<figure>` becomes a `<div class="figure ...">`, `<figcaption>` a
-    `<p class="figcaption ...">`, `<section>` a `<div class="section ...">`;
-    existing classes are kept so class-selector stylesheets keep working, and
-    the semantic name is appended as the styling hook. Names in
+    `<p class="figcaption ...">`, `<section>` a `<div class="section ...">`,
+    `<nav>` a `<div class="nav ...">`; existing classes are kept so
+    class-selector stylesheets keep working, and the semantic name is
+    appended as the styling hook. Names in
     `protected_tags` (element-selector references in the book's stylesheets,
     see transforms.css_protected_tags with tags=EPUB3_DOWNGRADE_TAGS) are left
     untouched: if a book styles `figure { ... }`, downgrading it would change
@@ -1698,10 +1766,31 @@ def _stub_body_text(html: str) -> str:
     return _stub_visible_text(m.group(1)) if m else _stub_visible_text(html)
 
 
-def _stub_is_image_carrier(html: str, body_text: str) -> bool:
-    """True for a doc with no body text that carries an image element: a
-    divider page (furniture), never a stub."""
-    return body_text == "" and bool(_STUB_IMAGE_CARRIER_RE.search(html))
+def _stub_is_image_carrier(html: str) -> bool:
+    """True for a doc that carries an image element: furniture (a divider,
+    a cover), never a stub, whatever short text it carries. The exemption
+    launched scoped to docs with EMPTY body text, and placeholder text
+    leaked past it: the oceanofpdf shells stamp a one-line ad link on every
+    page they gut, so the cover and titlepage -- image carriers the book
+    needs -- counted as the stub class and dropped with their guide
+    references left dangling (2026-11-23, the Morimoto cookbook)."""
+    return bool(_STUB_IMAGE_CARRIER_RE.search(html))
+
+
+def _manifest_href_map(opf_text: str, opf_dir: str) -> dict[str, str]:
+    """Manifest item id -> resolved archive path, resolved the way the text
+    writes its hrefs (pre-rename callers get pre-rename paths). Shared by
+    the stub detector and the prune branches' guide-reference sweeps."""
+    out: dict[str, str] = {}
+    for m in _ITEM_TAG_RE.finditer(opf_text):
+        tag = m.group(0)
+        idm = _XML_ID_RE.search(tag)
+        hm = _HREF_ATTR_RE.search(tag)
+        if idm and hm:
+            resolved = _resolve_href(opf_dir, hm.group(2))
+            if resolved is not None:
+                out[idm.group(3)] = resolved
+    return out
 
 
 def detect_stub_docs(z: zipfile.ZipFile, opf_text: str, opf_dir: str) -> frozenset[str]:
@@ -1711,26 +1800,22 @@ def detect_stub_docs(z: zipfile.ZipFile, opf_text: str, opf_dir: str) -> frozens
 
     Refusals (empty set): no repeated short class, or the class IS the whole
     spine (that book is EMPTY: it needs a re-source, never a repair). A doc
-    that cannot be read is never a stub, and an image-carrier page (no body
-    text, an <img> present) is furniture, never a stub: dropping it would
-    delete real illustrations (the Great Change divider-page misfire,
-    2026-10-05). Returns resolved archive paths so the manifest, NCX, nav,
-    and archive-copy passes agree on the targets.
+    that cannot be read is never a stub, and an image-carrier page (an
+    <img>/<image> present, whatever short text it carries) is furniture,
+    never a stub: dropping it would delete real illustrations (the Great
+    Change divider-page misfire, 2026-10-05) or the book's own cover (the
+    oceanofpdf ad shells stamp placeholder text onto every page they gut,
+    2026-11-23). Carriers stay out of the license count and out of the
+    returned set even when their text matches the class. Returns resolved
+    archive paths so the manifest, NCX, nav, and archive-copy passes agree
+    on the targets.
     """
     from collections import Counter
 
     spine_ids = [m.group(3) for m in _IDREF_ATTR_RE.finditer(opf_text)]
     if not spine_ids:
         return frozenset()
-    id_to_href: dict[str, str] = {}
-    for m in _ITEM_TAG_RE.finditer(opf_text):
-        tag = m.group(0)
-        idm = _XML_ID_RE.search(tag)
-        hm = _HREF_ATTR_RE.search(tag)
-        if idm and hm:
-            resolved = _resolve_href(opf_dir, hm.group(2))
-            if resolved is not None:
-                id_to_href[idm.group(3)] = resolved
+    id_to_href = _manifest_href_map(opf_text, opf_dir)
     nameset = set(z.namelist())
     hrefs = [id_to_href.get(i) for i in spine_ids]
     texts: list[str] = []
@@ -1745,7 +1830,7 @@ def detect_stub_docs(z: zipfile.ZipFile, opf_text: str, opf_dir: str) -> frozens
         if doc:
             body = _stub_body_text(doc)
             texts.append(body)
-            carriers.append(_stub_is_image_carrier(doc, body))
+            carriers.append(_stub_is_image_carrier(doc))
         else:
             texts.append("")
             carriers.append(False)
@@ -1762,7 +1847,9 @@ def detect_stub_docs(z: zipfile.ZipFile, opf_text: str, opf_dir: str) -> frozens
     if n == len(texts):
         return frozenset()  # every doc is the same stub: EMPTY book, re-source
     return frozenset(
-        hrefs[i] for i, t in enumerate(texts) if t == stub_text and hrefs[i]
+        hrefs[i]
+        for i, t in enumerate(texts)
+        if t == stub_text and not carriers[i] and hrefs[i]
     )
 
 
@@ -3158,10 +3245,19 @@ def repair_epub(
                     # spine itemrefs that name them drop together. The NCX
                     # half (navPoint prune + forced playOrder re-sequence)
                     # runs in the NCX branch.
+                    href_map = _manifest_href_map(text, opf_dir)
                     text, n = prune_dead_spine_items(text, dead_spine_ids)
                     if n:
                         report.add({"dead_spine_items_pruned": n})
                         opf_changed = True
+                    # the guide's href edges: a reference to a confirmed-dead
+                    # file drops instead of reading OPF-031 + RSC-007
+                    gone = {href_map[i] for i in dead_spine_ids if i in href_map}
+                    if gone:
+                        text, n = prune_guide_refs_to(text, opf_dir, gone)
+                        if n:
+                            report.add({"dead_spine_guide_refs_dropped": n})
+                            opf_changed = True
                 if flags.unbound_prefix:
                     # First in the branch: the unbound prefix makes the whole
                     # package unparseable, so the parseability scar comes off
@@ -3198,6 +3294,7 @@ def repair_epub(
                     # resolved against it reads as missing — the issue #10
                     # collapse (present_src mirrors the content-doc prune
                     # above for exactly this reason).
+                    href_map = _manifest_href_map(text, opf_dir)
                     text, n, pruned_ids = prune_missing_manifest_items(
                         text, opf_dir, present_src if space_renames else present
                     )
@@ -3208,6 +3305,15 @@ def repair_epub(
                     if n:
                         report.add({"prune_edges_rewritten": n})
                         opf_changed = True
+                    # the guide's href edges (built before the prune erased
+                    # the items): a pruned item's reference drops instead of
+                    # reading OPF-031 + RSC-007
+                    gone = {href_map[i] for i in pruned_ids if i in href_map}
+                    if gone:
+                        text, n = prune_guide_refs_to(text, opf_dir, gone)
+                        if n:
+                            report.add({"prune_guide_refs_dropped": n})
+                            opf_changed = True
                 if flags.declare_missing and undeclared:
                     text, n = declare_missing_manifest_items(text, opf_dir, undeclared)
                     if n:
@@ -3245,6 +3351,12 @@ def repair_epub(
                     text, n = prune_dangling_edges(text, stub_ids)
                     if n:
                         report.add({"stub_edges_rewritten": n})
+                        opf_changed = True
+                    # the guide's href edges: a dropped stub's guide reference
+                    # would read OPF-031 + RSC-007 on the pruned book
+                    text, n = prune_guide_refs_to(text, opf_dir, set(stub_hrefs))
+                    if n:
+                        report.add({"stub_guide_refs_dropped": n})
                         opf_changed = True
                 if flags.fix_media_types:
 

@@ -778,6 +778,76 @@ class FlagEndToEndTests(unittest.TestCase):
             self._fixes_for("--strip-stub-docs")["stub_docs_dropped"], 3
         )
 
+    def test_strip_stub_docs_keeps_carrier_cover_and_drops_dangling_guide_ref(self):
+        # the Morimoto shape (2026-11-23): a cover whose only text is the
+        # stub class's ad line must survive the drop (image carrier), and a
+        # guide reference naming a genuinely dropped stub must go with it
+        # instead of reading OPF-031 + RSC-007 on the pruned book
+        entries = {
+            "OEBPS/content.opf": _opf(
+                [_item(f"s{i}", f"s{i}.xhtml") for i in range(3)]
+                + [_item(f"c{i}", f"c{i}.xhtml") for i in range(2)]
+                + [_item("cov", "cover.xhtml")],
+                [_ref(f"s{i}") for i in range(3)]
+                + [_ref(f"c{i}") for i in range(2)]
+                + [_ref("cov")],
+                guide=(
+                    "<guide>"
+                    '<reference type="text" href="s0.xhtml"/>'
+                    '<reference type="cover" href="cover.xhtml"/>'
+                    "</guide>"
+                ),
+            ),
+            "OEBPS/s0.xhtml": STUB_DOC,
+            "OEBPS/s1.xhtml": STUB_DOC,
+            "OEBPS/s2.xhtml": STUB_DOC,
+            "OEBPS/cover.xhtml": _doc(
+                '<img alt="image" src="cover.jpg"/>'
+                "<p>This content is not available.</p>"
+            ),
+            "OEBPS/c0.xhtml": _doc(
+                "<p>Chapter one begins here with plenty of real prose so the "
+                "book has honest chapters beside its placeholder pages.</p>"
+            ),
+            "OEBPS/c1.xhtml": _doc(
+                "<p>Chapter two continues the real text with its own words, "
+                "long enough that no analyzer would call it a placeholder.</p>"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.epub"
+            dst = Path(td) / "out.epub"
+            out = Path(td) / "out.json"
+            with zipfile.ZipFile(src, "w") as z:
+                z.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                z.writestr("META-INF/container.xml", CONTAINER)
+                for entry, data in entries.items():
+                    z.writestr(entry, data)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = main(
+                    [
+                        "repair",
+                        str(src),
+                        str(dst),
+                        "--strip-stub-docs",
+                        "--no-validate",
+                        "--json",
+                        str(out),
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            record = json.loads(out.read_text())
+            fixes = record["fixes"]
+            self.assertEqual(fixes.get("stub_docs_dropped"), 3)
+            self.assertEqual(fixes.get("stub_guide_refs_dropped"), 1)
+            with zipfile.ZipFile(dst) as z:
+                names = z.namelist()
+                opf = z.read("OEBPS/content.opf").decode()
+        self.assertIn("OEBPS/cover.xhtml", names)
+        self.assertIn('href="cover.xhtml"', opf)
+        self.assertNotIn('href="s0.xhtml"', opf)
+
     def test_fix_svg_dup_ids(self):
         self.assertGreaterEqual(
             self._fixes_for("--fix-svg-dup-ids")["fix_svg_dup_ids"], 1

@@ -1,5 +1,55 @@
 # bindery-cli Patch Notes
 
+## v1.2.7 (2026-11-23)
+
+### The EPUB2 fixes read a prefixed package, image carriers keep their placeholder text, and every prune drops the guide references it orphans (the Morimoto cookbook)
+
+A new testing_facility book (Mastering the Art of Japanese Home Cooking, an
+oceanofpdf-flavored EPUB 2.0 package carrying EPUB3 markup) rejected `--all`
+with a rising gate: 0f/8e/0w -> 0f/11e/0w. The gate held; the repair pass
+itself had manufactured the regression it was rejected for. Three defects, one
+shared lesson (the book now repairs accepted, 0f/8e/0w -> 0f/3e/0w):
+
+- **The version gate reads a namespace-prefixed package element.** The book's
+  OPF declares `<opf:package version="2.0">` and `_PACKAGE_VERSION_RE` matched
+  only bare `<package`, so `package_version()` returned None and
+  `--strip-epub3-attrs`/`--downgrade-epub3-tags` went inert on a book whose
+  uncapped error mass was 2,507 epub:type + 137 section + 5 nav + 1 hidden.
+  The issue #20 matcher lesson (package matchers accept the prefix) now covers
+  the version read too.
+- **The stub drop keeps image carriers whatever short text they carry.** The
+  v0.47.0 image-carrier exemption required EMPTY body text; the oceanofpdf
+  shells stamp a one-line ad link on every page they gut, so the COVER and
+  TITLEPAGE -- image carriers the book needs -- counted as the stub class and
+  dropped with 74 real shells. `_stub_is_image_carrier` now keys on the
+  `<img>`/`<image>` presence alone, and carriers stay out of the license count
+  and the returned set (placeholder text on an image page never licenses a
+  drop). The audit side deliberately keeps its empty-text rule: an ad-stamped
+  gutting still reads as the placeholder class it is. The Morimoto spine: 76
+  docs dropped pre-fix, 51 after -- 23 gutted-but-illustrated pages keep their
+  images.
+- **Every prune drops the guide references it orphans.** The stub drop removed
+  the cover's manifest item while the OPF guide still named
+  `text/9780062344397_Cover.xhtml`: 2x OPF-031 + 2x RSC-007, four of the
+  candidate's net-new errors. The new `prune_guide_refs_to` drops guide
+  `<reference>` elements whose target path a prune removed (the stub cascade)
+  or whose absence a prune confirmed (the manifest prune, the shell prune),
+  wired beside the id-edge rewrite on all three cascades and
+  comment/CDATA-protected like the guide's own fragment fixer.
+- **nav and header join the downgrade map.** nav joined on the named RSC-005
+  finding ("element nav not allowed anywhere"; the toc/landmarks/page-list
+  navs of the EPUB3-on-EPUB2 conversion class). header joined through the
+  unmasking door: epubcheck never reported it while the enclosing illegal
+  `<section>` held each file's parse, so the source census showed no header
+  findings and the section->div repair surfaced 91 of them -- one gate pass
+  must converge, not trade one named class for another. Both follow the
+  section rules (block children kept, the semantic name lands in class,
+  stylesheet protection book-wide: this book's own `nav#toc ol` protected its
+  navs, so those two findings stay, honestly, beside the charter-kept
+  `hidden` attribute).
+
+Suite: 1043 tests.
+
 ## v1.2.6 (2026-11-21)
 
 ### The strip never takes a document's own numbering (issue #38: Don Juan lost 62 stanza numbers)
