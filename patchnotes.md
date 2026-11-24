@@ -1,5 +1,71 @@
 # bindery-cli Patch Notes
 
+## v1.2.9 (2026-11-24)
+
+### The docs pass: one flag reference, a spec without history, a README that is the manual
+
+The documentation had grown by appending dated narrative to every file
+instead of being rewritten in place. An audit on 2026-11-24 measured it.
+AGENTS.md was 67 KB, with nine lines carrying 58% of it and 126 version
+references. The roadmap had regrown to 60 KB, six weeks after its previous
+minimization. spec.md opened "Library replacement" with an intro line and no
+body, omitted `audit shell` and audit's exit 3, and said `max_log_mb: 0`
+disables logging when it only disables rotation. And the flag reference
+existed twice, as the CLI's long help and as docs/repairs.md, two hand-written
+paraphrases that had drifted apart on six flags. This release is the cleanup.
+Behavior is unchanged apart from help text and the `--help-json` payload.
+
+- **One flag reference.** The long help in `_REPAIR_FLAG_TABLE` is now the
+  canonical text for all 45 opt-in flags: both paraphrases merged, every rule
+  kept, version and issue numbers left to this file. docs/repairs.md is
+  generated from the table (`scripts/render_repairs_doc.py`) and pinned to it
+  by tests/test_repairs_doc.py, the same pattern as the plugin zip. The six
+  stale help strings are corrected: the downgrade list lacked nav and header,
+  item properties lacked svg and the form trigger, pagination said three
+  safety nets, id-colons described only colons, and the delimiter encode and
+  the dead-font drop omitted keep rules the code enforces.
+- **The reference was verified claim by claim.** An independent pass checked
+  every statement against the code: 35 flags confirmed, 6 imprecise, 4 false
+  against a documented safety rule. The documentation now states what the
+  code does, and the four gaps are filed: #39 (`--fix-double-colon-tags` can
+  escape the next real tag), #40 (the watermark fallback deletes any short
+  tag-free stamp link, whatever its text), #41 (a document with no `<head>`
+  fills an empty SVG title), and #42 (`repair SRC DST` writes a no-gain
+  result). AGENTS.md lists them as known limitations until they are fixed.
+- **spec.md states present-tense behavior only.** The hollow Library
+  replacement section now carries the write contract (atomic replace,
+  backups, the two metadata.db doors). `audit shell` is in the verb signature
+  and described. Audit's exit 3, the oracle budget and retry, minimum Calibre
+  7.0, the cover analyzer's OPF-relative resolution, and the 32 MiB entry
+  refusal are stated. `--reserialize` moved into the flag inventory, and the
+  acceptance bars are stated once, in the gate section.
+- **README.md is the manual:** a contents list, a quick start, one section
+  per command, an epubcheck-code-to-flag table, an exit-code table, and
+  troubleshooting. "Nothing runs ungated" contradicted the Install section
+  and is corrected. `audit shell` is documented there and in docs/audits.md.
+- **AGENTS.md is rules, decisions, and constraints** (67 KB to 32 KB). It
+  absorbed the roadmap's decision records and records the docs layout.
+- **roadmap.md is the plan plus a one-line-per-batch ledger** (501 lines to
+  280). Open items are rewritten to their current state, and the 2.0 plan's
+  groundwork text no longer describes epubcheck 5.4 as side-by-side.
+- **Help surfaces.** The package and audit module docstrings and audit's help
+  say ten analyzers, not nine. `--help-json`'s exit contract gains observe and
+  run phase3, and its exit-1 line no longer says the library and run verbs
+  exit 1 on trouble (they exit 2). The new test module rides CI's 3.12 and
+  3.13 leg.
+- **Logo and screenshot.** The logo is an open book with a sewn gutter, gold
+  thread on the Kanagawa tile. The README screenshot is a real dry run over a
+  synthetic library with invented titles. The old one showed real library
+  titles and Calibre ids; regenerating it had been an open roadmap item since
+  September.
+- **Housekeeping.** docs/OBSERVE-RESEARCH.md moved to
+  docs/research/observe-error-code-surgery.md, with a stub at the old path
+  because published entries below link there. project.done is removed (the
+  September completion report; its decisions live in AGENTS.md). Em-dashes
+  are gone from every document that is not a frozen entry.
+
+Suite: 1046 tests.
+
 ## v1.2.8 (2026-11-24)
 
 ### The stub drop's existence set reaches the prune: links into dropped stubs read as absent (the Goldfinger ten)

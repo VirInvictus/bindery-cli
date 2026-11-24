@@ -2,48 +2,47 @@
 
 The contract. Read this before changing semantics.
 
+This document states present-tense behavior only. How a rule came to be, and the
+specimens and measurements behind it, live in `patchnotes.md` under the release that
+shipped it. The user-facing reference for each opt-in flag is `docs/repairs.md`,
+generated from the CLI's own flag table; this document remains the contract a change is
+checked against.
+
 ## Scope
 
 bindery-cli repairs well-formedness and a few specific validity defects in EPUBs. It is
-deliberately narrow: every transform is deterministic and semantics-preserving, and
-the result is only kept when epubcheck confirms it improved. Deterministic is meant at
-the byte level: repairing the same book twice, in separate processes, produces
-identical archives. bindery-cli does not reflow,
-restyle, re-compress, or restructure content, and it does not attempt to fix arbitrary
-schema (RSC-005) violations, which are usually harmless to readers and not safely
-mechanizable.
+deliberately narrow: every transform is deterministic and semantics-preserving, and the
+result is only kept when epubcheck confirms it improved. Deterministic is meant at the
+byte level: repairing the same book twice, in separate processes, produces identical
+archives. bindery-cli does not reflow, restyle, re-compress, or restructure content, and
+it does not attempt to fix arbitrary schema (RSC-005) violations, which are usually
+harmless to readers and not safely mechanizable.
 
-The deliberate exceptions to "semantics-preserving" come in opt-in groups. The thirty-five
-**structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
-`--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
+The deliberate exceptions to "semantics-preserving" come in opt-in groups. The
+thirty-five **structural repairs** (`--fix-empty-body`, `--fix-missing-title`,
+`--fix-id-colons`, `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
 `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
 `--prune-missing-resources`, `--declare-missing-items`, `--strip-broken-anchors`,
-`--prune-dangling-ncx-targets`, `--encode-url-spaces`,
-`--fix-container`, `--fix-media-types`, `--fix-cover`, `--fix-comment-double-hyphen`,
-`--fix-svg-dup-ids`, `--fix-duplicate-ids`, `--fix-cdata-terminator`,
-`--fix-misnested-inline`,
+`--prune-dangling-ncx-targets`, `--encode-url-spaces`, `--fix-container`,
+`--fix-media-types`, `--fix-cover`, `--fix-comment-double-hyphen`, `--fix-svg-dup-ids`,
+`--fix-duplicate-ids`, `--fix-cdata-terminator`, `--fix-misnested-inline`,
 `--fix-stray-close`, `--fix-unterminated-attr`, `--fix-unbound-prefix`,
 `--fix-unique-identifier`, `--fix-package-version`, `--fix-doctype`,
 `--prune-invalid-guide-refs`, `--fix-item-properties`,
-`--strip-presentational-attrs`, `--encode-ref-brackets`,
-`--encode-ref-delims`, `--strip-dead-font-faces`,
-`--prune-dead-spine`) alter
-markup structure or fabricate minimal content; the four
-**lossy modes** (`--strip-pagination`, `--strip-broken-tags`, `--strip-watermarks`,
-`--strip-stub-docs`) remove
-content a converter injected rather than content the author wrote. A fourth group of
-**safe opt-ins** (`--fix-ids`, `--add-img-alt`, `--strip-bad-attrs`,
-`--escape-unknown-entities`, `--fix-double-colon-tags`) repairs without altering
-visible markup, and
-`--reserialize` re-parses still-malformed documents whole. The default pass runs
-ONLY the five well-formedness transforms above, the NCX pipeline, and the mimetype
-fix: nothing else. (v0.14–v0.16 briefly
-ran the structural repairs unconditionally, which broke this contract; v0.17.0 restored
-it.) The `--all` flag enables every opt-in transform (safe, structural, and lossy) for a
-comprehensive repair pass. Internally the selection travels as one `RepairFlags`
-object (`epub.RepairFlags`, v0.46.0) built once per verb from the parsed flags; that
-is structure, not surface: the CLI flags above and the JSON records below are the
-contract, and both are unchanged.
+`--strip-presentational-attrs`, `--encode-ref-brackets`, `--encode-ref-delims`,
+`--strip-dead-font-faces`, `--prune-dead-spine`) alter markup structure or fabricate
+minimal content; the four **lossy modes** (`--strip-pagination`,
+`--strip-broken-tags`, `--strip-watermarks`, `--strip-stub-docs`) remove content a
+converter injected rather than content the author wrote. A third group, the **safe
+opt-ins** (`--fix-ids`, `--add-img-alt`, `--strip-bad-attrs`,
+`--escape-unknown-entities`, `--fix-double-colon-tags`), repairs without altering
+visible markup, and `--reserialize` re-parses still-malformed documents whole. The
+default pass runs ONLY the five well-formedness transforms below, the NCX pipeline, and
+the mimetype fix: nothing else. The `--all` flag enables every opt-in transform (safe,
+structural, and lossy) for a comprehensive repair pass. Internally the selection
+travels as one `RepairFlags` object (`epub.RepairFlags`) built once per verb from the
+parsed flags; that is structure, not surface: the CLI flags above and the JSON records
+below are the contract, and both are unchanged.
 
 ## Transforms
 
@@ -52,14 +51,13 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
 1. **strip_prolog_junk**: remove a BOM or stray characters before the first `<`.
    Leading *whitespace* counts as junk only when an XML declaration follows it, since
    a declaration must be the very first thing in the document; before a DOCTYPE or the
-   root element it is legal prolog whitespace and is left in place. (Stripping it
-   anyway counted a fix on an undamaged document, which forced the archive rewrite's
-   lossy `decode("utf-8", "replace")` round-trip for no gain.) Calibre's inline-CSS
-   wrapper `/*<![CDATA[*/ ... /*]]>*/` is protected as one unit (v0.54.0): the bare
-   CDATA span ends inside the closing `/*]]>`, which left the trailing `*/` outside
-   the protection map, where the prolog strip amputated it -- a phantom fix
-   truncating the CSS comment (one CSS-008 "Premature end of file" per wrapped
-   file; 111 whole-library gate rejections).
+   root element it is legal prolog whitespace and is left in place (stripping it would
+   count a fix on an undamaged document and force the archive rewrite's lossy
+   `decode("utf-8", "replace")` round-trip for no gain). Calibre's inline-CSS
+   wrapper `/*<![CDATA[*/ ... /*]]>*/` is protected as one unit: a bare CDATA span
+   ends inside the closing `/*]]>`, which leaves the trailing `*/` outside the
+   protection map for the prolog strip to amputate, truncating the CSS comment (one
+   CSS-008 "Premature end of file" per wrapped file).
 2. **drop_duplicate_xmlns**: keep only the first `xmlns="..."` on the root `<html>`.
 3. **escape_bare_amp**: replace a `&` that does not start a valid entity or character
    reference with `&amp;`.
@@ -74,24 +72,18 @@ Applied to content documents (`.xhtml`, `.html`, `.htm`, `.xml`), in order:
    change what renders. Removed end tags are counted in the fix total.
 
 Applied to the NCX sidecar (`.ncx`): strip_prolog_junk, escape_bare_amp,
-fix_named_entities, plus **dtb:uid sync** (rewriting the NCX's `dtb:uid`
-meta to match the OPF's unique identifier when they drift, NCX-001; the
-matcher reads the meta under a namespace prefix too since v0.57.1 --
-2010-era producers spell every element `<ncx:meta>`, and a prefixed
-`dtb:uid` carrier used to survive an otherwise-clean repair as the
-book's last finding -- and the `--only ncx` selector reads the same
-matchers) and
-**fix_ncx_playorder** (resequencing `playOrder` values so the NCX
-satisfies epubcheck's playOrder contract: elements whose `<content src>`
-point at the same target share one value, distinct targets carry distinct
-values, and the value set is contiguous 1..K across navPoint,
-navTarget, and pageTarget elements together. Contract-gated since v0.54.0:
-an NCX that already satisfies the contract is returned untouched -- the
-previous unconditional 1..N renumbering rewrote valid TOCs into violations
-(splitting duplicate-target sharing, colliding with pageTarget sequences;
-211 of the 579 books it fired on gate-rejected, against 17 real fixes).
-nav-label text is never touched; a navPoint with no playOrder attribute is
-not part of the sequence).
+fix_named_entities, plus **dtb:uid sync** (rewriting the NCX's `dtb:uid` meta to match
+the OPF's unique identifier when they drift, NCX-001; the matcher reads the meta under
+a namespace prefix too, since some producers spell every element `<ncx:meta>`; and the
+`--only ncx` selector reads the same matchers) and **fix_ncx_playorder** (resequencing
+`playOrder` values so the NCX satisfies epubcheck's playOrder contract: elements whose
+`<content src>` point at the same target share one value, distinct targets carry
+distinct values, and the value set is contiguous 1..K across navPoint, navTarget, and
+pageTarget elements together. The pass is contract-gated: an NCX that already satisfies
+the contract is returned untouched, because an unconditional 1..N renumbering rewrites
+valid TOCs into violations, splitting duplicate-target sharing and colliding with
+pageTarget sequences. nav-label text is never touched; a navPoint with no playOrder
+attribute is not part of the sequence).
 With `--fix-ids`, ids in the NCX that are not valid XML names (digit-led, as when a
 converter stamps navPoint ids from UUIDs; colon-bearing) are renamed with the same
 `id_` scheme as OPF manifest ids. NCX ids are internal to the NCX (nothing in the
@@ -102,8 +94,8 @@ The OPF is located via `META-INF/container.xml` (falling back to the first `.opf
 in the archive). The default pass leaves it untouched, to keep Calibre's embedded
 metadata pristine; the opt-in `--fix-ids`, `--strip-epub3-attrs`, `--fix-page-map`,
 `--prune-missing-resources`, `--declare-missing-items`, and `--encode-url-spaces`
-each edit it when requested,
-and the human-facing `dc:` metadata is never altered by any of them.
+each edit it when requested, and the human-facing `dc:` metadata is never altered by
+any of them.
 
 ### Opt-in: escape unknown entities (`--escape-unknown-entities`)
 
@@ -130,18 +122,18 @@ normal gate applies.
 ### Opt-in: id rewrite (`--fix-ids`)
 
 A safe opt-in: it renames manifest `item` ids that are not valid XML names
-(digit-led, as when a converter stamps ids from UUIDs; colon-bearing) with the
-deterministic `id_` scheme, and updates every reference to them: spine `idref`
-and `toc`, item `fallback` and `media-overlay`, and the EPUB 2 cover meta, in
-both quote styles. The reference matchers carry the same `data-*` lookbehind
-guard the id matchers do (v1.2.1): `data-fallback`, `data-media-overlay`,
-`data-toc`, and `data-content` values are arbitrary data and are never
-rewritten, whatever the rename plan contains. NCX ids are renamed by the same pass (`fix_ncx_ids`);
+(digit-led, as when a converter stamps ids from UUIDs; colon-bearing; or carrying any
+character outside the XML NameChar set) with the deterministic `id_` scheme, and
+updates every reference to them: spine `idref` and `toc`, item `fallback` and
+`media-overlay`, and the EPUB 2 cover meta, in both quote styles. The reference
+matchers carry the same `data-*` lookbehind guard the id matchers do: `data-fallback`,
+`data-media-overlay`, `data-toc`, and `data-content` values are arbitrary data and are
+never rewritten, whatever the rename plan contains. NCX ids are renamed by the same pass (`fix_ncx_ids`);
 NCName-invalid fragments follow the rename via `--fix-id-colons`' NCX half (the
-same predicate and `id_` rename as the content ids, v1.1.1). Href
-paths and filenames are untouched, and the human-facing `dc:` metadata is never
-altered. Rendering is unchanged (ids are invisible), but the OPF is edited, so it
-is off by default; the normal gate applies.
+same predicate and `id_` rename as the content ids). Href paths and filenames are
+untouched, and the human-facing `dc:` metadata is never altered. Rendering is
+unchanged (ids are invisible), but the OPF is edited, so it is off by default; the
+normal gate applies.
 
 ### Opt-in: strip bad attributes (`--strip-bad-attrs`)
 
@@ -158,19 +150,39 @@ byte-for-byte. The normal gate applies.
 
 An XML name can carry at most one colon (the QName production is
 `(NCName ':')? NCName`), so a pseudo-tag whose name contains `::` is never
-markup -- every occurrence is unescaped author text, and the parser dies on
+markup: every occurrence is unescaped author text, and the parser dies on
 it with a fatal RSC-016 (C++ code samples like `std::vector<std::shared_ptr>`
 whose converter escaped the trailing bracket but not the tag itself). With
 this flag both ends of the construct are escaped, restoring exactly the text
 the author wrote; the result renders identically to that intent. Real markup
-is unreachable by construction -- the double colon lives in the name grammar
--- and prose comparisons (`a < b`) never form the shape. Nested templates
-escape inner-first until stable (capped at sixteen passes) and a fully
-escaped nesting's trailing `>`s stay raw, which is legal text. The tail is
-bounded at 120 characters so an escaped-bracket construct cannot swallow
-prose plus real markup, and CDATA sections and comments are never rewritten.
-The normal gate applies.
+is unreachable by construction, since the double colon lives in the name
+grammar, and prose comparisons (`a < b`) never form the shape. A nested
+template is escaped over successive passes until stable (capped at sixteen
+passes), and a fully escaped nesting's trailing `>`s stay raw, which is legal
+text. CDATA sections and comments are never rewritten. The normal gate
+applies.
 
+Known limitation: the match's tail runs from the name to the first raw `>`,
+at most 120 characters away. When a pseudo-tag's own closing bracket is
+entity-escaped (`&gt;`), the tail reaches past it to the next tag's `>`, and
+that real tag is escaped with the pseudo-tag. The result parses, so the gate
+can accept it.
+
+### Opt-in: reserialize (`--reserialize`)
+
+The last-resort structural repair, and the only one that is not a byte-level
+edit: it re-parses a content document that still fails XML parsing, carrying an
+`<html>` root, with html5lib and re-emits XHTML, closing unclosed non-void
+elements (`<p>`, `<div>`, `<span>`, `<blockquote>`, ...) that the regex
+transforms cannot reach. Because it reformats, it runs only on documents that
+are not already well-formed, and only on request. A document without an
+`<html>` root (a page template, an XML sidecar) is some other kind of XML and is
+refused. It is deliberately inert on documents that parse but carry
+content-model errors: the only mechanizable repair there changes layout (see
+Out of scope). This is the lone html5lib dependency, imported lazily, so
+everything else runs without it; corrupted tag names are covered by
+`--strip-bad-attrs` and `--unwrap-illegal-tags` instead. The normal gate
+applies.
 
 ### Opt-in: structural repairs
 
@@ -178,29 +190,31 @@ Thirty-five repairs go past well-formedness and therefore require their own flag
 part of the default pipeline:
 
 - **`--fix-empty-body`**: `<p>&#160;</p>` inside a strictly empty `<body></body>` ("body
-  incomplete"). The numeric character reference needs no DTD and the wrapping `p` is the
-  block element XHTML 1.1's body content model demands (issue #25: the `&nbsp;` this fix
-  originally injected was an undeclared-entity parse fatal under every DOCTYPE epubcheck
-  does not resolve locally, and bare character data never satisfied the content model).
-  Adds visible content, hence opt-in like `--add-img-alt`.
+  incomplete"). The numeric character reference needs no DTD (a named `&nbsp;` is an
+  undeclared-entity parse fatal under every DOCTYPE epubcheck does not resolve
+  locally), and the wrapping `p` is the block element XHTML 1.1's body content model
+  demands; bare character data never satisfies it. Adds visible content, hence
+  opt-in like `--add-img-alt`.
 - **`--fix-missing-title`**: inject `<title>Unknown</title>` when the head has no usable
-  title.
+  title. When the document has a `<head>`, the fill is scoped to it, so an SVG
+  `<title>` (visible text) is never filled. Known limitation: a document with
+  no `<head>` is filled document-wide, empty SVG titles included.
 - **`--fix-id-colons`**: any `id` value that cannot be an XML NCName and its
   matching internal fragment reference are renamed with the deterministic
-  `id_`+sanitized scheme (v0.63.0 broadened the predicate from colon-bearing
-  to every NCName failure: digit-led scraped ids like
-  `<body id="0-25c121ec...">`, apostrophe-bearing calibre ids). Only the bare
+  same invalid-name check and `id_`+sanitized scheme as the manifest half (`id_`
+  is prefixed only when the name cannot start with its own first character),
+  whatever makes the name invalid (a colon; a leading
+  digit, as in `<body id="0-25c121ec...">`; an apostrophe). Only the bare
   `id` attribute is in scope (`data-id` values are arbitrary data and are never
   touched), the fragment of an external URL names a position in that other
   document and survives verbatim, and the NCX's `content src` fragments follow
   the rename (`fix_ncx_src_fragments`) under the same NCName predicate and
-  `id_` scheme, so a ToC never dangles against the ids it references (v1.1.1:
-  a digit-led ToC fragment follows the `id_` rename instead of dangling, a
-  digit-led colon-bearing id translates to the same spelling on both sides,
+  `id_` scheme, so a ToC never dangles against the ids it references: a
+  digit-led or colon-bearing id translates to the same spelling on both sides,
   and the quote-tempered fragment matchers translate an apostrophe-bearing
   value like `href="c1.xhtml#Lisey's_story"` whole instead of truncating at
-  the apostrophe). A fragment carrying an escape -- a percent-escape
-  (`#caf%C3%A9`) or an entity reference (`#caf&eacute;`, `#&#x44E;`) -- is
+  the apostrophe. A fragment carrying an escape (a percent-escape
+  (`#caf%C3%A9`) or an entity reference (`#caf&eacute;`, `#&#x44E;`)) is
   refused outright: it names its target under decoding, not NCName spelling,
   and renaming the encoded form would manufacture a target that exists
   nowhere. The matchers are whitespace-anchored with the optional namespace
@@ -208,46 +222,46 @@ part of the default pipeline:
 - **`--unwrap-block-in-inline`**: drop a `<span>` that illegally wraps a
   `<div>/<p>/<blockquote>`, keeping the block element and its text.
 - **`--strip-invalid-value`**: remove misplaced `value="..."` attributes from non-form
-  elements.
+  elements. The attribute name is matched with a lookbehind, so a `data-value`
+  is arbitrary data and survives.
 - **`--fix-page-map`**: normalize legacy page-map markup: drop the non-standard
   `page-map="..."` attribute from the OPF `<spine>` and add `class="pages"` to
   classless NCX `<pageList>` elements (epubcheck rejects both; older HarperCollins /
-  Anna's Archive conversions carry them). A pageList that already carries a class is
-  untouched.
+  Anna's Archive conversions carry them). A `<pageList>` with no plain `id`
+  also receives `id="bindery-pagelist"` (suffixed on collision), because
+  epubcheck demands the id once the class is present. A pageList that already carries a class is
+  untouched, and the satisfaction checks read the plain attributes only: a
+  `data-class` or `data-id` never suppresses the insertion epubcheck's demand
+  needs.
 - **`--strip-epub3-attrs`**: scrub the EPUB3-only attributes epubcheck rejects on an
   EPUB2 package: `page-progression-direction`, `epub:type`, `aria-label`, `role`,
   `aria-hidden` (a fixed, documented set; extend only with a named epubcheck
-  finding). `role` and `aria-hidden` joined in v0.55.0 (issue #11): the 2026-10-25
-  census found them the dominant EPUB3-semantics-on-legacy-package family (DPUB-ARIA
-  `doc-*` roles and `aria-hidden="true"` only, no visual default either way), and
-  the earlier "reader-legitimate" protection of `aria-hidden` dated from before that
-  measurement. `hidden` stays out on purpose: stripping it would REVEAL content the
-  author hid, a rendering change. Rendering is unchanged for everything in the set,
-  and lookalikes (`type`, `aria-labelledby`) survive. The edit is
-  anchored to real start tags and never touches CDATA sections or comments, so prose
-  that merely mentions `epub:type="chapter"` is preserved.
+  finding). `role` and `aria-hidden` carry EPUB 3 semantics that have no visual
+  default either way. `hidden` stays out on purpose: stripping it would REVEAL
+  content the author hid, a rendering change. Rendering is unchanged for
+  everything in the set, and lookalikes (`type`, `aria-labelledby`) survive. The
+  edit is anchored to real start tags and never touches CDATA sections or
+  comments, so prose that merely mentions `epub:type="chapter"` is preserved.
 - **`--downgrade-epub3-tags`**: downgrade EPUB3/HTML5 semantic elements to their EPUB2
-  equivalents (`figure`/`section`/`nav`/`header` to `div`, `figcaption` to `p`), keeping
-  existing classes and appending the semantic name (`class="figure"`) as the styling hook.
-  Names a stylesheet styles as an element selector are protected book-wide
-  (`css_protected_tags`/`style_block_tags` are parameterized over the tag set), so
-  styled formatting can never be silently destroyed; a protected book keeps its
-  RSC-005 findings, which is the correct outcome. Comments and CDATA are never
-  rewritten and the class merge cannot fire inside a `data-class` attribute
-  (v1.1.1). nav and header joined v1.2.7: nav on the named RSC-005 element finding
-  (the EPUB3-on-EPUB2 toc/landmarks/page-list class), header through the unmasking
-  door (epubcheck never reported it while the enclosing illegal `<section>` held the
-  parse, so the section->div repair surfaced the findings; one gate pass must
-  converge).
+  equivalents (`figure`/`section`/`nav`/`header` to `div`, `figcaption` to `p`),
+  keeping existing classes and appending the semantic name (`class="figure"`) as
+  the styling hook. Names a stylesheet styles as an element selector are protected
+  book-wide (`css_protected_tags`/`style_block_tags` are parameterized over the tag
+  set), so styled formatting can never be silently destroyed; a protected book keeps
+  its RSC-005 findings, which is the correct outcome. Comments and CDATA are never
+  rewritten and the class merge cannot fire inside a `data-class` attribute. `nav`
+  is in the set on its named RSC-005 element finding (the EPUB3-on-EPUB2
+  toc/landmarks/page-list class) and `header` because a repair pass must converge:
+  epubcheck reports `header` only once the enclosing illegal `<section>` is fixed,
+  so leaving it out would trade one named class for another.
 
 Both EPUB2-targeted fixes are gated on the package version carried in the OPF: they
 fire on EPUB 2 packages (major version 2 or 1) and are inert on EPUB 3 packages and
 when no version can be read, where their target defects do not exist and firing them
-would strip legal attributes and downgrade legal elements (the 2026-09-08 sweep found
-every EPUB3 book in an `--all` sweep taking exactly that damage). The version read
+would strip legal attributes and downgrade legal elements. The version read
 accepts a namespace-prefixed package element (`<opf:package version="2.0">` is an
-EPUB 2 declaration; v1.2.7 -- the bare-`<package` spelling left every prefixed OPF
-unversioned and both fixes inert).
+EPUB 2 declaration).
+
 - **`--unwrap-illegal-tags`**: delete `<st> <sentence> <o> <w> <pagebreak>` tags outright,
   inner text preserved. Its CSS precondition is enforced by the library itself:
   `transforms.css_protected_tags` scans every stylesheet entry in the book (nested at-rules
@@ -261,170 +275,154 @@ unversioned and both fixes inert).
   alt text when they carry one, dropped otherwise), and orphaned non-spine OPF manifest
   `<item>` declarations. Spine documents are never pruned: a missing spine document is
   a damaged fragment for the audit's spine-integrity check, never a silent drop. The
-  shared href resolver (v0.58.0, issue #20) decodes the five predefined XML entities
-  and numeric character references before the fragment split (an attribute value arrives escaped: `href="K&amp;C.png"` names
-  the entry `K&C.png`, and reading the escaped spelling as a path pruned live
-  declarations on the raw-ampersand books) and the OPF matchers accept a namespace
-  prefix (`<opf:item>` declares exactly what `<item>` does; a prefix-blind census
-  re-declared whole manifests). The manifest existence check resolves the href the way
-  the resolver does (unquoted, normalized) and compares it against the layout the OPF
-  text is written in: when
+  shared href resolver decodes the five predefined XML entities and numeric character
+  references before the fragment split (an attribute value arrives escaped:
+  `href="K&amp;C.png"` names the entry `K&C.png`), and the OPF matchers accept a
+  namespace prefix (`<opf:item>` declares exactly what `<item>` does). The manifest
+  existence check resolves the href the way the resolver does (unquoted, normalized)
+  and compares it against the layout the OPF text is written in: when
   `--encode-url-spaces` is renaming entries, the prune runs ahead of the reference
   rewrite and reads pre-rename hrefs, so it checks against the pre-rename archive
-  (a raw-space href judged against renamed spellings is how live spine documents came
-  to be pruned, issue #10). The spine protection is derived from the very text the
-  prune reads, never snapshotted earlier: `--fix-manifest-ids` may have renamed item
-  ids and spine idrefs ahead of it in the OPF pipeline, and a guard describing the old
-  spelling protects nothing. Since v1.2.7 the prune also drops OPF guide `<reference>`
-  elements naming the files it confirmed absent (`prune_guide_refs_to`; a left-behind
-  reference would read OPF-031 + RSC-007 -- errors the prune manufactured), the same
-  href-edge sweep the stub cascade and the shell prune run beside their id-edge
-  rewrites.
-- **`--strip-dead-font-faces`** (v1.2.0, issue #27): drop every `@font-face` block in
-  a stylesheet whose `url()` references ALL miss the archive (RSC-007 raised from CSS
-  url(): ebook-convert azw3->epub carries the source's font declarations without the
-  font payloads, filling `page_styles.css` with `url(styles/XXXXXXXXXXXXXXXX)`
-  placeholders the manifest prune cannot answer, because the OPF never declared the
-  fonts). The font never loaded, so the fallback rendering is what the file already
-  does and dropping the block is rendering-neutral. One live url() keeps the whole
-  block; a scheme, query, fragment, raw-space, or url()-less (`local()`-only) reference also
-  keeps it (never guessed at: first `#`/`?` starts fragment/query, so a query-carrying
-  url whose path portion exists is a live reference), as does any block the flat-brace matcher cannot read
-  exactly (nested braces). Resolution walks the shared href resolver; XML
-  comments/CDATA and plain CSS comments are never rewritten (a commented-out block is
-  invisible to the oracle, and dropping it would be a byte change another flag's gain
-  could carry into an applied candidate; the span check is an intersection over the
-  whole match, because a `}` inside a comment truncates the flat-brace match and a
-  start-keyed drop would leave comment garbage in the stylesheet). Runs on `.css`
-  entries only.
-- **`--declare-missing-items`**: the RSC-008 inverse of the prune (v0.55.0, issue
-  #16): add the manifest `<item>` declarations the OPF never wrote for files the
-  archive carries and the book references: content `<img src>` and `<link href>`
-  targets, CSS `url()` resources (inline `<style>` blocks and stylesheet entries),
-  and OPF guide `<reference href>`s. The referencing elements are untouched; only
-  the OPF grows. Deterministic: targets in sorted order, ids `bindery-dN` (`_`-prefixed
-  until free), media types from a blessed extension map only (anything else is
-  skipped rather than guessed, because a wrong media type would trade RSC-008 for a
-  fresh OPF-029), and no `<itemref>` is ever written, so the spine is untouched. An
-  itemref with no matching manifest item is deliberately NOT repaired here (which
-  file that idref meant is underdetermined, and guessing could weld a foreign
-  document into the spine), nor is a referenced file that is itself absent from the
-  archive (that is the prune's class, or a re-source). The 2026-10-25 census measured
-  the prune's coverage of RSC-001/RSC-008 at the same time: RSC-001 is spine-guarded
-  by design (95.3% of its mass is spine documents whose files exist under a
-  different spelling; `--encode-url-spaces` territory) and RSC-008 had zero
-  coverage (441 of 452 sampled findings are `<img src>` to present-but-undeclared
-  files); this flag is that repair. The insertion point is the manifest close tag
-  however it is spelled: prefixed (`</opf:manifest>`) or whitespace-carrying
-  (`</manifest >`) declare too; a package whose manifest never closes is not
-  repaired (v1.1.1).
+  (a raw-space href judged against renamed spellings would prune live spine
+  documents). The spine protection is derived from the very text the prune reads,
+  never snapshotted earlier: `--fix-manifest-ids` may have renamed item ids and spine
+  idrefs ahead of it in the OPF pipeline, and a guard describing the old spelling
+  protects nothing. The prune also drops OPF guide `<reference>` elements naming the
+  files it confirmed absent (`prune_guide_refs_to`), the same href-edge sweep the stub
+  cascade and the shell prune run beside their id-edge rewrites: a left-behind
+  reference would read OPF-031 + RSC-007, errors the prune itself manufactured. In a
+  run that also drops stub documents, the existence set (`anchor_present`) excludes
+  the dropped files, so a surviving document's link into a dropped stub is stripped
+  here with its anchor text kept instead of dangling.
+- **`--strip-dead-font-faces`**: drop every `@font-face` block in a stylesheet whose
+  `url()` references ALL miss the archive (RSC-007 raised from CSS url():
+  ebook-convert azw3->epub carries the source's font declarations without the font
+  payloads, filling `page_styles.css` with `url(styles/XXXXXXXXXXXXXXXX)` placeholders
+  the manifest prune cannot answer, because the OPF never declared the fonts). The
+  font never loaded, so the fallback rendering is what the file already does and
+  dropping the block is rendering-neutral. One live url() keeps the whole block; a
+  scheme, query, fragment, raw-space, or url()-less (`local()`-only) reference also
+  keeps it (never guessed at: the first `#`/`?` starts fragment/query, so a
+  query-carrying url whose path portion exists is a live reference), as does any
+  block the flat-brace matcher cannot read exactly (nested braces). Resolution walks
+  the shared href resolver; XML comments/CDATA and plain CSS comments are never
+  rewritten (a commented-out block is invisible to the oracle, and dropping it would
+  be a byte change another flag's gain could carry into an applied candidate; the
+  span check is an intersection over the whole match, because a `}` inside a comment
+  truncates the flat-brace match and a start-keyed drop would leave comment garbage
+  in the stylesheet). Runs on `.css` entries only.
+- **`--declare-missing-items`**: the RSC-008 inverse of the prune: add the manifest
+  `<item>` declarations the OPF never wrote for files the archive carries and the
+  book references: content `<img src>` and `<link href>` targets, CSS `url()`
+  resources (inline `<style>` blocks and stylesheet entries), and OPF guide
+  `<reference href>`s. NCX `<content src>` targets are not part of this census. The
+  referencing elements are untouched; only the OPF grows. Deterministic: targets in
+  sorted order, ids `bindery-dN` (`_`-prefixed until free), media types from a
+  blessed extension map only (anything else is skipped rather than guessed, because a
+  wrong media type would trade RSC-008 for a fresh OPF-029), and no `<itemref>` is
+  ever written, so the spine is untouched. An itemref with no matching manifest item
+  is deliberately NOT repaired here (which file that idref meant is underdetermined,
+  and guessing could weld a foreign document into the spine), nor is a referenced
+  file that is itself absent from the archive (that is the prune's class, or a
+  re-source). The insertion point is the manifest close tag however it is spelled:
+  prefixed (`</opf:manifest>`) or whitespace-carrying (`</manifest >`) declare too; a
+  package whose manifest never closes is not repaired.
 - **`--strip-broken-anchors`**: strip `href` attributes that cannot resolve, keeping
   the anchor text byte-for-byte. A `#fragment` the target document does not define
-  (RSC-020 "fragment identifier not defined", RSC-012 "points to the wrong element") is
-  removed from the anchor; NCX `<content src="doc#frag"/>` and OPF guide
-  `<reference href="doc#frag">` fall back to the document target, keeping navigation at
-  document precision: the fragment is never re-pointed at a guessed sibling document,
-  because a drifted id (Mobipocket `filepos` anchors after a converter re-split) may
-  exist nowhere. The guide half (v0.58.0) exists because the guide is not a content
-  document: its broken fragment hid while the target carried its own broken links and
-  surfaced only once the pass fixed them (issue #21, Fools Crow). When the NCX
-  fragments strip, the always-on playOrder pass re-runs on the final navMap: distinct
-  fragments that collapsed onto one document would otherwise violate the
-  same-target-shares-one-value contract the pass had just validated (issue #21,
-  Troubled Man). A target wholly absent from the archive is left for the
-  spine-integrity report. href values carrying a scheme no reader resolves
-  (`kindle:embed:`, `file:`, ...) are stripped under the same flag; the resolvable set
-  is fixed (`http`, `https`, `mailto`) and extends only with a named finding.
-  Fragments are compared after the decode chain the href resolver applies to paths
-  (XML entities, then RFC 3986 percent-decoding), so a valid link to a non-ASCII id
-  (`href="#caf%C3%A9"` naming `<h2 id="café">`) is kept, not stripped (v1.1.1).
-- **`--prune-dangling-ncx-targets`** (v0.59.0, issue #23): remove NCX
-  `navPoint`/`pageTarget` elements whose `<content src>` names a document the archive
-  does not contain (RSC-007 raised from toc.ncx). This is the class the prune flag
-  cannot reach (`--prune-missing-resources` prunes manifest items whose FILE is
-  absent; a producer that drops the document without declaring it leaves no item and
-  the navPoint survived `--all` as "no applicable fixes") and the class hand removal
-  breaks (every surviving playOrder reads as starting at 2, and naive renumbering
-  splits the navPoint/pageTarget same-target contract -- the live case ended at
-  391 RSC-005s before the rescue). The rule is node-exact: a navPoint dies when its
-  OWN target document is absent; a dead node whose whole subtree dies with it is
-  removed as one element, and a dead node above surviving descendants is spliced (its
-  tags, label, and dead `<content>` go; the children are re-homed one level up),
-  because dropping live navigation to repair a dead label is no repair. Scheme URLs,
-  bare fragments, comment-hidden elements, and contentless nodes are never touched,
-  and the token walk tracks the navMap/pageList containers: an unbalanced walk (a
-  stray close, a wrapper crossing a node's span) aborts the pass unchanged, and so
-  does a prune that would EMPTY a container -- the NCX requires navPoint+/pageTarget+
-  and trading a wholly dead TOC for no TOC is the manual list's call (an empty navMap
-  is itself one RSC-005, verified against epubcheck 5.3, so the gate would happily
-  apply the amputation). When the prune fires, the
-  always-on playOrder pass re-runs on the final navMap (the same contract-gated
-  re-sequencing the fragment strip uses), so the rescue that took hand surgery plus a
-  second `--all` run is one gate here. The live specimen went 0f/1e/0w to 0f/0e/0w in
-  one run (one navPoint pruned, 389 playOrder values re-sequenced across navMap and
-  pageList, epubcheck clean).
+  (RSC-020 "fragment identifier not defined", RSC-012 "points to the wrong element")
+  is removed from the anchor; NCX `<content src="doc#frag"/>` and OPF guide
+  `<reference href="doc#frag">` fall back to the document target, keeping navigation
+  at document precision: the fragment is never re-pointed at a guessed sibling
+  document, because a drifted id (Mobipocket `filepos` anchors after a converter
+  re-split) may exist nowhere. The guide has its own fragment pass because it is not
+  a content document: its broken fragment stays hidden while the target carries its
+  own broken links and surfaces only once the pass fixes them. When the NCX
+  fragments strip, the always-on playOrder pass re-runs on the final navMap:
+  distinct fragments that collapsed onto one document would otherwise violate the
+  same-target-shares-one-value contract the pass had just validated. A target wholly
+  absent from the archive is left for the spine-integrity report. href values
+  carrying a scheme no reader resolves (`kindle:embed:`, `file:`, ...) are stripped
+  under the same flag; the resolvable set is fixed (`http`, `https`, `mailto`) and
+  extends only with a named finding. Fragments are compared after the decode chain
+  the href resolver applies to paths (XML entities, then RFC 3986 percent-decoding),
+  so a valid link to a non-ASCII id (`href="#caf%C3%A9"` naming
+  `<h2 id="café">`) is kept, not stripped.
+- **`--prune-dangling-ncx-targets`**: remove NCX `navPoint`/`navTarget`/`pageTarget`
+  elements whose `<content src>` names a document the archive does not contain
+  (RSC-007 raised from toc.ncx). This is the class the prune flag cannot reach
+  (`--prune-missing-resources` prunes manifest items whose FILE is absent; a producer
+  that drops the document without declaring it leaves no item) and the class hand
+  removal breaks (every surviving playOrder then reads as starting at 2, and naive
+  renumbering splits the navPoint/pageTarget same-target contract). The rule is
+  node-exact: a navPoint dies when its OWN target document is absent; a dead node
+  whose whole subtree dies with it is removed as one element, and a dead node above
+  surviving descendants is spliced (its tags, label, and dead `<content>` go; the
+  children are re-homed one level up), because dropping live navigation to repair a
+  dead label is no repair. Scheme URLs, bare fragments, comment-hidden elements, and
+  contentless nodes are never touched, and the token walk tracks the navMap/pageList
+  containers: an unbalanced walk (a stray close, a wrapper crossing a node's span)
+  aborts the pass unchanged, and so does a prune that would EMPTY a container. The
+  NCX requires navPoint+/pageTarget+, an empty navMap is itself one RSC-005, and
+  trading a wholly dead TOC for no TOC is the manual list's call. When the prune
+  fires, the always-on playOrder pass re-runs on the final navMap (the same
+  contract-gated re-sequencing the fragment strip uses), so the rescue is one gate
+  pass.
 - **`--encode-url-spaces`**: repairs raw-space URLs two ways. The reference half
   percent-encodes raw spaces in `src`/`href` attribute values across the package
-  (OPF manifest, NCX `content src`, content documents): a URL with a literal space is
-  not a valid URL (RSC-020 "not a valid URL") and unresolvable on strict readers; the
-  encoded form denotes the same file and renders identically. The rename half (v0.44.0)
+  (OPF manifest, NCX `content src`, content documents): a URL with a literal space
+  is not a valid URL (RSC-020 "not a valid URL") and unresolvable on strict readers;
+  the encoded form denotes the same file and renders identically. The rename half
   renames archive entries whose names carry raw spaces to their underscore spellings
   and rewrites every reference to them (OPF, NCX, content `src`/`href`, stylesheet
   `url()`), clearing PKG-010: underscore, never percent-encoding, because epubcheck
-  decodes references before entry lookup (both-sides-%20 breaks lookups; verified
-  against epubcheck 5.3). Ambiguous renames (a target that already exists, two names
-  converging, a duplicated entry name) are refused per entry, and a book with any
-  non-UTF-8 document refuses all of its renames (those entries pass through
-  byte-for-byte with no chance to rewrite their references). '[' and ']' in a renamed
-  spelling are percent-encoded in the rewritten reference (v0.58.0, issue #19): a raw
-  bracket is not a legal URL character (RSC-020 "Illegal character in path segment"),
-  and epubcheck decodes before lookup, so the encoded form resolves to the raw-spelled
-  entry. Both halves rewrite only attributes inside real start tags and processing
-  instructions, never comments, CDATA, or text: a book that teaches HTML carries
-  `href="a b.htm"` in its display text, and a bare attribute regex pairs the phantom
-  quote with the next real markup quote, corrupting that tag (issue #19, two RSC-016
-  parse fatals on a web-exploitation handbook). Scope stays fixed to the space
+  decodes references before entry lookup (a both-sides-%20 spelling breaks
+  lookups). Ambiguous renames (a target that already exists, two names converging, a
+  duplicated entry name) are refused per entry, and a book with any non-UTF-8
+  document refuses all of its renames (those entries pass through byte-for-byte with
+  no chance to rewrite their references). `[` and `]` in a renamed spelling are
+  percent-encoded in the rewritten reference: a raw bracket is not a legal URL
+  character (RSC-020 "Illegal character in path segment"), and epubcheck decodes
+  before lookup, so the encoded form resolves to the raw-spelled entry. Both halves
+  rewrite only attributes inside real start tags and processing instructions, never
+  comments, CDATA, or text: a book that teaches HTML carries `href="a b.htm"` in
+  its display text, and a bare attribute regex pairs the phantom quote with the
+  next real markup quote, corrupting that tag. Scope stays fixed to the space
   character: extend only with a named epubcheck finding.
-
 - **`--fix-container`**: generate `META-INF/container.xml` at the located OPF when the
-container is missing, unparseable, or names a file the archive does not contain. This is the
-gateway defect: epubcheck stays fatal while the OPF is unfindable, so no other repair can be
-gate-accepted on such a book. The generated file is byte-deterministic (a fixed template plus
-the OPF path; the entry's timestamp is the constant epoch), and a healthy container is never
-touched.
+  container is missing, unparseable, or names a file the archive does not contain. This is the
+  gateway defect: epubcheck stays fatal while the OPF is unfindable, so no other repair can be
+  gate-accepted on such a book. The generated file is byte-deterministic (a fixed template plus
+  the OPF path; the entry's timestamp is the constant epoch), and a healthy container is never
+  touched.
 - **`--fix-media-types`**: normalize wrong manifest `media-type` declarations (OPF-029: a
-file's bytes do not match the declared type). The expected type comes from the extension, and
-the rewrite fires only when the file's magic bytes at offset 0 confirm the extension (jpg,
-jpeg, png, gif; since v0.56.0 also the CSS-007 font slice: `ttf`/`otf`/`woff`/`woff2`
-declared outside epubcheck's blessed font set are rewritten to their `font/*` spellings
-when the magic bytes confirm the extension -- `font/*` is blessed on both package
-versions, so no version gate is needed; `.eot` is never touched, epubcheck rejects EOT
-as a font src however it is declared): a PNG renamed `.jpg` keeps its
-wrong-but-consistent declaration rather than gaining a worse one. Attribute-only,
-quote-style preserved; files absent from the archive belong to
-`--prune-missing-resources`. The font half's gain sits on the INFO axis the counts do
-not measure, so the flag is accepted under the `no_worse` bar (v0.56.0).
-
+  file's bytes do not match the declared type). The expected type comes from the extension,
+  and the rewrite fires only when the file's magic bytes at offset 0 confirm the extension
+  (jpg, jpeg, png, gif; and the CSS-007 font slice: `ttf`/`otf`/`woff`/`woff2` whose
+  declared type is not the exact `font/*` spelling are rewritten to it when the
+  magic bytes confirm the extension; `font/*` is blessed on both package versions, so no
+  version gate is needed; `.eot` is never touched, epubcheck rejects EOT as a font src
+  however it is declared): a PNG renamed `.jpg` keeps its wrong-but-consistent
+  declaration rather than gaining a worse one. Attribute-only, quote-style preserved; files
+  absent from the archive belong to `--prune-missing-resources`. The font half's gain sits
+  on the INFO axis the counts do not measure, so the flag rides `no_worse`.
 - **`--fix-cover`**: repair dangling EPUB2 cover wiring (the cover-wiring ruling's
-deterministic half). A `<meta name="cover" content="X">` whose `X` names no manifest id is
-re-pointed when the OPF guide's `<reference type="cover">` resolves to exactly one manifest
-item (the producer's own statement; nothing is guessed), and removed when nothing identifies
-the item. A meta whose id exists in the manifest is never touched here, even when the item's
-file is absent: that class belongs to `--prune-missing-resources` and its edge completion.
-The EPUB3 `properties="cover-image"` slice is audit-only by ruling. Cover wiring is invisible
-to epubcheck, so cover-only repairs are accepted under the `no_worse` bar the lossy strips
-use, with the `partial` rule intact.
-- **`--fix-unique-identifier`**: wire the OPF-030 dangling unique-identifier (v0.56.0, the
-census lane's recipe): when `<package unique-identifier="X">` names an id no element
-carries (the dominant family: identifiers that lost their id attributes wholesale), the id
-X is written onto the first `dc:identifier` start tag. The dc: values are never touched,
-and the repair predicts the post-wiring uid for the always-on NCX sync (the broken wiring
-was masking the dtb:uid comparison; one run wires the OPF and aligns the NCX instead of
-surfacing NCX-001 for a second run -- the issue #9 masking pattern, unmasked direction).
-Refuses to guess: an absent or empty attribute, a non-NCName id, an already-wired OPF, no
-`dc:identifier` element, or a first identifier that already carries an id. The multi-OPF
-leftovers whose failing OPF is a stale non-rootfile are unreachable by construction
-(only the located rootfile is repaired).
+  deterministic half). A `<meta name="cover" content="X">` whose `X` names no manifest id is
+  re-pointed when the OPF guide's `<reference type="cover">` resolves to exactly one manifest
+  item (the producer's own statement; nothing is guessed), and removed when nothing identifies
+  the item. A meta whose id exists in the manifest is never touched here, even when the item's
+  file is absent: that class belongs to `--prune-missing-resources` and its edge completion.
+  The EPUB3 `properties="cover-image"` slice is audit-only by ruling. Cover wiring is invisible
+  to epubcheck, so the flag rides `no_worse`, with the `partial` rule intact.
+- **`--fix-unique-identifier`**: wire the OPF-030 dangling unique-identifier: when
+  `<package unique-identifier="X">` names an id no element carries, the id X is
+  written onto the first `dc:identifier` start tag. The dc: values are never touched,
+  and the repair predicts the post-wiring uid for the always-on NCX sync (the broken
+  wiring was masking the dtb:uid comparison; one run wires the OPF and aligns the NCX
+  instead of surfacing NCX-001 for a second run). Refuses to guess: an absent or
+  empty attribute, a non-NCName id, an already-wired OPF, no `dc:identifier` element,
+  or a first identifier that already carries an id. The multi-OPF leftovers whose
+  failing OPF is a stale non-rootfile are unreachable by construction (only the
+  located rootfile is repaired).
 - **`--fix-comment-double-hyphen`**: replace `--` inside XML comments with an en-dash
   (RSC-016: "The string `--` is not permitted within comments", a fatal: the book parses in
   lenient readers and never passes epubcheck). The edit is confined to comment bodies:
@@ -433,45 +431,42 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   different fatal class and is left alone. It applies to content documents, the NCX, and
   the OPF alike, and every replaced sequence is counted.
 - **`--fix-svg-dup-ids`**: rename duplicate `id` values inside standalone `.svg`
-  entries (old calibre 0.8.x SVG page renders repeat glyph ids within one document;
-  four books from one intake wave carried 445 to 1,339 'Duplicate "glNNNN"' RSC-005s
-  each). The first occurrence keeps its name; every later one gains `_2`, `_3`, ... in
+  entries (old calibre 0.8.x SVG page renders repeat glyph ids within one document).
+  The first occurrence keeps its name; every later one gains `_2`, `_3`, ... in
   document order (prefixed with `_` until the name is free). Internal
   `xlink:href="#x"` / `url(#x)` references are deliberately never rewritten: they
   already resolve to the first definition under every reader's first-match lookup, so
   first-keeps-id preserves exactly what rendered. Scope is standalone `.svg` entries
   only; duplicate ids in the content documents themselves are the separate
-  `--fix-duplicate-ids` flag (v0.55.0).
+  `--fix-duplicate-ids` flag.
 - **`--fix-duplicate-ids`**: the same first-keeps-name rename for duplicate `id`
   values in the content documents (RSC-005 "Duplicate id" on `.xhtml`/`.html`
-  carriers; v0.55.0, issue #14: the Calcutta Chromosome `heading_id_2` shape the
-  20-book sample caught with no flag addressing it). The first occurrence keeps its
-  name, so every reference to the name (internal `href="#x"` anchors, CSS `#x`
-  selectors, cross-document and NCX fragment references) still resolves exactly as
-  before, to the first definition: under a duplicate id the target was ambiguous
-  anyway, and first-match is what readers actually did (the rule the SVG fix
-  proved). The later duplicates gain `_2`, `_3`, ... and lose whatever invalid
+  carriers). The first occurrence keeps its name, so every reference to the name
+  (internal `href="#x"` anchors, CSS `#x` selectors, cross-document and NCX fragment
+  references) still resolves exactly as before, to the first definition: under a
+  duplicate id the target was ambiguous anyway, and first-match is what readers
+  actually did. The later duplicates gain `_2`, `_3`, ... and lose whatever invalid
   double-styling the second definition carried; the book keeps the styling it could
-  render deterministically. Commented-out and CDATA-hidden tags do not count
-  (v0.58.0, issue #21): they are invisible to epubcheck's parser and to every reader,
-  and counting them renamed the REAL definition away from its name, dangling every
-  fragment that referenced it (an index link to an id present once in markup and once
-  in a comment).
+  render deterministically. Commented-out and CDATA-hidden tags do not count: they
+  are invisible to epubcheck's parser and to every reader, and counting them would
+  rename the real definition away from its name, dangling every fragment that
+  referenced it.
 - **`--fix-cdata-terminator`**: complete a truncated CDATA-terminator comment in an
   inline `<style>` block: `/*]]>` becomes `/*]]>*/` (a comment-wrapped CDATA block
   whose closing `*/` the converter dropped; epubcheck's CSS parser reads the dangling
   `/*` as an unterminated comment and answers CSS-008 'Premature end of file' once per
-  affected document, 19 identical errors on the 2002-era fixture). Deliberately narrow:
-  only the malformed-terminator token class, inside `<style>` blocks only; invalid CSS
-  properties and selectors stay unfixed (renderers degrade gracefully), stylesheet FILE
-  entries are not touched, and a closer that already sits intact (possibly after
-  whitespace) is left alone.
+  affected document). Deliberately narrow: only the malformed-terminator token class,
+  inside `<style>` blocks only; invalid CSS properties and selectors stay unfixed
+  (renderers degrade gracefully), stylesheet FILE entries are not touched, and a
+  closer that already sits intact (possibly after whitespace) is left alone.
 - **`--fix-misnested-inline`**: rewrite the Mobipocket drop-cap mis-nest
   `<i><b>X</i></b>` to `<i><b>X</b></i>` (em/strong variants and either tag order
   included). Only the both-open-then-reversed-close shape is rewritten: any match is
   XML fatal, and swapping the closers is the unique well-formed form carrying the same
-  two spans over the same text. The Exile variant, where a short punctuation run sits
-  between the reversed closers (`<i><b>xile</i>,</b>`), is covered: the punctuation
+  two spans over the same text. The shape is bounded: bare start tags, a
+  shared text of 1 to 64 characters, and at most 8 punctuation characters
+  between the reversed closers. The variant where a short punctuation run sits
+  between the reversed closers (`<i><b>xile</i>,</b>`) is covered: the punctuation
   survives outside both spans, byte-preserved. A letter run between the closers
   (`<i><b>S</i>ome</b>`, where `<b>` spans `Some` and `<i>` only `S`) is refused: which
   span keeps the letters has no deterministic answer. Same-tag pairs, attribute-bearing
@@ -494,9 +489,9 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   double-quoted values are judged. It runs before the other tag-shape readers, which an
   open value otherwise lies to.
 - **`--fix-unbound-prefix`**: bind a prefix the OPF never declares in scope inline on
-  the element that uses it (the Calibre embed scar: issue #9's attribute half, one dc:
+  the element that uses it (the Calibre embed scar, in two shapes: one dc:
   element carrying `ns0:scheme` while the `xmlns:ns0` declaration sits on a sibling, out
-  of XML scope; and issue #22's element half, a later writer build self-declaring
+  of XML scope; and a writer build that self-declares
   `xmlns:dc` on every dc: element but one, so that element's own name dies with the
   RSC-016 "prefix is not bound" fatal). Either scar makes the whole package
   unparseable, which also costs OPF-030 on the unique-identifier and masks the NCX-001
@@ -511,41 +506,35 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   that genuinely cover a use satisfy it without an edit and clean documents are
   byte-identical. Runs on the OPF only: content documents have the
   invalid-attribute drop (`--strip-bad-attrs`) for the same defect class.
-
 - **`--fix-package-version`**: rewrite a `<package>` element whose `version`
-  attribute is the literal `1.0` -- an EPUB version epubcheck cannot parse
-  (OPF-001 "error when parsing the EPUB version") -- to `"2.0"`, the
-  conformance the census's 25 carriers were all written to. Only the exact
+  attribute is the literal `1.0` (an EPUB version epubcheck cannot parse: OPF-001
+  "error when parsing the EPUB version") to `"2.0"`. Only the exact
   literal qualifies: a missing attribute (the OEB-1.0-namespace package is a
   migration, not an attribute bump) or any other spelling refuses the
   document untouched, and the gate decides whether the profile
   revalidation the bump buys is a real decrease. A `data-version` is
-  arbitrary data and is never rewritten (v1.2.1).
-
-- **`--fix-doctype`**: replace a content document's DOCTYPE when it carries a
-  public identifier its package profile forbids. EPUB 3 requires any DOCTYPE
-  to be `<!DOCTYPE html>` (an XHTML 1.x public doctype is a spec violation);
-  EPUB 2's OPS content docs are XHTML 1.1, so an XHTML 1.0 public doctype is
-  the census's second flagged shape. A whitespace-variant of the expected
-  form is a no-op, an ABSENT DOCTYPE is legal in both profiles and is left
-  alone (the first whole-library firing census measured insertion flat on
-  ~2,400 of 2,545 firing books -- absent is tolerated, so insertion never
-  converges), and a DOCTYPE carrying an internal subset is never touched
-  (the subset declares entities; swapping it changes what the parser
-  resolves). An unterminated declaration refuses: a `<` at bracket depth 0
-  before any `>` means the true end is unknowable and the span must not
-  swallow the next tag.
-
+  arbitrary data and is never rewritten.
+- **`--fix-doctype`**: replace a content document's DOCTYPE when it differs
+  from the form its package profile expects. EPUB 3 expects `<!DOCTYPE html>`
+  (an XHTML 1.x public doctype is a spec violation); EPUB 2's OPS content
+  docs are XHTML 1.1, so an XHTML 1.0 doctype, or a bare `<!DOCTYPE html>`,
+  is replaced with the XHTML 1.1 declaration. An unknown package version
+  licenses nothing. A whitespace-variant of the expected form is a no-op. An ABSENT
+  DOCTYPE is legal in both profiles and is left alone, and it is never
+  inserted: readers tolerate its absence, so insertion would not converge. A
+  DOCTYPE carrying an internal subset is never touched (the subset declares
+  entities; swapping it changes what the parser resolves). An unterminated
+  declaration refuses: a `<` at bracket depth 0 before any `>` means the true
+  end is unknowable and the span must not swallow the next tag.
 - **`--prune-invalid-guide-refs`**: remove guide `<reference>` elements whose
   target is declared in the manifest but is not an OPS content document
-  (OPF-032; the Random House `msr` guide block pointing cover/thumbimage
-  references at JPEGs is the dominant fingerprint). The guide is furniture,
-  so removal is content-neutral. A reference to an UNDECLARED file is
-  OPF-031 (declare-missing's lane) and is left alone, as are external
-  schemes and references with no href at all. Both element shapes are
-  removed: self-closed and the paired `<reference>...</reference>`.
-
-- **`--fix-item-properties`**: the OPF-014 inverse of the attribute scrub --
+  (OPF-032; a guide block pointing cover/thumbimage references at JPEGs is
+  the dominant fingerprint). The guide is furniture, so removal is
+  content-neutral. A reference to an UNDECLARED file is OPF-031
+  (declare-missing's lane) and is left alone, as are external schemes and
+  references with no href at all. Both element shapes are removed: self-closed
+  and the paired `<reference>...</reference>`.
+- **`--fix-item-properties`**: the OPF-014 inverse of the attribute scrub:
   declare what the document contains instead of stripping it. A whole-book
   census reads each content document (`scripted` from a `<script>` element
   or a `<form>`; `svg` from an `<svg>`; `remote-resources` from an
@@ -559,114 +548,81 @@ leftovers whose failing OPF is a stale non-rootfile are unreachable by construct
   `\son[a-z]+=` lexically cannot tell a handler from `only=`/`once=`, and
   the handler demand was never verified against the oracle the way the form
   was.
-
 - **`--strip-presentational-attrs`**: strip the deprecated presentational
-  hints the XHTML 1.1 DTD rejects wherever they appear -- `align`,
+  hints the XHTML 1.1 DTD rejects wherever they appear: `align`,
   `valign`, `border`, `bgcolor`, `vspace`, `hspace`, `compact`
   (element-agnostic presentation), body's `link`/`vlink`/`alink`/`text`/
   `background` color family (body-scoped: `link` on anything but `<body>`
   is a different attribute class and survives), `type` on the list
-  elements (legal -- and load-bearing -- on `style`/`link`/`script`, which
+  elements (legal, and load-bearing, on `style`/`link`/`script`, which
   are never touched), and the Amazon `data-AmznRemoved` scraper junk.
-  HONEST CAVEAT, Brandon-approved 2026-11-04: these are presentational
-  hints, and readers that honor them render differently after the strip
-  (`bgcolor` stops coloring, `align` stops centering); the edit is
-  anchored to real start tags, attribute-counted, and never touches CDATA
-  or comments.
-
+  Ruled caveat (the maintainer's decision, 2026-11-04): these are
+  presentational hints, and readers that honor them render differently
+  after the strip (`bgcolor` stops coloring, `align` stops centering). The
+  edit is anchored to real start tags, attribute-counted, and never touches
+  CDATA or comments.
 - **`--encode-ref-brackets`**: percent-encode raw `[`/`]` in the PATH
   portion of internal `src`/`href` references whose archive target exists
-  with the raw brackets (RSC-020 'Illegal character in path segment'; the
-  2026-11-04 census's 59-book lane). The issue #19 mechanism: epubcheck
-  decodes references before entry lookup, so the encoded spelling resolves
-  to the raw-spelled entry; `encode-url-spaces` performs this encoding
-  only while renaming space-bearing entries, and brackets WITHOUT spaces
-  were uncovered. The fragment and query portions are left untouched
-  (brackets there are not path-segment findings), entry names are never
-  renamed, unresolvable and external references stay as written, and the
-  walk covers content documents, the OPF, the NCX, and stylesheet `url()`
+  with the raw brackets (RSC-020 'Illegal character in path segment').
+  epubcheck decodes references before entry lookup, so the encoded spelling
+  resolves to the raw-spelled entry; `encode-url-spaces` performs this
+  encoding only while renaming space-bearing entries, and brackets WITHOUT
+  spaces are this flag's class. The fragment and query portions are left
+  untouched (brackets there are not path-segment findings), entry names are
+  never renamed, unresolvable and external references stay as written, and
+  the walk covers content documents, the OPF, the NCX, and stylesheet `url()`
   tokens.
-
 - **`--encode-ref-delims`**: percent-encode a literal `#` or `?` inside a
   filename reference whose raw delimiter defeats the reference's own
-  resolution (issue #26, the Elminster bookmate conversion: 36 of 38
-  manifest hrefs carried `#01`, parsed as file `Elminster_` plus fragment,
-  RSC-001 'File ... could not be found', and epubcheck never parsed the
-  documents at all). Two gates, both required: the reference must NOT
-  resolve as written -- its path portion, read the way the oracle and
-  every reader parse it (first `#`/`?` starts fragment/query), must miss
-  the archive; a working `doc.xhtml#intro` is never touched, and where
-  both `a` and `a#b` exist the RFC spelling wins. And the delimiter-
-  encoded spelling MUST match an archive entry (the issue #19 mechanism:
-  epubcheck decodes references before entry lookup, so the encoded form
-  resolves to the raw-spelled entry). Wholesale refusals: a value whose
-  attribute text carries a numeric character reference anywhere (`&#` --
-  the entity's own spelling contains a raw `#`, and the verbatim rewrite
-  would corrupt it, e.g. `&#38;` into a malformed `&%2338;`), and a value
-  whose path portion is empty (`#intro` is an in-document anchor, never
-  filename damage). Entry names stay raw-spelled; a
-  genuinely missing file stays as written. The walk covers content
-  documents, the OPF, the NCX, and stylesheet `url()` tokens, anchored on
-  the same start-tag/PI matcher outside comments and CDATA; the
-  stylesheet decode now carries the same non-UTF-8 guard as the markup
-  branches (a non-UTF-8 stylesheet is copied byte-for-byte, reported
-  `non_utf8_docs_skipped` -- the reference encodes alone select that
-  branch too).
-
-- **`--prune-dead-spine`**: the shell repair -- fires ONLY when half or
+  resolution (in `href="Book_#01.htm"` the reference parses as file
+  `Book_` plus fragment `01.htm`: the manifest item goes missing with
+  RSC-001 'File ... could not be found', and epubcheck never parses the
+  document at all). Two gates, both required: the reference must NOT
+  resolve as written (its path portion, read the way the oracle and every
+  reader parse it, with the first `#`/`?` starting fragment/query, must
+  miss the archive; a working `doc.xhtml#intro` is never touched, and where
+  both `a` and `a#b` exist the RFC spelling wins). And the delimiter-
+  encoded spelling MUST match an archive entry (epubcheck decodes
+  references before entry lookup, so the encoded form resolves to the
+  raw-spelled entry). Wholesale refusals: a value whose attribute text
+  carries a numeric character reference anywhere (`&#`; the entity's own
+  spelling contains a raw `#`, and the verbatim rewrite would corrupt it,
+  e.g. `&#38;` into a malformed `&%2338;`), and a value whose path portion
+  is empty (`#intro` is an in-document anchor, never filename damage).
+  Entry names stay raw-spelled; a genuinely missing file stays as written.
+  The walk covers content documents, the OPF, the NCX, and stylesheet
+  `url()` tokens, anchored on the same start-tag/PI matcher outside
+  comments and CDATA; the stylesheet decode carries the same non-UTF-8
+  guard as the markup branches (a non-UTF-8 stylesheet is copied
+  byte-for-byte and reported `non_utf8_docs_skipped`; the reference encodes
+  alone select that branch too). The flag rides the delimiter bar (see The
+  epubcheck gate).
+- **`--prune-dead-spine`**: the shell repair. It fires ONLY when half or
   more of the manifest's content hrefs name files the archive does not
-  carry (the audit battery's `shell` analyzer names the same shape; the
-  2026-11-04 Wandering Inn shells: 738 and 736 of 755/752 items dead --
-  verified by content walk as the OTHER books' chapters, never a spelling
-  mismatch). Drops the dead manifest items and the spine itemrefs that
-  name them, prunes the dead NCX navPoints (the existing dangling-target
-  prune, coordinated on), and re-sequences the surviving playOrders to
-  1..K UNCONDITIONALLY -- epubcheck 5.3 flagged "the first playOrder
-  value is not 1" on the post-prune 448..461 run even though the
-  base-free contract read it satisfied (the minimal matrix missed the
-  shell shape; the oracle rules). Nothing real is lost: the dropped
-  positions never resolved, and the book that remains is the complete,
-  coherent chapter range the archive actually carries. A lone missing
-  chapter never crosses the signature: the spine non-goal stays in force
-  for ordinary damage. Since v1.1.0 the dead census also refuses items
-  whose file EXISTS under a delimiter-encoded spelling (issue #26): those
-  hrefs are the `--encode-ref-delims` repair class, and pruning them
-  would amputate live documents while the counts read it as an error win
-  -- the accepted Elminster candidate was `dead_spine_items_pruned: 36`
-  on a book whose archive carried all 38 documents. The audit's shell
-  analyzer subtracts the same recoverable slice before its verdict: a
-  book whose manifest "missing" is all recoverable now reads ADVISORY
-  naming the encode, never SHELL/re-source. Since v1.2.2 the census also
-  reads the layout its hrefs are written in for the plain href (the
-  v0.52.0 lesson, census edition, issue #35): when `--encode-url-spaces`
-  co-fires, a raw-space href whose file exists in the source layout is
-  the rename pass's repair class, never prune material -- before this
-  arm the census read only the renamed output layout and every raw-space
-  href read dead (the Flux specimen manufactured a 97% shell signature,
-  31 of 32, on a book whose files were all present).
+  carry (the audit battery's `shell` analyzer names the same shape). Drops
+  the dead manifest items and the spine itemrefs that name them, prunes
+  the dead NCX navPoints (the existing dangling-target prune, coordinated
+  on), and re-sequences the surviving playOrders to 1..K UNCONDITIONALLY:
+  epubcheck flags "the first playOrder value is not 1" on a post-prune
+  run even where the base-free contract reads it satisfied. Nothing real
+  is lost: the dropped positions never resolved, and the book that remains
+  is the complete, coherent chapter range the archive actually carries. A
+  lone missing chapter never crosses the signature: the spine non-goal
+  stays in force for ordinary damage. The dead census refuses two classes
+  of item that look dead and are not: an item whose file EXISTS under a
+  delimiter-encoded spelling (those hrefs are the `--encode-ref-delims`
+  repair class, and pruning them would amputate live documents while the
+  counts read it as an error win), and, when `--encode-url-spaces`
+  co-fires, a raw-space href whose file exists in the source layout (the
+  rename pass's repair class, never prune material; the census therefore
+  reads the layout its hrefs are written in for the plain href). The
+  audit's shell analyzer subtracts the same recoverable slice before its
+  verdict: a book whose manifest "missing" is all recoverable reads
+  ADVISORY naming the encode, never SHELL/re-source.
 
-Thirty-one of the thirty-five are evaluated by the normal `gate`: unlike the lossy strips,
-their benefit is visible to epubcheck (they clear errors), so a run with no measurable
-improvement is a noop and nothing is applied. `--fix-cover`, `--encode-url-spaces`, and
-`--fix-media-types` (whose gains sit on axes epubcheck's counts do not measure:
-cover wiring is not a schema finding; the rename half's PKG-010 gain sits on the
-warning axis; the font half's CSS-007 gain sits on the INFO axis) are accepted
-under the same `no_worse` bar the lossy strips use, with the partial rule intact.
-`--encode-ref-delims` carries its own acceptance bar, keyed on its fix having
-fired: the missing-file mask. A manifest item whose file the archive lacks is
-never parsed by epubcheck, so that document's own schema errors stay invisible
-(the fatal branch's masking, one class over: a fatal halts its file's remaining
-checks, a missing file skips the file entirely); the strict error decrease the
-error-cleanup branch demands would read the mask lifting as a regression, and the
-spine-amputating prune would win the gate fight (0f/3e -> 0f/1e by deleting the
-documents, against the encode's 0f/3e -> 0f/6e by opening them). The bar is the
-fatal branch's, one class over: net-new fatals reject, a still-fatal candidate
-stays partial (never auto-applied), a fatal-free candidate accepts whatever the
-unmasking did to the error count; the #10 spine-collapse veto still overrides
-(as does its #35 half-spine arm).
-CDATA sections are never rewritten
-anywhere; comment bodies only by the double-hyphen fix above, and nothing else inside
-them.
+The acceptance bar each flag rides is stated once, in [The epubcheck
+gate](#the-epubcheck-gate). CDATA sections are never rewritten anywhere; comment
+bodies only by the double-hyphen fix above, and nothing else inside them.
 
 ### Transform invariants
 
@@ -684,24 +640,24 @@ them.
   numeric entities, and single `xmlns` declarations are left exactly as they are.
 
 ### Opt-in, lossy: broken tags strip (`--strip-broken-tags`)
-Strips leaked HTML closing tags missing their open brackets (e.g. `</p>` rendering as raw text). 
+Strips leaked HTML closing tags missing their open brackets (e.g. `</p>` rendering as raw text).
 Since this removes visible text from the reading experience, it is lossy by design and off by default. It is evaluated via the `no_worse` acceptance gate.
 
 ### Opt-in, lossy: watermark strip (`--strip-watermarks`)
-Strips known producer and redistributor watermarks out of EPUBs (e.g. OceanofPDF.com, ABC Amber LIT Converter). The removal is a balanced-element surgery rather than regex slicing: it locates the stamp and deletes the outermost wrapper whose *entire visible text* is the watermark, ensuring prose that merely mentions the URL is preserved. Also drops known zero-byte marker files. Like other lossy operations, this is verified via `no_worse`.
-
-### Opt-in, lossy: stub-document strip (`--strip-stub-docs`)
-Drops spine documents whose entire visible BODY text is one identical short placeholder repeated across the spine: the Bookmate/DRM-sample export whose chapters are all the same "content unavailable" notice, valid XHTML that epubcheck passes. The identity rule mirrors the emptytext analyzer's placeholder signals and is deliberately conservative: a candidate doc's visible body text is 12-600 characters (short, not blank) and IDENTICAL to the text of at least two other spine docs, and the class covers at least 30% of the spine; only the single most common repeated class qualifies. The pool is the `<body>` span, not the whole document (whole document when a doc has none; a converter stamps the same head `<title>` on every shell page, which used to weld unrelated docs into a fake stub class), and an image-carrier page (an `<img>`/`<image>` present, whatever short text it carries) is exempt outright -- exempt from the license count AND from the drop, so placeholder text stamped onto an image page never licenses anything (v1.2.7: the oceanofpdf shells stamp a one-line ad on every page they gut, and the cover/titlepage are image carriers the book needs): those are illustrated part-divider pages, furniture the strip must never delete (the Great Change misfire, 2026-10-05).
-
-The drop cascades fully: the placeholder archive entries, their manifest items and spine itemrefs (with every package edge rewritten), their NCX navPoints (the always-on playOrder resequencing heals the sequence afterward), their nav toc `<li>` entries, the OPF guide `<reference>` elements naming a dropped file (v1.2.7: a reference left behind would read OPF-031 + RSC-007 on the pruned book -- errors the drop manufactured; `prune_guide_refs_to` drops it with the manifest prune and the shell prune wired the same way), and since v1.2.8 the broken-reference existence sets: `anchor_present`/`anchor_present_src` subtract the dropped files so a surviving document's link INTO a dropped stub strips (anchor text kept, the prune's own contract) instead of dangling (the Goldfinger ten: 26 RSC-007s into dropped split docs gate-rejected every repair from the stub strip's first ship until this fix). Refusals, each reported as a no-op: no repeated class, the class under the fraction bar, and the class covering the whole spine (a book whose every spine doc is the same stub is EMPTY; it needs a re-source, never a repair). Accepted under the `no_worse` bar with the partial rule intact.
-
-When the stamp link sits inline (no clean wrapper), the bare `<a>` element may be
+Strips known producer and redistributor watermarks out of EPUBs (e.g. OceanofPDF.com, ABC Amber LIT Converter). The removal is a balanced-element surgery rather than regex slicing: it locates the stamp and deletes the outermost wrapper whose *entire visible text* is the watermark, ensuring prose that merely mentions the URL is preserved. Also drops known zero-byte marker files. When the stamp link sits inline (no clean wrapper), the bare `<a>` element may be
 deleted only when the match demonstrably holds nothing but the stamp: a tag-free
 body no longer than a stamp, or a body whose visible text is exactly the
 watermark. An anchored match larger than that (an unclosed stamp `<a>` that
 swallowed prose out to the next unrelated `</a>`) is refused: nothing is removed,
 the refusal is counted (`watermark_refusals`) and reported for manual repair, and
-`run phase1` surfaces it as a `manual_watermark_repair` decision.
+`run phase1` surfaces it as a `manual_watermark_repair` decision. Like other lossy operations, this is verified via `no_worse`.
+
+### Opt-in, lossy: stub-document strip (`--strip-stub-docs`)
+Drops spine documents whose entire visible BODY text is one identical short placeholder repeated across the spine: the Bookmate/DRM-sample export whose chapters are all the same "content unavailable" notice, valid XHTML that epubcheck passes. The identity rule mirrors the emptytext analyzer's placeholder signals and is deliberately conservative: a candidate doc's visible body text is 12–600 characters (short, not blank) and IDENTICAL to the text of at least two other spine docs, and the class covers at least 30% of the spine; only the single most common repeated class qualifies. The pool is the `<body>` span, not the whole document (whole document when a doc has none: a converter stamps the same head `<title>` on every shell page, which would weld unrelated docs into a fake stub class), and an image-carrier page (an `<img>`/`<image>` present, whatever short text it carries) is exempt outright, from the license count AND from the drop: placeholder text stamped onto an image page never licenses anything, and a cover or an illustrated part-divider is furniture the strip must never delete.
+
+The drop cascades fully: the placeholder archive entries, their manifest items and spine itemrefs (with every package edge rewritten), their NCX navPoints (the always-on playOrder resequencing heals the sequence afterward), their nav toc `<li>` entries, the OPF guide `<reference>` elements naming a dropped file (dropped by `prune_guide_refs_to`, the same sweep the manifest prune and the shell prune run; a reference left behind would read OPF-031 + RSC-007 on the pruned book), and the broken-reference existence sets: `anchor_present`/`anchor_present_src` subtract the dropped files, so under `--prune-missing-resources` a surviving document's link INTO a dropped stub strips (anchor text kept) instead of dangling; the strip on its own leaves such a link in place. The rename and encode passes keep the full sets deliberately: they read the SOURCE layout by design. Refusals, each reported as a no-op: no repeated class, the class under the fraction bar, and the class covering the whole spine (a book whose every spine doc is the same stub is EMPTY; it needs a re-source, never a repair). Accepted under the `no_worse` bar with the partial rule intact.
+
+The fourth lossy mode, the page-number strip, has its own section below.
 
 ## Archive rewrite
 
@@ -711,7 +667,7 @@ a missing entry is added (`mimetype_added`) and wrong or whitespace-padded conte
 normalized (`mimetype_normalized`), both counted in the report and gate-checked like
 any other fix. The entry carries the source entry's timestamp, or 1980-01-01 when it
 is being added, never the wall clock: repairing one book twice must produce identical
-bytes, and this was the only entry not written from a source `ZipInfo`. It is built as
+bytes, and this is the only entry not written from a source `ZipInfo`. It is built as
 a fresh `ZipInfo` rather than the source one because OCF requires the mimetype entry to
 carry no extra field. Content documents and the NCX get the transforms above; every other
 entry is copied verbatim with its original compression. An eligible entry that no
@@ -720,20 +676,52 @@ clean non-UTF-8 file cannot be silently mangled. A document that is not valid UT
 at all (windows-1252, UTF-16) is never decoded-with-replacement and re-encoded: it is
 copied byte-for-byte, counted in the report (`non_utf8_docs_skipped`), and left for
 manual repair. The anchor pass (`--strip-broken-anchors`) runs after every other
-content fix, against an id snapshot that replicates each id-moving fix ahead of it. A
-`RepairReport` records
-per-transform counts and whether the NCX uid was synced.
+content fix, against an id snapshot that replicates each id-moving fix ahead of it.
+A `RepairReport` records per-transform counts and whether the NCX uid was synced.
+
+Every `zout.writestr` in the copy loop is handed a private `ZipInfo` (`copy.copy` of
+the source's, a fresh one on a rename). `writestr` stamps the info it is given with
+the destination's offsets; sharing the source's info repoints the open source
+archive's own name lookups into the output file mid-loop, and one drifted probe
+reads whole books as unreadable.
 
 ## The epubcheck gate
 
-`gate(before, after)` classifies a repair:
+### The three acceptance bars
 
-- `reject` if `after.fatals > before.fatals` (a net-new fatal).
-- If `before.fatals > 0`: `accept` when `after.fatals == 0`; `partial` when fatals were
-  reduced but not eliminated; `noop` when unchanged. Error-count changes are ignored
-  here, because fixing a fatal unmasks previously-hidden errors in the same file.
-- If `before.fatals == 0`: `reject` if errors rose, `accept` if they strictly fell,
-  else `noop`.
+- **`gate(before, after)`**, the default for every transform whose benefit is visible
+  to epubcheck:
+  - `reject` if `after.fatals > before.fatals` (a net-new fatal).
+  - If `before.fatals > 0`: `accept` when `after.fatals == 0`; `partial` when fatals
+    were reduced but not eliminated; `noop` when unchanged. Error-count changes are
+    ignored here, because fixing a fatal unmasks previously-hidden errors in the same
+    file.
+  - If `before.fatals == 0`: `reject` if errors rose, `accept` if they strictly fell,
+    else `noop`.
+- **`no_worse(before, after)`**, for the flags whose gain sits on an axis epubcheck's
+  counts do not measure: the four lossy modes (`--strip-pagination`,
+  `--strip-broken-tags`, `--strip-watermarks`, `--strip-stub-docs`, whose gain is
+  invisible to epubcheck), `--fix-cover` (cover wiring is not a schema finding),
+  `--encode-url-spaces` (the rename half's PKG-010 gain sits on the warning axis),
+  and `--fix-media-types` (the font half's CSS-007 gain sits on the INFO axis). It
+  accepts when the result is no worse: no net-new fatals, and no new errors unless
+  fatals were already masking them. A net-new fatal or error is a `reject`.
+- **the delimiter bar**, for `--encode-ref-delims` only, keyed on its fix having
+  fired: the missing-file mask. A manifest item whose file the archive lacks is
+  never parsed by epubcheck, so that document's own schema errors stay invisible
+  (the fatal branch's masking, one class over: a fatal halts its file's remaining
+  checks, a missing file skips the file entirely); the strict error decrease the
+  error-cleanup branch demands would read the mask lifting as a regression, and a
+  spine-amputating prune would win the gate fight. The bar is the fatal branch's,
+  one class over: net-new fatals reject, a still-fatal candidate stays `partial`
+  (never auto-applied), and a fatal-free candidate accepts whatever the unmasking did
+  to the error count.
+
+`no_worse` and the delimiter bar relax only the improvement demand, never the
+`partial` rule: a result that still has fatals is classified `partial` even when it
+is no worse, so a still-broken book can never be auto-applied.
+
+### Verdicts and application
 
 Only `accept` repairs are applied in place. `partial` repairs are reported for manual
 follow-up and never auto-applied (the book still does not open). If epubcheck cannot
@@ -744,42 +732,42 @@ the gate has not accepted anything, so nothing is applied or written. With
 One reporting rule rides on the noop verdict: the masked-axis reclassification. A
 `noop` on a book that started fatal means the fix fired and the count did not move,
 and with fatals still standing epubcheck's per-file halt hides whatever the fix
-actually cleared below the halt: the dtb:uid comparison (issue #9, where the rule
-was first scoped to the NCX sync), a cleared error axis, or a second latent fatal
-unmasked by the fix that cleared the first (issue #22's embed scar:
-`unbound_prefixes_bound` fired, `1f/1e -> 1f/0e`, fatals read 1 -> 1). Real,
-unmeasurable work on a book that still will not open is `partial`, never a silent
+actually cleared below the halt: the dtb:uid comparison, a cleared error axis, or a
+second latent fatal unmasked by the fix that cleared the first
+(`unbound_prefixes_bound` fired while fatals read 1 -> 1). Real, unmeasurable
+work on a book that still will not open is `partial`, never a silent
 `equal`: partial lands the book on the manual list. Application behavior is
 unchanged (still-fatal candidates are never auto-applied).
 
-One structural veto rides above the count gate: the spine-resolution check. The
+### The structural veto
+
+One veto rides above the count gate: the spine-resolution check. The
 message count is not spine-aware, so a repair that orphans live itemrefs (manifest
 items pruned whose files the archive still carries, idrefs rewritten to forms that
 match nothing) removes the broken documents' errors from the measurement and a
-destroyed book can read as an error reduction (issue #10: a raw-space fan
-conversion's eight spine items pruned as "missing", gate accepted
-`0f/17e/8w -> 0f/10e/0w`). `process_book` therefore probes both packages with
+destroyed book can read as an error reduction. `process_book` therefore probes both packages with
 `spine_resolution` (total, resolved, dangles; itemref -> manifest item ->
 archive entry, resolved through the same helper the repair's existence checks
 use) and vetoes any candidate whose dangle count rises: `reject`, regardless of
 the counts and regardless of which bar a fix class promotes under.
 
-The veto's second arm (v1.2.2, issue #35) covers the prune class the dangle
+The second arm covers the prune class the dangle
 count cannot see: pruning removes the dangling declarations along with the
 rest, so an amputation LOWERS the dangle count to zero while the error count
-improves on the smaller book (the Flux specimen measured `0f/38e/31w ->
-0f/30e/0w` with 31 of 32 spine documents gone behind the title page). A
+improves on the smaller book. A
 `dead_spine_items_pruned` candidate whose spine resolves to less than half of
 what resolved before the repair is a REJECT with `(spine halved)` in the
 summary. The comparison counts documents that RESOLVE on both sides, so the
-genuine shell keeps its contract (the Wandering Inn prune drops only
+genuine shell keeps its contract (it drops only
 never-resolving positions: the same documents resolve before and after, no
 veto); "less than half" is strict, and the arm fires only when the prune
 counter is present. Both arms share the probe's fail-open contract: a package
 the probe cannot read (unreadable archive, no locatable OPF) vetoes nothing,
 and `--no-validate` skips them with the rest of the gate.
 
-The oracle itself runs two ways: the `epubcheck --json -` subprocess, or a persistent
+### The oracle
+
+The oracle runs two ways: the `epubcheck --json -` subprocess, or a persistent
 daemon (`_EpubcheckDaemon`, a bounded pool sized by `--workers`) that writes
 `FastDaemon.java` at runtime and launches it through Java's single-file source
 launcher (in-memory compilation by the running JVM: no javac, no version skew),
@@ -787,9 +775,19 @@ driving the warm JVM over a pipe. The daemon answers with the counts it reads fr
 the JSON that epubcheck's own `CheckingReport.generate()` serializes (the same
 document `--json` produces), so both paths measure identically by construction.
 (Epubcheck's JSON counts aggregated messages, not occurrences: a defect repeated
-three times is one error. The gate has always measured that scale.) Every daemon
+three times is one error. The gate measures that scale.) Every daemon
 roundtrip is bounded by the caller's timeout, and any daemon failure tears it down
 and falls back to the subprocess for good.
+
+The budget for one book is size- and shape-scaled (`oracle_timeout_for`): 300
+seconds, plus 60 seconds per started 10 MB above 10 MB (decimal MB), plus 60
+seconds per started 500 archive entries above 1,000, capped at 1,800 seconds. A
+path that does not open as a zip falls back to the size term alone. One
+subprocess retry follows a timed-out attempt (the daemon path's subprocess
+fallback is that attempt); only a double timeout raises `OracleTimeout`, which
+the gate reports as `(epubcheck timeout)` rather than `(epubcheck failed)`. An
+exhausted budget is a timing result, never a repair verdict, so the sweep
+selectors keep such a book a candidate.
 
 ## Page-number strip (opt-in, lossy)
 
@@ -801,7 +799,7 @@ content; it is off by default and never runs unless requested.
 Scope is `<p>` elements (where the defect is carried). A self-closing `<p .../>`
 start tag never opens a block: it has no close tag of its own, so a match starting
 there would run to the NEXT paragraph's close and weld the following markup into
-the block (v1.1.1). For each book:
+the block. For each book:
 
 - **Running headers** are short `<p>` blocks repeated >= 8 times across the whole book
   (the title, an author byline, a download watermark); they are page furniture.
@@ -810,11 +808,10 @@ the block (v1.1.1). For each book:
   split across it where the previous block ends in a hyphen, an unfinished previous
   sentence, or it sits between two running headers) or, when the book has a confirmed
   **page-number layer**, when it is any arabic page number in the body. Every removal
-  requires **prose flow** (v1.2.5): at least one of the candidate's immediate gaps (to
+  requires **prose flow**: at least one of the candidate's immediate gaps (to
   the previous or next block) is pure whitespace. A digit enclosed by foreign markup on
-  both sides -- a lone recipe-quantity table cell -- is layout content, never page
-  furniture (the All About Cake cookbook's 110 quantity cells read as a page layer and
-  4 cell boundaries read as interrupts); one-sided furniture stays in scope (a divider
+  both sides (a lone recipe-quantity table cell) is layout content, never page
+  furniture; one-sided furniture stays in scope (a divider
   beside the number).
 - A **page-number layer** is confirmed only when BOTH hold: >= 20 standalone arabic
   numbers AND >= 3 confident interrupts. A chapter-numbered book has zero interrupts, so
@@ -822,11 +819,11 @@ the block (v1.1.1). For each book:
   interrupt, preserving roman chapter and front-matter numbering; a roman counts as a
   number only when it is well-formed (explicit subtractive pairs) and under 100, so
   ordinary words built from roman letters (`mid`, `mix`, `civil`) are never read as
-  pages. Year-range values (1500-2099) are never page numbers.
-- **Internal numbering is never page furniture** (v1.2.6): a document whose standalone-number values are substantially shared with other documents (>= 25%: verse stanzas and sections restart per unit, so their values reappear; page numbers are unique by construction) carries internal numbering, and the strip takes no numbers from it; such documents also contribute neither page-layer signal. A single-document book can never be flagged, and front matter that restarts arabic numbering at 1 gets protected at the cost of missing those page numbers.
+  pages. Year-range values (1500–2099) are never page numbers.
+- **Internal numbering is never page furniture**: a document whose standalone-number values are substantially shared with other documents (>= 25%: verse stanzas and sections restart per unit, so their values reappear; page numbers are unique by construction) carries internal numbering, and the strip takes no numbers from it; such documents also contribute neither page-layer signal. A single-document book can never be flagged, and front matter that restarts arabic numbering at 1 gets protected at the cost of missing those page numbers.
 - **Merging:** only a confident interrupt (lowercase continuation or word split) rejoins
   the two surrounding prose paragraphs (a word split closes up its hyphen), and the
-  merge additionally requires a **flat corridor** (v1.2.5): every gap between the two
+  merge additionally requires a **flat corridor**: every gap between the two
   prose paragraphs and the number between them is pure whitespace, so the splice can
   never consume markup the block model does not own. A self-closing divider inside the
   corridor degrades the merge to delete-only instead of swallowing the divider. The
@@ -839,81 +836,130 @@ the block (v1.1.1). For each book:
   outright. Single- and double-quoted ids are both recognized. The anchors are real
   ids only: `id` and `xml:id` count (xml:id is an id the oracle resolves fragments
   against); a `data-id` is arbitrary data no reader can resolve and never protects a
-  block (v1.2.1).
+  block.
 
 ### Safety nets
 
-Any failure aborts the edit and returns the document unchanged:
+Four independent safety nets; any failure aborts the edit and returns the document
+unchanged:
 
 1. **Character conservation**: the visible text after the strip equals the text before
    minus exactly the removed numbers/headers (whitespace and hyphens normalized away),
    so not one character of prose can be lost or fabricated.
 2. **Tag balance**: `<p>` and `<a>` remain balanced after splicing, and no element's
-   open/close balance changes at all (the all-tag delta net, v1.2.5: the merge that
-   discarded a `<table>` opener run passed the p/a net). The net compares per-tag
+   open/close balance changes at all (the all-tag delta net). The net compares per-tag
    deltas, not absolute counts, so a pre-existing stray close is not a splice error.
-3. **The `no_worse` gate** (below) is the final oracle.
-
-### Acceptance: `no_worse`
+3. **Prose flow**: every destructive decision operates inside a verified prose
+   corridor (above).
+4. **The `no_worse` gate**: the final oracle.
 
 The strip's benefit is invisible to epubcheck (a baked page number is valid markup), so
-the improvement-demanding `gate` does not apply. `no_worse(before, after)` accepts when
-the result is no worse: no net-new fatals, and no new errors unless fatals were already
-masking them. A net-new fatal or error is a `reject`. This mirrors oceanstrip's bar.
-
-`no_worse` relaxes only the improvement demand, never the `partial` rule: a result that
-still has fatals is classified `partial` even when it is no worse, so a still-broken
-book can never be auto-applied through the lossy path.
+the improvement-demanding `gate` does not apply.
 
 ## Library replacement
 
-For a Calibre library (`Author/Title (id)/Title - Author.epub`):
+`bindery library` sweeps a Calibre library tree (`Author/Title (id)/Title - Author.epub`)
+and is a dry run by default: nothing is written without `--apply`.
 
-`--apply` is a filesystem write door and the install door is a metadata.db write door: `--apply --install-to-calibre` is REFUSED with exit 1 while Calibre is running (a fail-closed pgrep guard). `--backup-keep N` (minimum 2) caps the ring of same-named per-book backups.
+The write contract, on `--apply`:
+
+- Only a gate-accepted book is replaced, and only the `.epub` is touched. `metadata.opf`,
+  `cover.jpg`, and `metadata.db` are left for Calibre's own Quality Check sync to
+  reconcile.
+- The replacement is atomic: the repaired bytes are copied into the target's
+  directory as a `<name>.bindery.tmp` temp, fsynced, then renamed over the target with
+  `os.replace` (a same-filesystem rename), and the directory is fsynced so the rename
+  itself survives a crash. The file's mode is preserved; on any failure the temp file
+  is removed, so a half-written temp never lingers in the library.
+- A corrupt or unreadable book is reported and skipped, never aborting the sweep. A
+  per-book progress line goes to stderr; stdout stays the clean report.
+
+Backups are opt-in and are taken before any replacement:
+
+- `--backup DIR` mirrors originals one level deep, `DIR/<book directory>/file.epub`.
+- `--backup-inplace` writes `file.epub.bak` beside each replaced file.
+- The first backup of a book is the only copy of the author original, so it is never
+  overwritten; later backups rotate (`.bak2`, `.bak3`, ...). Each backup is copied to
+  a scratch name and renamed into place, so an interrupted copy cannot leave a
+  truncated file at the backup name.
+- `--backup-keep N` (minimum 2) bounds the rotation to at most N backup files per
+  book; the author original `.bak` is never deleted. Without it the rotation grows
+  unbounded.
+
+`--json FILE` writes a machine-readable report of the run (per-book `status`,
+`applied`, before/after counts, the fix breakdown, summary totals), and
+`--manual-list FILE` writes the paths of every book that was not auto-repaired
+(nochange, equal, partial, reject, error, unreadable), one per line.
 
 ### Native format installation (`--install-to-calibre`)
-Optionally, bindery-cli installs the repaired EPUB as the book's format through cquarry's write module (`WritableCalibreDB`): the file is placed atomically (an in-place replace over the catalogued file when one exists, same path and `data.name`; a fresh placement under the repaired file's stem otherwise) and the `data` row follows through `set_format` (cquarry 1.17's sanctioned remove+add in one transaction), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. The external `calibredb` CLI is no longer used (the v0.23.1 `--replace` crash class is gone with it). It automatically falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
 
-The no-catalog fallback guesses the id from the `(N)` directory fragment. A guessed
+With `--apply`, bindery-cli can also install the repaired EPUB as the book's format
+through cquarry's write module (`WritableCalibreDB`): the file is placed atomically (an in-place replace over the catalogued file when one exists, same path and `data.name`; a fresh placement under the repaired file's stem otherwise) and the `data` row follows through `set_format` (cquarry 1.17's sanctioned remove+add in one transaction), keeping the size truthful and queuing the book in `metadata_dirtied` so Calibre regenerates its sidecar .opf. No external `calibredb` call is involved. It falls back to atomic filesystem replacement if a valid Calibre ID cannot be extracted, and a database failure degrades to the in-place save with a warning rather than losing the repair.
+
+The book id is resolved from `metadata.db` through one read-only path-to-id map per run. The no-catalog fallback guesses the id from the `(N)` directory fragment. A guessed
 id may drive a row update only when metadata.db corroborates it: the book row exists,
 the file lives in that book's own directory, and (when an EPUB is catalogued) carries
 its stored `data.name`. Anything else is a stray file inside a book directory; the
 repair is saved in place and the row is left untouched (updating the row from a stray
-wrote the stray's size over the catalogued entry, the 2026-09-08 stray-size incident),
-and a stale `(N)` directory whose book no longer exists saves in place instead of
+would write the stray's size over the catalogued entry), and a stale `(N)` directory whose book no longer exists saves in place instead of
 crashing the sweep.
 
-This door is lock-class: `--install-to-calibre` is REFUSED with exit 1 while Calibre is running (a fail-closed pgrep guard; close Calibre and re-run).
+### The metadata.db doors
+
+Two doors write through `metadata.db` and are lock-class: REFUSED with exit 1 while Calibre is running (a fail-closed pgrep guard; close Calibre and re-run):
+
+- `audit --tag`
+- `library --apply --install-to-calibre` (`run phase3` reaches it transitively)
 
 ## Audit subcommand (read-only)
 
-`bindery audit {content,pagenumbers,emptytext,ocr,monolithic,completeness,cover,tocdrift,contamination,all} [PATH] [--max-doc-chars N]
-[--tag TAG] [--id IDs]` (v0.15.0, `audit.py`; `--tag` since v0.18.0; `monolithic` since v0.21.0, `--max-doc-chars N`; `--id` since v0.19.0, comma-lists in v0.23.0; `completeness` since v0.36.0; `cover` and `tocdrift` since v0.44.0; `contamination` since v0.50.0) inspects
+`bindery audit {content,pagenumbers,emptytext,ocr,monolithic,completeness,cover,tocdrift,contamination,shell,all} [PATH] [--max-doc-chars N]
+[--tag TAG] [--id IDs]` (`audit.py`) inspects
 EPUB body text for flaws epubcheck cannot see: non-English script blocks, baked-in page-number
 layers (sliding-window density heuristics), empty or thin books, systemic OCR damage, and
 single oversized content documents (one spine doc at or above 300k characters: readers refuse
 to render them even though the book totals normally), damaged archives (every archive entry
-is fully read for CRC + decompression, reporting CORRUPT rather than EMPTY), and spine integrity
+is fully read for CRC + decompression, reporting CORRUPT rather than EMPTY; an entry above
+32 MiB is refused before decompression), and spine integrity
 issues. Manifest/NCX references to absent files are classified as either `convention` (ToC is bloated but
 present documents form a consecutive chapter span) or `fragment` (the span itself is broken).
 
-The archive verdict distinguishes font obfuscation from DRM (Phase 16): entries
+The archive verdict distinguishes font obfuscation from DRM: entries
 `encryption.xml` declares under a font-obfuscation algorithm (the IDPF `2008/embedding`
 URI and both Adobe forms, including the `ns.adobe.com` URI real-world files carry) that
 read fine are the OBFUSCATED advisory (publisher embedding, benign, never a failure); an
 unreadable obfuscation entry is CORRUPT (a broken font, not a business model), and only
 non-obfuscation algorithms give the ENCRYPTED verdict with its DRM skip advice.
 
-Two more advisory analyzers ship in v0.44.0. `cover` reads the package's own cover
+Untrusted metadata XML (OPF, NCX, container) is parsed through a DOCTYPE-and-ENTITY
+refusing parser: a declaration is refused before the stdlib parser sees it, and a
+refused metadata file leaves the book reading as a shell.
+
+`cover` reads the package's own cover
 wiring (the EPUB3 half of the ruled hybrid): a dangling EPUB2 `<meta name="cover">`
 (the `--fix-cover` repair class), an EPUB3 `properties~="cover-image"` declaration,
-and whether the named cover file exists. `tocdrift` diffs the two tables of contents
+and whether the named cover file exists. Manifest hrefs are OPF-relative by
+specification, so the analyzer resolves them against the OPF's own directory (the
+spine-resolution basis), not the archive root: a subdirectory-OPF package reads its
+cover correctly, and a root-level image cannot satisfy a nested package's cover
+reference. `tocdrift` diffs the two tables of contents
 an EPUB 3 book may carry (the NCX navMap against the nav document), reporting
 entries each side is missing and labels that disagree; it feeds decisions, never a
 rewrite (ToC synthesis is out of the repair charter permanently). Both never flag a
 book and never move the exit code.
 
-The contamination analyzer (v0.50.0, issue #8) is advisory by the same contract:
+`shell` is the shell-book detector: what fraction of the manifest's content hrefs
+name files the archive does not contain, on the denominator of resolved plus
+missing itemrefs (the manifest the book claims). A high fraction on a book that
+still opens means the converter wrote a series-wide manifest and shipped a sliver
+of the archive. Itemrefs whose raw `#`/`?` defeated resolution while the
+delimiter-encoded spelling finds the shipped file (`spine_missing_delim`) are not
+missing content, so the verdict runs on the genuine fraction (missing minus
+recoverable): at 50% or more the book reads SHELL, re-source never repair; a book
+whose "missing" is all recoverable reads ADVISORY naming `--encode-ref-delims`.
+Advisory by contract.
+
+The contamination analyzer is advisory by the same contract:
 fan-bundle cosmetics are the judge-and-import class, so it never flags a book and
 never moves an exit code. Three sweeps run over the archive's content documents
 (the spine plus the non-spine html the loader retains on `Book.extra_docs`,
@@ -930,8 +976,7 @@ every doc); *review paste* (helpful counts, review-helpful prompts,
 "out of 5 stars", verified purchase, with reviewer bylines and star rows as
 corroborating-only weak fingerprints) is scoped to the first five content docs.
 The archive-wide corpus exists because fan-bundle junk is package furniture a
-broken manifest can leave entirely off the spine (Hothouse: 52 of 53 content
-docs in no manifest item, a resolved spine of one). On a shell book (no package
+broken manifest can leave entirely off the spine. On a shell book (no package
 metadata) the analyzer reports nothing: there is no "own" to judge foreignness
 against.
 
@@ -954,8 +999,10 @@ separate trigger-safe write module (it registers Calibre's `title_sort`/`uuid4` 
 bumps `books.last_modified`, and cleans link tables before tag deletion). THIN emptytext
 advisories stay untagged; already-tagged books are skipped; a missing file is a scan error, not a
 silent skip. The tag write is lock-class: REFUSED with exit 1 while Calibre is running.
+`--id` scopes the run to comma-separated Calibre book ids through cquarry's single-entity
+`get_book()` fetch (no library-wide cache; incompatible with the directory argument).
 
-`--json FILE` (v0.29.0) writes the same verdicts machine-readably, in the `library --json`
+`--json FILE` writes the same verdicts machine-readably, in the `library --json`
 shape: one record per file with a `status` (`clean`, `problem`, or `error`) and per-analyzer
 verdicts (`problem`, `status`, `details`); the always-on archive/spine verdicts appear OK when
 they were silent, emptytext and completeness are omitted when the archive verdict owns the
@@ -969,7 +1016,8 @@ Exit codes: the audit verb runs its own contract, the inverse of the repair verb
 shape (0 clean, 1 usage, 2 trouble): 0 clean, 1 when any book was flagged (a flag is
 the audit's trouble, so it takes the trouble slot), 2 for its own usage errors (a
 path that is not a directory, a directory with no EPUBs, an unknown book id) and
-for tagging-setup failure.
+for tagging-setup failure, and 3 when findings coexist with a failed `--json` or
+`--tag` write. Argparse-level misuse exits 2 everywhere, before any validation runs.
 
 ## Observe subcommand (read-only census)
 
@@ -991,7 +1039,9 @@ a partial census (exit 2). Counting matches the subprocess oracle by
 construction: the harness reads the JSON document `generate()` serializes
 (Jackson, already on the epubcheck classpath; the legacy whole-document
 code scan stays as the fallback), the same document the gate is calibrated
-on, and aggregates each message ID's entry count and `locations` length.
+on, and aggregates each message ID's entry count and `locations` length. The
+harness also pins epubcheck's per-message serialization cap off, so a book
+with thousands of repeated findings is counted in full rather than truncated.
 
 The optional repair preview (default on; `--no-preview` skips) composes the
 shipped library runner in-process (`run phase1`'s pattern): a dry-run sweep
@@ -1005,21 +1055,21 @@ read-only: the only file the verb writes is the artifact itself, and the
 writer refuses to land it inside the scanned root (the keep-root-clean
 rule; the default output is `observe-<timestamp>.observe` in the current
 directory). The two counting scales are stated in the artifact's `counting`
-block (issue #13): `codes.messages` and the per-book rows' `codes` lists
+block: `codes.messages` and the per-book rows' `codes` lists
 count AGGREGATED epubcheck JSON message entries (one per distinct defect
 text; the scale the repair gate measures), while `codes.occurrences` sums
 the per-message `locations` arrays (the per-site scale the epubcheck text
 summary reports; the same book can differ by orders of magnitude between
-the two, up to ~600x measured). `--against FILE` loads a previous artifact
-of the same schema (v1 accepted: the trend reader's keys exist in both) and
+the two). `--against FILE` loads a previous artifact
+of the same schema (a v1 artifact is accepted: the trend reader's keys exist
+in both) and
 carries a `trend` block: library-total deltas, error-mass delta, and per-code
 book-count changes with `new_codes`/`resolved_codes`. A schema mismatch is a
 usage error, never a silently incomparable trend. Exit codes: 0 artifact
-written, 1 invocation problem (no EPUBs, toolchain missing, output inside
-the scanned root, `--against` schema mismatch), 2 the census harness failed
+written, 1 invocation problem (no EPUBs, toolchain missing, output inside the
+scanned root, `--against` schema mismatch), 2 the census harness failed
 mid-run. The library and audit walks skip `.caltrash` (trash is not library
-content; the 2026-10-24 census found two trashed books walking the tree
-before the guard).
+content).
 
 ## Run verbs (acquisition slices)
 
@@ -1030,7 +1080,8 @@ repairability) over one directory of loose files, in the phase-1 skill's
 documented order. It introduces no new repair classes: every fix, gate, and
 safety net is the shipped one. The verb is read-only until `--apply-lossy` is
 passed, and that flag is the recorded lossy-strip consent; `--backup DIR`
-mirrors originals before any replacement. Consent questions never block the
+mirrors originals before any replacement (backups belong outside the vetted
+directory). Consent questions never block the
 verb: they surface as `decisions_needed` entries in the JSON (never prompts),
 and `--non-interactive` declares that contract for callers. Exit codes per the
 library contract: 0 clean, 1 usage, 2 when any book is flagged, rejected,
@@ -1064,7 +1115,7 @@ the fix `summary`, and the structured fix breakdown: the `fixes` dict plus
 including nochange and reject; usage refusals (missing input, existing
 output) precede any record. The structured fields are the machine-readable
 half of the same information: consumers narrow lossy consent by fix class
-as data, never by substring-matching the rendered summary (v0.45.0; the
+as data, never by substring-matching the rendered summary (the
 phase1 payload inherits them through its per-book repair records).
 
 DST is optional, and the two forms have different write contracts. With a
@@ -1073,9 +1124,10 @@ DST the verb is the rescue form: the gate-accepted bytes are written there
 a DST the verb is a probe: the gate runs and the record carries the
 projection (`output` null, `applied` false), and nothing is written
 anywhere, so probing a file in a vetted tree cannot litter it with a
-`(repaired).epub` sibling (the v0.48.2-and-before default, retired in
-v0.49.0; a probe that would be partial still exits 0 with `status`
-carrying the verdict).
+`(repaired).epub` sibling. A probe that would be partial still exits 0,
+with `status` carrying the verdict. Known limitation: the form with a DST has
+no `equal` branch, so a candidate that changed bytes without changing the
+epubcheck counts is written to DST too, reported as `repaired`.
 
 ## The Calibre plugin (Bindery Repair)
 
@@ -1094,14 +1146,18 @@ Identity and shape: the plugin is `Bindery Repair` (import name
 `bindery_repair`, via the `plugin-import-name-` marker), a
 `FileTypePlugin` with `on_import = True`, `supported_platforms = ['linux']`
 (the loader rejects an empty platform list, which also makes other OSes an
-enforced non-goal).
+enforced non-goal), and `minimum_calibre_version = (7, 0, 0)`: the oldest
+series whose embedded interpreter the compatibility job covers. The vendored
+modules must stay parseable by every interpreter Calibre ships (7.x and 8.x
+embed Python 3.11), so no syntax newer than that floor enters them.
 
 The active fix set is exactly the CLI's default pass: the five
 well-formedness transforms, the NCX pipeline, and the mimetype fix. All
 structural repairs and the lossy strips (including `--strip-stub-docs`)
 stay CLI-only: their acceptance IS the epubcheck gate,
 which cannot run inside Calibre. Opt-in flags are never enabled by the
-plugin; nothing runs ungated.
+plugin. The default pass itself runs without the gate, by design: it is the
+semantics-preserving set, and it is safe ungated.
 
 Behavior contract:
 
@@ -1118,14 +1174,17 @@ Behavior contract:
   under a lock-free best-effort policy: logging failures never break an
   import.
 - Configuration is the `site_customization` string parsed as JSON: `log`
-  (default true), `log_path` (default `<config_dir>/bindery_repair.log`),
+  (default true; `false` disables logging), `log_path` (default
+  `<config_dir>/bindery_repair.log`),
   `max_size_mb` (default 150: refuse absurd files rather than stall an
   import), and `epubcheck_path` (default null). `epubcheck_path` enables the
   experimental on-PATH validation mode: the repaired copy is re-measured with
   the user's epubcheck binary under the `no_worse` bar and refused on a
   regression; an unanswered measurement never refuses. The mode is off by
   default (the latency ruling stands; the default pass is safe ungated).
-- **`max_log_mb`** (default 2): the plugin log's size cap in megabytes, one `.old` generation kept on rotation; `0` disables logging.
+- `max_log_mb` (default 2): the plugin log's rotation cap in megabytes, one
+  `.old` generation kept. `0` disables rotation only; the log then grows
+  without bound, so `log: false` is the switch that turns logging off.
 
 ## Out of scope (non-goals)
 
@@ -1135,25 +1194,23 @@ Behavior contract:
   out of scope.
 - The XHTML 1.1 content-model families (span directly in body, blockquote
   lacking a block child, bare text as a body child) are MEASURED, NOT REPAIRED,
-  by explicit ruling (issue #12, 2026-10-25). They are well-formed but
+  by explicit ruling. They are well-formed but
   schema-invalid; every reader renders them, and the only mechanizable repair is
   wrapping the loose content in the implied element, which changes layout (an
   inline run becomes a margined paragraph). A repair that cannot be made
   deterministically rendering-preserving does not belong in the inventory; the
   observatory tracks the family (RSC-005 families "element not allowed here" /
   "element incomplete" / "text not allowed here"), and `--reserialize` is
-  deliberately inert here (its html5lib path triggers only on XML ParseError,
-  and these documents parse; falsified live on the Dark Star specimen,
-  2026-10-24).
-- Repairing genuinely mangled structure remains opt-in and bounded:
-  `--reserialize` (the lone html5lib dependency) re-parses malformed documents
-  carrying an `<html>` root and re-emits XHTML, refusing non-HTML XML sidecars;
-  corrupted tag names are covered by `--strip-bad-attrs` and
-  `--unwrap-illegal-tags`. Wholesale structural rewrites without a root to anchor
-  on stay out of scope, and anything the opt-ins cannot make deterministically
-  safe is detected as `partial`/`nochange` and reported.
+  deliberately inert here (its html5lib path triggers only on an XML parse
+  error, and these documents parse).
+- Wholesale structural rewrites without a root to anchor on stay out of
+  scope, and anything the opt-ins cannot make deterministically safe is detected
+  as `partial`/`nochange` and reported.
 - Editing human-facing dc: metadata or creating content.
-
+- Conversion between formats (the Calibre conversion engine and ebook-polish's
+  content-improving actions are other tools' territory). The planned EPUB 2 to
+  EPUB 3 upgrade lane (roadmap.md, the 2.0 program) is a charter amendment that
+  lands with its first flag, not a change to this line.
 
 ## The 1.0 stability contract (2026-11-05)
 
@@ -1163,9 +1220,7 @@ document says, and this document is the promise. Concretely, from 1.0.0:
 - **The flag surface is additive.** New opt-in flags may appear; existing
   flags' names and documented semantics do not change. A predicate
   refinement (a flag firing less or more than before) is a behavior
-  change and ships documented in patchnotes with oracle evidence, as
-  base-free (v0.62.0), the doctype narrowing (v0.63.0), and the
-  presentational set's scoping did.
+  change and ships documented in patchnotes with oracle evidence.
 - **The gate is stable.** The two-mode improvement/no-worse acceptance
   bars, the spine-collapse veto (and its half-spine arm), and the shell
   signature's 50% gate are the contract; their thresholds do not move
@@ -1174,11 +1229,11 @@ document says, and this document is the promise. Concretely, from 1.0.0:
   record shapes, the fix-breakdown keys, the exit-code contracts, and the
   observe schema (v2) do not change in 1.x. Consumers (CalibreQuarry's
   lossy-consent mirror) can pin `bindery>=1.0`.
-- **The audit battery is additive.** Analyzers join the battery
-  (`shell`, v0.63.0); existing analyzers' verdict shapes do not change,
+- **The audit battery is additive.** Analyzers join the battery;
+  existing analyzers' verdict shapes do not change,
   and advisory analyzers never move the exit code.
 
 What 1.0 does NOT claim: that every book is repairable. The content-model
 zoo, the shell books (detected, re-source), and the WARN litter stay
-measured by the observatory — the charter's "render identically" line
-puts them out of repair scope permanently.
+measured by the observatory. The charter's "render identically" line puts
+them out of repair scope permanently.

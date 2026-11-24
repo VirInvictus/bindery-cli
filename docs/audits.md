@@ -12,11 +12,44 @@ The `completeness` audit answers the pre-import question "does this book reach i
 
 ## Contamination scan
 
-The `contamination` audit is advisory too: fan-bundle cosmetics are the judge-and-import class. Three sweeps over the archive's content documents (spine plus the non-spine html a broken manifest can strand): another series' name where the book's own identity belongs, judged against the package's own metadata (the head-`<title>` template stamps a sloppy fan bundle leaves on every doc, a volume marker with named words in front of it, a repeated foreign running header); known fan-bundle ad signatures (jnovels, kokoro connect, zerobooks, light-novel download plugs); and pasted review-site text in the first few content docs (helpful counts, "was this review helpful", "out of 5 stars", verified purchase). Every finding is a report a human judges, never a failure.
+The `contamination` audit is advisory too: cosmetics left by a fan bundle are for
+a person to judge at import, so every finding is a report to read. Three sweeps
+run over the archive's content documents (the spine plus the non-spine html a
+broken manifest can strand):
+
+- Another series' name where the book's own identity belongs, judged against the
+  package's own metadata. It catches a head `<title>` template stamped on every
+  doc, a volume marker with named words in front of it, and a repeated foreign
+  running header.
+- Known fan-bundle ad signatures (jnovels, kokoro connect, zerobooks,
+  light-novel download plugs).
+- Pasted review-site text in the first few content docs (helpful counts, "was
+  this review helpful", "out of 5 stars", verified purchase).
+
+## Shell detection
+
+The `shell` audit names books whose manifest lists far more than the archive
+carries: the converter wrote a series-wide manifest and shipped a sliver of the
+files. It reports what fraction of the manifest's content references name files
+missing from the archive. At half or more, the book reads SHELL: the content is
+gone and no repair can put it back, so it needs a re-source. (The repair side's
+`--prune-dead-spine` can trim such a manifest so the book opens straight into the
+chapters it does have.)
+
+A reference defeated only by a raw `#` or `?` in the file name is not counted as
+missing: its file is present, and the fix is `--encode-ref-delims`. A book whose
+missing references are all of that kind reads ADVISORY instead.
+
+```sh
+bindery audit shell ~/MyLibrary
+```
+
+Like completeness and contamination, `shell` is advisory by contract: SHELL books
+are listed as "reported, not flagged" and never move the exit code.
 
 ## Machine-readable reports
 
-`--json FILE` writes the run's verdicts in the same shape `library --json` uses: one record per book with a `status` (`clean`/`problem`/`error`) and per-analyzer verdicts (`problem`, `status`, `details`), plus the always-on archive/spine verdicts (OK when they were silent). This is the contract downstream consumers of the pre-import vetting slice read.
+`--json FILE` writes the run's verdicts in the same shape `library --json` uses: one record per book with a `status` (`clean`/`problem`/`error`) and per-analyzer verdicts (`problem`, `status`, `details`), plus the always-on archive/spine verdicts (OK when they were silent). This is the record shape that consumers of `bindery run phase1` read.
 
 ```sh
 bindery audit all ~/Downloads/epubs --json vetting-report.json
@@ -30,7 +63,7 @@ With `--id`, `--json` accepts exactly one book id (each single-book run writes t
 
 ## Spine-integrity reporting
 
-Both `audit` and `library` reports now classify manifest/NCX references that point to absent files. A `convention` verdict means the ToC is bloated but the present documents form a consecutive chapter span (e.g., the Wandering Inn official-build pattern, safe). A `fragment` verdict means the span itself is broken.
+Both `audit` and `library` reports classify manifest/NCX references that point to absent files. A `convention` verdict means the ToC is bloated but the present documents form a consecutive chapter span (e.g., the Wandering Inn official-build pattern, safe). A `fragment` verdict means the span itself is broken.
 
 ## Archive integrity
 

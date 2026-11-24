@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 bindery audit: read the actual text of every EPUB and flag content problems that
-metadata and structural validators cannot see. Nine analyzers, one tool:
+metadata and structural validators cannot see. Ten analyzers, one tool:
 
   content      non-English bodies (wrong-language editions) and injected
                foreign-language ad-notices (declared lang=eng, body Portuguese
@@ -37,13 +37,16 @@ metadata and structural validators cannot see. Nine analyzers, one tool:
                pasted review-site text in the first few spine docs
                (advisory: the phase-1 disposition is judge-and-import, it
                never flags the book)
+  shell        a manifest that names mostly files the archive never carried:
+               the book is a shell of a series-wide manifest and needs a
+               re-source, never a repair (advisory)
   all          run everything in a SINGLE decompression pass per book
 
 The body-text analyzers began as standalone scripts (audit_epub_content.py /
 audit_epub_pagenumbers.py / audit_epub_emptytext.py), merged here because they
 shared the same spine resolution, library/directory dual-mode, and exit codes,
 differing only in the per-book verdict. `all` opens each EPUB once and feeds
-the decoded spine to all nine analyzers (the expensive part is decompression,
+the decoded spine to all ten analyzers (the expensive part is decompression,
 so this is a real win at library scale).
 
 Sister surface, not sibling file: the catalogue audit lives in cquarry (and

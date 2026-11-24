@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -564,9 +566,9 @@ class _HelpJsonAction(argparse.Action):
             "version": __version__,
             "exit_contract": {
                 "0": "clean (repair: also probed or written, including partial)",
-                "1": "library/run slices: trouble found; repair: trouble "
-                "(refused/failed/unreadable) or invocation problem; audit: "
-                "FINDINGS (the inverse contract, per spec.md); "
+                "1": "repair: trouble (refused/failed/unreadable) or "
+                "invocation problem; library/run slices: invocation problem; "
+                "audit: FINDINGS (the inverse contract, per spec.md); "
                 "lock-class refusals (Calibre open at a metadata.db door)",
                 "2": "library/run slices: trouble found (rejected/error/"
                 "unreadable/partial books; unscoped phase3 sweep); audit: "
@@ -584,6 +586,13 @@ class _HelpJsonAction(argparse.Action):
                     "unreadable/partial); 1 invocation problem",
                     "run phase1": "0 clean; 2 trouble (audit-flagged, "
                     "rejected, partial, error, unreadable); 1 invocation",
+                    "observe": "0 artifact written; 1 invocation problem "
+                    "(no EPUBs, toolchain missing, output inside the scanned "
+                    "root, --against schema mismatch); 2 the census harness "
+                    "failed mid-run",
+                    "run phase3": "the library contract: 0 clean; 2 trouble "
+                    "(rejected/error/unreadable/partial) and an unscoped "
+                    "sweep; 1 invocation problem",
                 },
             },
             "calibre_gates": [
@@ -1699,548 +1708,844 @@ def run_phase3(args) -> int:
 # The repair-flag inventory, one table, two renderings: `_add_repair_flags`
 # registers the short one-liners into argparse argument groups (the compact
 # `--help`), and `--help-repairs` renders the long descriptions as the full
-# reference. Adding a flag means adding a row here; the dests below are the
-# contract tests/test_flags_wiring.py pins.
-# Row shape: (dest, short one-liner, long reference text).
+# reference, while render_repairs_doc writes the same text into
+# docs/repairs.md (pinned by tests/test_repairs_doc.py). Adding a flag means
+# adding a row here and re-running scripts/render_repairs_doc.py; the dests
+# below are the contract tests/test_flags_wiring.py pins.
+# Row shape: (dest, short one-liner, long reference text). The long text is
+# printed in a terminal and rendered as markdown, so it is plain sentences
+# with backticked code and blank lines between paragraphs (never an em-dash
+# or a double-hyphen stand-in, and never a version or issue number: those
+# belong in patchnotes.md).
 _REPAIR_FLAG_TABLE: dict[str, list[tuple[str, str, str]]] = {
     "safe opt-ins (markup-neutral)": [
         (
             "fix_ids",
             "rewrite invalid OPF/NCX ids (RSC-005), every reference in sync",
-            "rewrite ids that are not valid XML names (digit-led, colon-bearing, "
-            "or carrying any character outside the XML NameChar set, like the "
-            "apostrophes calibre copies from filenames) in the OPF manifest and "
-            "the NCX, updating every reference to them (spine idref, spine toc, "
-            "item fallback, media-overlay, the EPUB 2 cover meta). The dc: "
-            "metadata is never altered.",
+            "Rewrite ids that are not valid XML names in the OPF manifest and in the "
+            "NCX. An id qualifies when it starts with a digit, contains a colon, or "
+            "carries any character outside the XML NameChar set, such as the "
+            "apostrophes calibre copies from filenames. Old conversions stamp NCX "
+            "navPoint ids from UUIDs, which is the common NCX shape."
+            "\n\n"
+            "Every reference follows the rename: the spine's `idref` and `toc`, an "
+            "item's `fallback` and `media-overlay`, and the EPUB 2 cover meta, so a "
+            "table of contents never dangles against the ids it names. The reference "
+            "matchers carry the same `data-*` guard the id matchers do, so a "
+            "`data-fallback`, `data-toc`, or `data-content` value is never rewritten."
+            "\n\n"
+            "`dc:` metadata is never altered. The flag touches the OPF, which is why "
+            "it is opt-in.",
         ),
         (
             "add_img_alt",
             'add alt="" to <img> elements missing the required attribute',
-            'add alt="" to <img> elements missing the required attribute. '
-            "Renders identically, but it adds markup the author never wrote, and "
-            'an empty alt asserts "decorative" to a screen reader where a '
-            "missing alt did not; hence opt-in.",
+            'Add `alt=""` to `<img>` elements that are missing the required '
+            "attribute. It renders identically, but it adds markup the author never "
+            'wrote, and an empty `alt` asserts "decorative" to a screen reader where '
+            "a missing one did not. Hence opt-in.",
         ),
         (
             "reserialize",
             "rebuild still-malformed documents via html5lib",
-            "rebuild content documents that are still malformed by re-parsing "
-            "them with html5lib and re-emitting XHTML, closing unclosed non-void "
-            "elements the regex transforms cannot. Runs only on documents that "
-            "are not already well-formed, so good files are untouched.",
+            "Rebuild content documents that still fail to parse by re-parsing them "
+            "with html5lib and re-emitting XHTML. It closes unclosed non-void "
+            "elements (`<p>`, `<div>`, `<span>`, `<blockquote>`, and the like) that "
+            "the regex transforms cannot reach."
+            "\n\n"
+            "It runs only on documents that raise an XML parse error, so documents "
+            "that already parse are left alone even when they carry content-model "
+            "errors (wrapping those would change layout). It needs an `<html>` root "
+            "to anchor on and refuses non-HTML XML sidecars. This is the one repair "
+            "that depends on html5lib, the optional `reserialize` extra.",
         ),
         (
             "strip_bad_attrs",
             "drop invalid attributes (digit-led names, unbound prefixes)",
-            "drop attributes that make the XML unparseable: a name starting "
-            'with a digit (a mangled 31="") or a namespaced name whose prefix '
-            "is not declared anywhere in the document (Office VML v:shapes). "
-            "Surgical and a no-op on well-formed files.",
+            "Drop attributes that make the XML unparseable: a name starting with a "
+            'digit (a mangled `31=""`), or a namespaced name whose prefix is not '
+            "declared anywhere in the document (Office VML's `v:shapes`). Surgical, "
+            "and a no-op on well-formed files.",
         ),
         (
             "escape_unknown_entities",
             "&foo; -> &amp;foo; for names outside the HTML5 table",
-            "escape entity names outside the HTML5 table, which renders exactly "
-            "as browsers already render an unknown entity. Documents whose "
-            "DOCTYPE carries an internal subset (which can declare custom "
-            "entities) are skipped wholesale.",
+            "Escape entity names that are not in the HTML5 table (`&foo;` becomes "
+            "`&amp;foo;`), which renders exactly as browsers already render an "
+            "unknown entity. Documents whose DOCTYPE carries an internal subset are "
+            "skipped wholesale, since a subset can declare custom entities.",
         ),
         (
             "fix_double_colon_tags",
             "escape unescaped pseudo-tags whose name carries :: (a fatal QName break)",
-            "escape the < and > around pseudo-tags whose name contains a double "
-            "colon -- an XML name can carry at most one colon (the QName "
-            "production), so such a construct is never markup and the parser "
-            "dies on it with a fatal RSC-016 (C++ code samples like "
-            "`std::vector<std::shared_ptr>` whose converter escaped the "
-            "trailing bracket but not the tag; the Book of Debugging's last "
-            "library fatal). Escaping both ends restores exactly the text the "
-            "author wrote. Real markup is unreachable by construction: the "
-            "double colon lives in the name grammar itself. Nested templates "
-            "escape inner-first until stable.",
+            "Escape the `<` and `>` around pseudo-tags whose name contains a double "
+            "colon, such as a C++ sample like `std::vector<std::shared_ptr>` whose "
+            "converter escaped the trailing bracket but not the tag. An XML name "
+            "carries at most one colon, so such a construct is never markup, and the "
+            "parser dies on it with a fatal RSC-016."
+            "\n\n"
+            "When the pseudo-tag has a raw closing `>`, escaping both ends restores "
+            "exactly the text the author wrote, and real markup is unreachable "
+            "because the double colon lives in the name grammar itself. A nested "
+            "template is escaped over successive passes until the result is stable "
+            "(at most 16 passes)."
+            "\n\n"
+            "Known limitation: the text after the name runs to the first raw `>` up "
+            "to 120 characters away. When the pseudo-tag's own closing bracket is "
+            "entity-escaped (`&gt;`), everything up to that next `>` is escaped with "
+            "it, real markup included.",
         ),
     ],
     "structural repairs: markup and nesting": [
         (
             "strip_presentational_attrs",
             "strip deprecated presentational attributes (align/valign/bgcolor/border, body link/vlink, list type)",
-            "strip the deprecated presentational hints the XHTML 1.1 DTD rejects "
-            "wherever they appear: align, valign, border, bgcolor, vspace, "
-            "hspace, compact (element-agnostic presentation), body's "
-            "link/vlink/alink/text/background color family, type on the list "
-            "elements (legal -- and load-bearing -- on style/link/script, "
-            "which are never touched), and the Amazon data-AmznRemoved "
-            "scraper junk. HONEST CAVEAT (Brandon-approved 2026-11-04): "
-            "these are presentational hints, and readers that honor them "
-            "render differently after the strip -- bgcolor stops coloring, "
-            "align stops centering. The 2026-11-04 census's largest "
-            "attribute family; the edit is anchored to real start tags and "
-            "never touches CDATA or comments.",
+            "Strip the deprecated presentational hints the XHTML 1.1 DTD rejects, "
+            "wherever they appear: `align`, `valign`, `border`, `bgcolor`, `vspace`, "
+            "`hspace`, and `compact`; the body element's `link`, `vlink`, `alink`, "
+            "`text`, and `background` family; `type` on list elements; and Amazon's "
+            "`data-AmznRemoved` scraper junk. `type` is legal and load-bearing on "
+            "`style`, `link`, and `script`, which are never touched."
+            "\n\n"
+            "The edit is anchored to real start tags and never touches CDATA or "
+            "comments."
+            "\n\n"
+            "Known caveat: these are presentational hints, and readers that honor "
+            "them render differently after the strip (`bgcolor` stops coloring, "
+            "`align` stops centering).",
         ),
         (
             "fix_empty_body",
             "fill a strictly empty <body></body> with <p>&#160;</p>",
-            "inject <p>&#160;</p> inside a strictly empty <body></body> (the "
-            "'body incomplete' error). The numeric character reference needs "
-            "no DTD (a named &nbsp; is an undeclared-entity parse fatal under "
-            "every DOCTYPE epubcheck does not resolve locally) and the "
-            "wrapping p is the block element XHTML 1.1's body content model "
-            "demands, which bare text never satisfied. Adds visible content "
-            "the author never wrote; hence opt-in.",
+            "Fill a strictly empty `<body></body>` with one minimal paragraph, "
+            '`<p>&#160;</p>`, to clear the "body incomplete" error. The numeric '
+            "character reference needs no DTD (a named `&nbsp;` is an "
+            "undeclared-entity parse fatal under every DOCTYPE epubcheck does not "
+            "resolve locally), and the wrapping `p` is the block element XHTML 1.1's "
+            "body content model demands, which bare text never satisfied."
+            "\n\n"
+            "It adds visible content the author never wrote, which is why it is "
+            "opt-in.",
         ),
         (
             "fix_missing_title",
             "inject <title>Unknown</title> when the head has none",
-            "inject a <title>Unknown</title> fallback when the head has no "
-            "usable title: an empty <title/> is filled in, an absent tag is "
-            "added to the head.",
+            "Inject a `<title>Unknown</title>` fallback when the head has no usable "
+            "title: an empty `<title/>` is filled in, and an absent tag is added to "
+            "the head."
+            "\n\n"
+            "The fill is scoped to the `<head>` when the document has one, so an SVG "
+            "`<title>` (visible text: the image's accessibility name) is never filled "
+            "there. Known limitation: a document with no `<head>` is filled "
+            "document-wide, and an empty SVG `<title>` in such a document receives "
+            "the fallback too.",
         ),
         (
             "fix_id_colons",
             'id="X:Y" colons and matching #X:Y fragments become underscores',
-            'translate illegal colons in id="X:Y" and their matching internal '
-            "#X:Y fragment references to underscores, so a ToC never dangles "
-            "against the ids it references (the NCX's content src fragments "
-            "follow the rename). Only the bare id attribute is in scope; the "
-            "fragment of an external URL names a position in that other "
-            "document and survives verbatim.",
+            "Rename any content-document `id` that cannot be an XML NCName to a valid "
+            "one, and translate internal fragment references with it. That covers a "
+            'colon in `id="X:Y"` with its matching `#X:Y` fragments (both become '
+            "underscores), digit-led scraped ids, and apostrophe-bearing calibre ids "
+            "(the same invalid-name check as the manifest half, `--fix-ids`; the "
+            "content half adds the `id_` prefix only when the name cannot start with "
+            "its own first character). The NCX's `content src` fragments follow the "
+            "same predicate, so the table of contents never dangles against the ids "
+            "it references. The fragment matchers translate an apostrophe-bearing "
+            'value such as `href="c1.xhtml#Lisey\'s_story"` whole.'
+            "\n\n"
+            "Three things are never touched: the fragment of an external URL (it "
+            "names a position in another document), `data-id` values, and an escaped "
+            "fragment (a percent-escape like `#caf%C3%A9` or an entity reference). An "
+            "escaped fragment names its target under decoding, and renaming the "
+            "encoded form would manufacture a target that exists nowhere.",
         ),
         (
             "unwrap_block_in_inline",
             "unwrap a <span> illegally wrapping a block element",
-            "unwrap a <span> that illegally wraps a block element "
-            "(<div>/<p>/<blockquote>), keeping the block element and its text.",
+            "Unwrap a `<span>` that illegally wraps a block element (`<div>`, `<p>`, "
+            "`<blockquote>`), keeping the block element and its text.",
         ),
         (
             "strip_invalid_value",
             "strip misplaced value= attributes from non-form elements",
-            'strip misplaced value="..." attributes from elements like <div>, '
-            "<span>, <p> where they are schema violations.",
+            'Strip misplaced `value="..."` attributes from elements like `<div>`, '
+            "`<span>`, and `<p>`, where they are schema violations. A `data-value` "
+            "attribute is arbitrary data and is never touched.",
         ),
         (
             "unwrap_illegal_tags",
             "delete illegal tags (<st>, <w>...) keeping text; styled names safe",
-            "delete illegal/deprecated tags (<st>, <sentence>, <o>, <w>, "
-            "<pagebreak>) while keeping their inner text. Any of those names a "
-            "stylesheet styles as an element selector (class/id selectors do "
-            "not count) is protected book-wide, so styled formatting is never "
-            "destroyed.",
+            "Delete illegal or deprecated HTML tags that break EPUB 3 validation "
+            "(`<st>`, `<sentence>`, `<o>`, `<w>`, `<pagebreak>`) while keeping their "
+            "inner text."
+            "\n\n"
+            "A name that an EPUB stylesheet styles as an element selector is "
+            "protected for the whole book, so styled formatting survives. Both `.css` "
+            "entries and inline `<style>` blocks count, and only element selectors "
+            "do: a class or id selector like `.st` or `#w` does not protect the tag.",
         ),
         (
             "strip_epub3_attrs",
             "scrub EPUB3-only attributes an EPUB2 package rejects (fixed set)",
-            "scrub the EPUB3-only attributes epubcheck rejects on an EPUB2 "
-            "package: page-progression-direction, epub:type, aria-label, role, "
-            "aria-hidden (a fixed, documented set; issue #11 added the last "
-            "two after the 2026-10-25 census found them the dominant "
-            "EPUB3-semantics-on-legacy-package family). Rendering is "
-            "unchanged. Gated on the package version: inert on EPUB 3 books.",
+            "Scrub the EPUB 3-only attributes epubcheck rejects on an EPUB 2 package: "
+            "`page-progression-direction`, `epub:type`, `aria-label`, `role`, and "
+            "`aria-hidden`. It is a fixed, documented set, and rendering is "
+            "unchanged. Lookalikes such as `type` and `aria-labelledby` survive, and "
+            "so does `hidden`, since stripping it would reveal hidden content."
+            "\n\n"
+            "The edit is anchored to real start tags, so prose that merely mentions "
+            '`epub:type="chapter"` is preserved. The flag is gated on the package '
+            "version declared in the OPF: on an EPUB 3 book, or when no version can "
+            "be read, it does nothing, because its target defects only exist below "
+            "EPUB 3.",
         ),
         (
             "downgrade_epub3_tags",
-            "figure/section to div, figcaption to p; semantic name kept as class",
-            "downgrade EPUB3/HTML5 semantic elements to EPUB2 equivalents "
-            "(figure/section to div, figcaption to p), keeping existing classes "
-            "and appending the semantic name as the styling hook. Names a "
-            "stylesheet styles as an element selector are protected book-wide. "
-            "Gated on the package version: inert on EPUB 3 books.",
+            "figure/section/nav/header to div, figcaption to p; semantic name kept as class",
+            "Downgrade EPUB 3 and HTML5 semantic elements to their EPUB 2 "
+            "equivalents: `figure`, `section`, `nav`, and `header` become `div`, and "
+            "`figcaption` becomes `p`. Existing classes are kept and the semantic "
+            'name is appended as the styling hook (`class="figure"`).'
+            "\n\n"
+            "A tag name that a stylesheet styles as an element selector is protected "
+            "book-wide, so styled formatting is never destroyed. Comments and CDATA "
+            "are never rewritten, and a `data-class` attribute is never mistaken for "
+            "the class hook."
+            "\n\n"
+            "Like `--strip-epub3-attrs`, the flag is gated on the package version: it "
+            "does nothing on an EPUB 3 book or when no version can be read, and the "
+            "version read accepts a namespace-prefixed package element (`<opf:package "
+            'version="2.0">` is an EPUB 2 declaration).',
         ),
         (
             "fix_misnested_inline",
             "rewrite the drop-cap mis-nest <i><b>X</i></b> to <i><b>X</b></i>",
-            "rewrite the Mobipocket drop-cap mis-nest <i><b>X</i></b> to "
-            "<i><b>X</b></i> (em/strong variants, either tag order): the unique "
-            "well-formed form of the same two spans. A punctuation run caught "
-            "between the reversed closers (<i><b>xile</i>,</b>) survives "
-            "outside both spans; a letter run there is refused (which span "
-            "keeps the letters has no deterministic answer).",
+            "Rewrite the Mobipocket drop-cap mis-nest `<i><b>X</i></b>` to "
+            "`<i><b>X</b></i>`, the one well-formed form of the same two spans "
+            "(`em`/`strong` variants and either tag order are covered)."
+            "\n\n"
+            "Only the both-open-then-reversed-close shape is touched, and only within "
+            "bounds: the start tags must be bare (no attributes), the shared text "
+            "between them 1 to 64 characters, and at most 8 punctuation characters "
+            "may sit between the reversed closers. A punctuation run caught there "
+            "(`<i><b>xile</i>,</b>`) survives outside both spans, and a letter run is "
+            "refused, because which span keeps the letters has no deterministic "
+            "answer.",
         ),
         (
             "fix_stray_close",
             "remove end tags whose element has no open start (stray </div>)",
-            "remove an end tag whose element has no open start tag anywhere "
-            "above it (the stray extra </div> on a shell page, which cascades "
-            "into 'body must be terminated by the matching end-tag'). A merely "
-            "mis-nested pair (<div><span></div></span>) is never touched: a "
-            "close is removed only when nothing by that name is open.",
+            "Remove an end tag whose element has no open start tag anywhere above it: "
+            'the stray extra `</div>` on a shell page, which cascades into "body must '
+            'be terminated by the matching end-tag".'
+            "\n\n"
+            "A merely mis-nested pair (`<div><span></div></span>`) is never touched. "
+            "A close is removed only when nothing by that name is open.",
         ),
         (
             "fix_unterminated_attr",
             "close attribute values open to the tag's own '>' (RSC-016)",
-            "close an attribute value left open to the tag's own '>' "
-            '(<p class="footnote> -> <p class="footnote">): the parser '
-            "swallows prose into the value until the next quote and dies on the "
-            "first '<' it meets. Guards keep it off legal >-bearing values: "
-            "bare-word values only, and no quote may close before the next '<'.",
+            "Close an attribute value left open to the tag's own `>` (`<p "
+            'class="footnote>` becomes `<p class="footnote">`). The parser swallows '
+            "prose into the value until the next quote and dies on the first `<` it "
+            "meets."
+            "\n\n"
+            "Guards keep it off legal `>`-bearing values: only double-quoted values "
+            "are judged, the value must be one bare word, and no quote may close "
+            "before the next `<`.",
         ),
         (
             "fix_cdata_terminator",
             "complete truncated /*]]> closers in inline <style> blocks (CSS-008)",
-            "complete a truncated CDATA-terminator comment in an inline <style> "
-            "block: /*]]> becomes /*]]>*/. A comment-wrapped CDATA block whose "
-            "closing */ the converter dropped leaves the CSS parser inside an "
-            "unterminated comment: one CSS-008 'Premature end of file' per "
-            "affected document. Only the malformed-terminator token class; "
-            "invalid CSS stays unfixed, and stylesheet files are not touched.",
+            "Complete a truncated CDATA-terminator comment in an inline `<style>` "
+            "block: `/*]]>` becomes `/*]]>*/`. A comment-wrapped CDATA block whose "
+            "closing `*/` the converter dropped leaves the CSS parser inside an "
+            'unterminated comment, one CSS-008 "Premature end of file" per affected '
+            "document."
+            "\n\n"
+            "Only the malformed-terminator token class is rewritten. Invalid CSS "
+            "stays unfixed, and stylesheet files are not touched.",
         ),
     ],
     "structural repairs: references and resources": [
         (
             "strip_dead_font_faces",
             "drop @font-face blocks whose url() references all miss the archive (RSC-007)",
-            "drop every @font-face block in a stylesheet whose url() "
-            "references ALL fail to resolve against the archive (issue #27: "
-            "ebook-convert azw3->epub carries the source's font declarations "
-            "but not the font payloads, filling page_styles.css with "
-            "url(styles/XXXXXXXXXXXXXXXX) placeholders -- one RSC-007 per "
-            "dead reference, hundreds per book, and the manifest prune has "
-            "no item to answer because the OPF never declared the fonts). "
-            "The font never loaded, so the fallback rendering is what the "
-            "file already does and dropping the block is rendering-neutral. "
-            "One live url() keeps the whole block, as does a scheme, "
-            "fragment, raw-space, or url()-less (local()-only) block; "
-            "resolution walks the same helper the reference repairs use, "
-            "and comments/CDATA are never rewritten. Runs on .css entries.",
+            "Drop every `@font-face` block in a stylesheet whose `url()` references "
+            "all miss the archive. The shape is ebook-convert's azw3 to EPUB output: "
+            "it carries the source's font declarations without the font payloads, "
+            "filling `page_styles.css` with `url(styles/XXXXXXXXXXXXXXXX)` "
+            "placeholders. Each dead reference is an RSC-007 the manifest prune "
+            "cannot reach, because the OPF never declared the fonts."
+            "\n\n"
+            "The drop is rendering-neutral: the font never loaded, so the fallback is "
+            "what the file already does. One live `url()` keeps the whole block, and "
+            "so does anything that cannot be read exactly: a scheme, query, fragment, "
+            "raw-space, or `local()`-only reference, or a block with nested braces. "
+            "Comments are never rewritten, XML and plain CSS alike. Runs on `.css` "
+            "entries.",
         ),
         (
             "prune_dead_spine",
             "the shell repair: drop manifest items and spine positions whose files the archive never carried",
-            "fires ONLY at the shell signature -- half or more of the "
-            "manifest's content hrefs name files the archive does not carry "
-            "(the audit battery's `shell` analyzer names the same shape). "
-            "Drops the dead manifest items, the spine itemrefs that name "
-            "them, and (coordinated) the dead NCX navPoints, then "
-            "re-sequences the surviving playOrders to 1..K unconditionally: "
-            "epubcheck 5.3 demands the 1-base on the post-prune shape even "
-            "where the base-free contract reads a contiguous offset run "
-            "satisfied. A lone missing chapter NEVER crosses the signature: "
-            "the spine non-goal stays in force for ordinary damage. The "
-            "2026-11-04 Wandering Inn shells (738 and 736 of 755/752 items "
-            "dead) are the design case; proven on the facility copy at "
-            "742e -> 5e with 0 fatals. The dead census also refuses items "
-            "whose file exists under a delimiter-encoded spelling (issue "
-            "#26): those hrefs are the delim encode's repair class, and "
-            "pruning them would amputate live documents while the counts "
-            "read it as an error win.",
+            "The shell repair. It fires only at the shell signature: half or more of "
+            "the manifest's content hrefs name files the archive does not carry, the "
+            "same shape the audit's `shell` analyzer reports. It then drops the dead "
+            "manifest items, the spine itemrefs that name them, the dead NCX "
+            "navPoints, and the OPF guide references to the dead files, and "
+            "re-sequences the surviving playOrder values to 1..K. The re-sequence is "
+            "unconditional: epubcheck demands the 1 base on the post-prune shape."
+            "\n\n"
+            "Two kinds of item look dead and are not counted as dead. When "
+            "`--encode-url-spaces` runs alongside, a raw-space href whose file exists "
+            "in the source archive is rename material, not a dead item. An item whose "
+            "file exists under a delimiter-encoded spelling is refused too: those "
+            "hrefs are `--encode-ref-delims`' repair class, and pruning them would "
+            "amputate live documents while the counts read it as an error win."
+            "\n\n"
+            "A lone missing chapter never crosses the signature. Below it nothing is "
+            "dropped: a present spine document is never pruned, and an ordinary "
+            "missing chapter is reported, not removed.",
         ),
         (
             "encode_ref_brackets",
             "percent-encode raw [ ] in internal references whose target exists (RSC-020)",
-            "percent-encode [ and ] in the path portion of internal src/href "
-            "references whose archive target exists with the raw brackets "
-            "(RSC-020 'Illegal character in path segment'). The issue #19 "
-            "mechanism: epubcheck decodes references before entry lookup, so "
-            "the encoded spelling resolves to the raw-spelled entry; "
-            "encode-url-spaces performs this encoding only while renaming "
-            "space-bearing entries, and brackets WITHOUT spaces were "
-            "uncovered. The fragment and query portions are left untouched, "
-            "entry names are never renamed, and unresolvable references stay "
-            "as written. Runs on content documents, the OPF, the NCX, and "
-            "stylesheet url() tokens.",
+            "Percent-encode `[` and `]` in the path portion of internal `src`/`href` "
+            "references whose archive target exists with the raw brackets (RSC-020, "
+            '"Illegal character in path segment"). epubcheck decodes a reference '
+            "before it looks the entry up, so the encoded spelling resolves to the "
+            "raw-spelled entry. `--encode-url-spaces` performs this encoding only "
+            "while renaming space-bearing entries; this flag covers brackets without "
+            "spaces."
+            "\n\n"
+            "The fragment and query portions are left untouched, entry names are "
+            "never renamed, and unresolvable references stay as written. Runs on "
+            "content documents, the OPF, the NCX, and stylesheet `url()` tokens.",
         ),
         (
             "encode_ref_delims",
             "percent-encode raw # ? that defeat their own reference's resolution (RSC-001)",
-            "percent-encode a literal # or ? inside a filename reference whose "
-            'raw delimiter defeats resolution: href="Book_#01.htm" parses as '
-            "file 'Book_' plus fragment '01.htm', the manifest item goes "
-            "missing (RSC-001 'File ... could not be found'), and epubcheck "
-            "never parses the document at all (issue #26: the Elminster "
-            "bookmate conversion, 36 of 38 body docs unreachable). Two gates, "
-            "both required: the reference must NOT resolve as written (a "
-            "working doc.xhtml#intro is never touched; where both 'a' and "
-            "'a#b' exist the RFC spelling wins), and the percent-encoded "
-            "spelling must match an archive entry (the issue #19 mechanism: "
-            "epubcheck decodes references before entry lookup, so the encoded "
-            "form resolves to the raw-spelled entry). Entry names stay "
-            "raw-spelled; a genuinely missing file stays as written. Runs on "
-            "content documents, the OPF, the NCX, and stylesheet url() tokens.",
+            "Percent-encode a literal `#` or `?` inside a filename reference whose "
+            "raw delimiter defeats the reference's own resolution. In "
+            '`href="Book_#01.htm"` the reference parses as file `Book_` plus fragment '
+            '`01.htm`; the manifest item goes missing (RSC-001, "File ... could not '
+            'be found"), and epubcheck never parses the document at all.'
+            "\n\n"
+            "Two gates are required. The reference's path portion, read the way "
+            "epubcheck parses it (the first `#` or `?` starts the fragment or query), "
+            "must miss the archive, so a working `doc.xhtml#intro` is never touched "
+            "and where both `a` and `a#b` exist the standard spelling wins. And the "
+            "delimiter-encoded spelling must match an archive entry."
+            "\n\n"
+            "Two values are refused outright: one whose attribute text carries a "
+            "numeric character reference anywhere (`&#`; the entity's own spelling "
+            "contains a raw `#`, and the rewrite would corrupt it), and one whose "
+            "path portion is empty (`#intro` is an in-document anchor, never filename "
+            "damage). Entry names stay raw-spelled, and a genuinely missing file "
+            "stays as written. Runs on content documents, the OPF, the NCX, and "
+            "stylesheet `url()` tokens, beside `--encode-ref-brackets`."
+            "\n\n"
+            "Acceptance has its own bar, keyed on this flag having fired: net-new "
+            "fatals reject, a candidate that is still fatal stays partial, and a "
+            "fatal-free candidate is accepted whatever the unmasking did to the error "
+            "count. The spine veto still overrides.",
         ),
         (
             "fix_page_map",
             'drop the OPF page-map attribute; class="pages" on NCX pageLists',
-            "normalize legacy page-map markup: drop the non-standard page-map "
-            'attribute from the OPF <spine> and add class="pages" to classless '
-            "NCX <pageList> elements (epubcheck rejects both on older "
-            "HarperCollins / Anna's Archive conversions).",
+            'Normalize legacy page-map markup: drop the non-standard `page-map="..."` '
+            'attribute from the OPF `<spine>`, and add `class="pages"` to NCX '
+            "`<pageList>` elements that have none (epubcheck rejects both on older "
+            "HarperCollins and Anna's Archive conversions). A `<pageList>` with no "
+            'plain `id` also gets `id="bindery-pagelist"` (suffixed if that id is '
+            "taken), because epubcheck demands the id once the class is present. The "
+            "checks read the plain attributes only, so a `data-class` or `data-id` "
+            "never suppresses the insertion epubcheck's demand needs.",
         ),
         (
             "prune_missing_resources",
             "remove references to files the archive does not contain (RSC-007)",
-            "remove references to files the archive does not contain "
-            "(RSC-007/PKG-010): dead <link> elements, anchors' href to absent "
-            "files (anchor text preserved), absent <img> sources (replaced by "
-            "their alt text when they carry one), and orphaned non-spine OPF "
-            "manifest items, with every package edge that pointed at them "
-            "rewritten. Spine documents are never pruned: a missing spine "
-            "document is reported as a damaged fragment, not silently dropped.",
+            "Remove references to files the archive does not contain (RSC-007, "
+            "PKG-010): dead `<link>` elements, anchors' `href` to absent files (the "
+            "anchor text is preserved), absent `<img>` sources (replaced by their alt "
+            "text when they carry one), and orphaned non-spine OPF manifest items."
+            "\n\n"
+            "Every package edge that pointed at a pruned item is rewritten: the "
+            "spine's `toc`, `media-overlay`, `fallback`, the EPUB 2 cover meta, and "
+            "the OPF guide `<reference>` elements naming the pruned files. A "
+            "reference left behind would read as new errors the prune itself "
+            "manufactured. In a run that also drops stub documents, a surviving "
+            "document's link into a dropped stub is treated as absent and stripped "
+            "here, with its anchor text kept."
+            "\n\n"
+            "Spine documents are never pruned. A missing spine document is reported "
+            "as a damaged fragment, not silently dropped.",
         ),
         (
             "strip_broken_anchors",
             "strip hrefs that cannot resolve; anchor text always preserved",
-            "strip href attributes that cannot resolve, keeping the anchor text "
-            "byte-for-byte: a #fragment the target document does not define "
-            "(RSC-020/RSC-012; NCX navTargets and OPF guide references keep the "
-            "document target, so navigation survives) and unresolvable URI "
-            "schemes (kindle:, file:). When the NCX fragments strip, the "
-            "always-on playOrder pass re-runs on the final navMap so collapsing "
-            "two fragments onto one document cannot leave the same-target-"
-            "shares-one-value contract violated.",
+            "Strip `href` attributes that cannot resolve, keeping the anchor text "
+            "byte for byte. Two classes qualify: a `#fragment` the target document "
+            "does not define (RSC-020, RSC-012), and unresolvable URI schemes "
+            "(`kindle:`, `file:`). NCX navTargets and OPF guide references keep their "
+            "document target, so chapter navigation survives."
+            "\n\n"
+            "Fragments are percent-decoded before the existence check, so a valid "
+            'link to a non-ASCII id (`#caf%C3%A9` naming `id="café"`) is kept. When '
+            "NCX fragments are stripped, the always-on playOrder pass re-runs on the "
+            "final navMap, so two fragments collapsing onto one document cannot leave "
+            "the playOrder contract violated.",
         ),
         (
             "prune_dangling_ncx_targets",
             "remove NCX navPoints/pageTargets whose content src is absent (RSC-007)",
-            "remove NCX navPoint/pageTarget elements whose <content src> names a "
-            "document the archive does not contain (RSC-007; issue #23) -- the "
-            "class --prune-missing-resources cannot reach, because the OPF never "
-            "declared the dropped file, and whose hand removal breaks the "
-            "playOrder contract (every survivor's value reads as starting at 2). "
-            "A dead navPoint whose whole subtree dies with it is removed as one "
-            "element; a dead navPoint above surviving descendants is spliced: "
-            "its tags go and the children are re-homed one level up, because "
-            "dropping live navigation to repair a dead label is no repair. "
-            "When the prune fires, the always-on playOrder pass re-runs on the "
-            "final navMap, so the rescue that took hand surgery plus a second "
-            "--all run is one gate here.",
+            "Remove NCX `navPoint`, `navTarget`, and `pageTarget` elements whose "
+            "`<content src>` names a document the archive does not contain (RSC-007 "
+            "at the toc). `--prune-missing-resources` cannot reach this class, "
+            "because the OPF never declared the dropped file."
+            "\n\n"
+            "The prune is node-exact. A dead node whose whole subtree dies with it "
+            "drops as one span. A dead node above surviving descendants is spliced: "
+            "its tags and its own label go, and the children re-home one level up, "
+            "because dropping live navigation to repair a dead label is no repair. "
+            "Scheme URLs, bare fragments, and contentless nodes are never this class. "
+            "An unbalanced walk aborts unchanged, and a prune that would empty a "
+            "container refuses, since an empty navMap is itself an error."
+            "\n\n"
+            "When it fires, the always-on playOrder pass re-runs on the final navMap, "
+            "so the table of contents stays valid in one run.",
         ),
         (
             "encode_url_spaces",
             "encode raw spaces in URLs; rename space-bearing entries (PKG-010)",
-            "repair raw-space URLs two ways: percent-encode raw spaces in "
-            "src/href attribute values across the package (a literal space is "
-            "not a valid URL, RSC-020), and rename the archive entries whose "
-            "names carry raw spaces to their underscore spellings, rewriting "
-            "every reference to them (underscore, never percent-encoding: "
-            "epubcheck decodes references before entry lookup; '[' and ']' in "
-            "a renamed spelling are percent-encoded in the rewritten reference, "
-            "since epubcheck rejects them raw in a URL path). Both halves "
-            "rewrite only attributes inside real start tags and processing "
-            "instructions: a book that displays HTML in its prose carries "
-            'href="..." in its text, and a bare attribute regex corrupts the '
-            "next real tag. Accepted under the no-worse bar: the rename half's "
-            "gain sits on the warning axis.",
+            "Repair raw-space URLs two ways. It percent-encodes raw spaces in "
+            "`src`/`href` values across the package (OPF manifest, NCX, content "
+            "documents), because a URL with a literal space is not a valid URL "
+            "(RSC-020) and does not resolve on strict readers. And it renames archive "
+            "entries whose names carry raw spaces to their underscore spellings, "
+            "rewriting every reference to them (OPF, NCX, content, CSS `url()`), "
+            "which clears the PKG-010 space-in-filename advisories."
+            "\n\n"
+            "The rename uses underscores, never percent-encoding, because epubcheck "
+            "decodes references before entry lookup. `[` and `]` in a renamed "
+            "reference are percent-encoded, since epubcheck rejects them raw in a URL "
+            "path. A rename that two entries would both claim is refused per entry, "
+            "and a book with any non-UTF-8 document keeps all of its entry names "
+            "(those entries pass through byte-for-byte, with no chance to rewrite "
+            "their references). Both halves rewrite only attributes inside real start "
+            "tags and processing instructions: a book that displays HTML in its prose "
+            'carries `href="..."` in its text, and a bare attribute regex corrupts '
+            "the next real tag."
+            "\n\n"
+            "Accepted under the no-worse bar: the rename half's gain sits on the "
+            "warning axis.",
         ),
         (
             "fix_svg_dup_ids",
             "rename duplicate glyph ids in .svg entries (first keeps its name)",
-            "rename duplicate id values inside standalone .svg entries (old "
-            "calibre SVG page renders repeat glyph ids within one document; the "
-            "intake wave that found this carried 445 to 1,339 'Duplicate "
-            '"glNNNN"\' errors per book). The first occurrence keeps its name, '
-            "later ones gain _2/_3, and internal references are deliberately "
-            "untouched: they already resolve to the first definition under "
-            "every reader's first-match lookup. Duplicate ids in the content "
-            "documents themselves are the separate --fix-duplicate-ids flag.",
+            "Rename duplicate `id` values inside standalone `.svg` entries, the shape "
+            "old calibre SVG page renders produce when they repeat glyph ids within "
+            "one document. The first occurrence keeps its name and later ones gain "
+            "`_2`, `_3`, and so on."
+            "\n\n"
+            "Internal references are deliberately not rewritten: they already resolve "
+            "to the first definition under every reader's first-match lookup. "
+            "Duplicate ids in the content documents themselves are "
+            "`--fix-duplicate-ids`.",
         ),
         (
             "fix_duplicate_ids",
             "rename duplicate ids in content documents (first keeps its name)",
-            "rename duplicate id values within each content document (the "
-            "RSC-005 'Duplicate id' class on .xhtml/.html carriers; issue #14, "
-            "the Calcutta Chromosome heading_id_2 shape that no flag "
-            "addressed). Same rule as the SVG fix: the first occurrence keeps "
-            "its name, later ones gain _2/_3, and no reference is rewritten "
-            "because href='#x' anchors, CSS '#x' selectors, and cross-document "
-            "fragment references all resolve to the first definition exactly "
-            "as readers resolved them before. Commented-out and CDATA-hidden "
-            "tags do not count as duplicates: they are invisible to epubcheck "
-            "and to every reader, and counting them renamed the real "
-            "definition away from its name (issue #21, Seven Principles). "
-            "The later duplicates lose "
-            "whatever invalid double-styling the second definition carried.",
+            "Rename duplicate `id` values within each content document (the RSC-005 "
+            '"Duplicate id" class on `.xhtml` and `.html` carriers), by the same rule '
+            "as the SVG fix: the first occurrence keeps its name, later ones gain "
+            '`_2`, `_3`, and so on, and no reference is rewritten. `href="#x"` '
+            "anchors, CSS `#x` selectors, and cross-document fragments all resolve to "
+            "the first definition, exactly as readers resolved them before."
+            "\n\n"
+            "Commented-out and CDATA-hidden tags do not count as duplicates. They are "
+            "invisible to epubcheck and to every reader, and counting them would "
+            "rename the real definition away from its name.",
         ),
     ],
     "structural repairs: package wiring": [
         (
             "fix_container",
             "generate container.xml when missing or stale (the gateway defect)",
-            "generate META-INF/container.xml at the located OPF when the "
-            "container is missing or names a file the archive does not contain. "
-            "This is the gateway defect: epubcheck stays fatal while the OPF is "
-            "unfindable, so no repair can be gate-accepted on such a book until "
-            "the container exists.",
+            "Generate `META-INF/container.xml` pointing at the located OPF when the "
+            "container is missing or names a file the archive does not contain. This "
+            "is the gateway defect: epubcheck stays fatal while the OPF is "
+            "unfindable, so no repair can be gate-accepted on such a book until the "
+            "container exists.",
         ),
         (
             "fix_media_types",
             "normalize wrong manifest media-types (magic-byte confirmed)",
-            "normalize wrong manifest media-type declarations (OPF-029, e.g. a "
-            "jpg stamped image/png by an aggregator; since v0.56.0 also the "
-            "CSS-007 font slice: a ttf/otf/woff/woff2 declared outside "
-            "epubcheck's blessed font set, rewritten to its font/* spelling "
-            "when the magic bytes confirm the extension). Attribute-only and "
-            "quote-preserving; it fires only when the file's magic bytes "
-            "confirm the extension, so a misnamed-but-consistent file is never "
-            "made worse (.eot is never touched: epubcheck rejects EOT as a "
-            "font src however it is declared). Accepted under the no-worse "
-            "bar: the font half's gain sits on the INFO axis the counts do "
-            "not measure.",
+            "Normalize wrong manifest media-type declarations (OPF-029, for example a "
+            "JPEG stamped `image/png` by an aggregator). The font slice is covered "
+            "too: a `ttf`, `otf`, `woff`, or `woff2` whose declared type is not the "
+            "exact `font/*` spelling (for example `application/x-font-ttf`) is "
+            "rewritten to it."
+            "\n\n"
+            "The edit is attribute-only and quote-preserving, and it fires only when "
+            "the file's magic bytes confirm the extension, so a "
+            "misnamed-but-consistent file (a PNG renamed `.jpg`) is never made worse. "
+            "`.eot` is never touched, since epubcheck rejects EOT as a font source "
+            "however it is declared."
+            "\n\n"
+            "Accepted under the no-worse bar: the font half's gain sits on the INFO "
+            "axis, which the counts do not measure.",
         ),
         (
             "declare_missing_items",
             "declare referenced-but-undeclared files present in the archive (RSC-008)",
-            "add the manifest <item> declarations the OPF never wrote for files "
-            "the book references and the archive carries (RSC-008; issue #16): "
-            "content <img src> and <link href> targets, CSS url() resources, "
-            "and OPF guide references. Deterministic ids (bindery-dN), media "
-            "types from a blessed extension map only (anything else is skipped "
-            "rather than guessed), no itemref written (the spine is untouched). "
-            "An itemref with no manifest item is deliberately not repaired: "
-            "which file it meant is underdetermined.",
+            "Add the manifest `<item>` declarations the OPF never wrote for files the "
+            "book references and the archive carries (RSC-008): content `<img src>` "
+            "and `<link href>` targets, CSS `url()` resources, and OPF guide "
+            "references."
+            "\n\n"
+            "Ids are deterministic (`bindery-dN`, numbered in sorted-target order and "
+            "`_`-prefixed until free) and media types come from a blessed extension "
+            "map only; anything else is skipped rather than guessed. No `<itemref>` "
+            "is ever written, so the spine is untouched, and an itemref with no "
+            "manifest item is deliberately not repaired: which file it meant is "
+            "underdetermined. NCX `<content src>` targets are not scanned. "
+            "Namespace-prefixed packages declare too.",
         ),
         (
             "fix_unique_identifier",
             "wire the dangling OPF unique-identifier onto the first dc:identifier (OPF-030)",
-            "add the id the package's unique-identifier attribute names to the "
-            "first dc:identifier start tag when no element carries it (OPF-030 "
-            "'The unique-identifier X was not found'; the census's dominant "
-            "family is identifiers that lost their id attributes wholesale). "
-            "Writes only the id the package itself names; the dc: values are "
-            "never touched. Refuses to guess: an absent or empty attribute, a "
-            "non-NCName id, an already-wired OPF, no dc:identifier element, or "
-            "a first identifier that already carries an id.",
+            'Wire the dangling OPF unique-identifier (OPF-030, "The unique-identifier '
+            "X was not found\"). The id the package's `unique-identifier` attribute "
+            "names is added to the first `dc:identifier` start tag when no element "
+            "carries it. Only that id is written; the `dc:` values are never touched."
+            "\n\n"
+            "The NCX `dtb:uid` is aligned in the same run, since the broken wiring "
+            "was masking that comparison."
+            "\n\n"
+            "It refuses to guess. An absent or empty attribute, an id that is not a "
+            "valid XML name, an OPF that is already wired, no `dc:identifier` "
+            "element, or a first identifier that already carries an id each leave the "
+            "document untouched.",
         ),
         (
             "fix_cover",
             "re-point or remove a dangling EPUB2 cover meta (no-worse bar)",
-            'repair dangling EPUB2 cover wiring: a <meta name="cover"> whose '
-            "content names no manifest item is re-pointed when the OPF guide's "
-            "own cover reference names an existing item, and removed when "
-            'nothing identifies it. EPUB3 properties="cover-image" is '
-            "deliberately audit-only (guessing which image is the cover is not "
-            "deterministic). Cover wiring is invisible to epubcheck, so "
-            "cover-only repairs are accepted under the same no-worse bar the "
-            "lossy strips use.",
+            'Repair dangling EPUB 2 cover wiring. A `<meta name="cover">` whose '
+            "content names no manifest item is re-pointed when the OPF guide's own "
+            "cover reference names exactly one existing item, and removed when "
+            'nothing identifies it. EPUB 3\'s `properties="cover-image"` is '
+            "deliberately audit-only, since guessing which image is the cover is not "
+            "deterministic."
+            "\n\n"
+            "Cover wiring is invisible to epubcheck, so cover-only repairs are "
+            "accepted under the no-worse bar rather than the normal gate.",
         ),
         (
             "fix_comment_double_hyphen",
             "replace -- inside XML comments with an en-dash (RSC-016)",
-            "replace -- sequences inside XML comments with en-dashes. -- is "
-            "illegal inside an XML comment (epubcheck fatal RSC-016: the book "
-            "opens in lenient readers but never passes epubcheck). The edit "
-            "stays inside the comment bodies: text nodes and CDATA sections are "
-            "never touched, and each comment's terminator is left intact.",
+            "Replace `--` sequences inside XML comments with en-dashes. `--` is "
+            "illegal inside an XML comment (a fatal RSC-016: the book opens in "
+            "lenient readers but never passes epubcheck)."
+            "\n\n"
+            "The edit stays inside comment bodies in content documents, the NCX, and "
+            "the OPF alike. Text nodes and CDATA sections are never touched, and each "
+            "comment's terminator is left intact. This is the one deliberate "
+            "exception to the rule that comments are never rewritten.",
         ),
         (
             "fix_unbound_prefix",
-            "bind an undeclared namespace prefix inline (Calibre embed scar)",
-            "bind a prefix the OPF never declares in scope inline on the "
-            "element that uses it (RSC-016 'prefix is not bound'): calibre's "
-            "embed_metadata writer can leave one dc: element carrying "
-            "ns0:scheme while the xmlns declaration sits on a sibling, out of "
-            "XML scope, and a later writer build leaves one dc: element's own "
-            "name unbound the same way (every dc: element self-declares "
-            "xmlns:dc except one, so <dc:date> dies with RSC-016); either "
-            "scar fatals the whole package (plus OPF-030 on the "
-            "unique-identifier). The URI is evidence-based, never guessed: "
-            "the same prefix declared elsewhere in the document, or the use "
-            "site's own namespace under an OPF-namespaced package (the OPF "
-            "namespace for a Dublin Core element's attributes, the DC "
-            "namespace for a dc: element name); anything else refuses the "
-            "document untouched. Content documents are not touched (their "
-            "unbound prefixes have the --strip-bad-attrs drop).",
+            "bind an undeclared namespace prefix inline on the element that uses it",
+            "Bind a prefix the OPF never declares in scope, inline on the element "
+            'that uses it (a fatal RSC-016, "prefix is not bound"). Two shapes left '
+            "by calibre's metadata writer qualify: a `dc:identifier` carrying "
+            "`ns0:scheme` while its `xmlns:ns0` declaration sits on a sibling, out of "
+            "XML scope; and a `dc:` element whose own name is unbound because every "
+            "other `dc:` element self-declares `xmlns:dc` except that one. Either one "
+            "fatals the whole package."
+            "\n\n"
+            "The namespace URI is evidence-based, never guessed: the same prefix "
+            "declared elsewhere in the document, with every declaration agreeing, or "
+            "the use site's own namespace under an OPF-namespaced package (the OPF "
+            "namespace for a Dublin Core element's attributes, the DC namespace for a "
+            "`dc:` element name). Anything else refuses the document untouched."
+            "\n\n"
+            "Runs on the OPF only. Content documents are not touched; their unbound "
+            "prefixes have the `--strip-bad-attrs` drop.",
         ),
         (
             "fix_package_version",
             'rewrite package version="1.0" to "2.0" (OPF-001)',
-            "rewrite a <package> element whose version attribute is the "
-            "literal 1.0 -- an EPUB version epubcheck cannot parse (OPF-001 "
-            "'error when parsing the EPUB version') -- to 2.0, the conformance "
-            "the 2026-11-03 census's 25 carriers were all written to. Refuses "
-            "everything else: a missing attribute (an OEB-1.0-namespace "
-            "package needs a migration, not an attribute bump) or any other "
-            "spelling. The gate decides whether the profile revalidation is "
-            "a real decrease.",
+            "Rewrite a `<package>` element whose version attribute is the literal "
+            "`1.0` to `2.0` (OPF-001: an EPUB version epubcheck cannot parse). Only "
+            "the exact literal qualifies. A missing attribute (an OEB 1.0 package "
+            "needs a migration, not an attribute bump) or any other spelling refuses "
+            "the document untouched, and a `data-version` attribute is arbitrary "
+            "data, never rewritten. The gate decides whether the revalidation under "
+            "the new profile is a real decrease.",
         ),
         (
             "fix_doctype",
             "replace a forbidden DOCTYPE with the profile's expected form (HTM-004)",
-            "replace each content document's DOCTYPE when it carries a public "
-            "identifier its package profile forbids: EPUB 3 requires any "
-            "DOCTYPE to be <!DOCTYPE html> (an XHTML 1.x public doctype is a "
-            "spec violation), and EPUB 2's OPS content docs are XHTML 1.1 (an "
-            "XHTML 1.0 public doctype is the census's second flagged shape). "
-            "A semantically identical declaration with different spacing is "
-            "untouched, an ABSENT DOCTYPE is legal in both profiles and left "
-            "alone (the first whole-library firing census measured insertion "
-            "flat on ~2,400 of 2,545 firing books -- it never converges, "
-            "since an equal book never applies), and a DOCTYPE carrying an "
-            "internal subset is never touched (the subset declares entities; "
-            "swapping it would change what the parser resolves).",
+            "Replace each content document's DOCTYPE when it differs from the form "
+            "its package profile expects (HTM-004). EPUB 3 expects `<!DOCTYPE html>`, "
+            "so an XHTML 1.x public doctype is a violation. EPUB 2's OPS content docs "
+            "are XHTML 1.1, so an XHTML 1.0 doctype, or a bare `<!DOCTYPE html>`, is "
+            "replaced with the XHTML 1.1 declaration. The package version must be "
+            "known: an unknown version licenses nothing."
+            "\n\n"
+            "A declaration that differs only in spacing is left alone, and an absent "
+            "DOCTYPE is legal in both profiles and is never inserted. A DOCTYPE "
+            "carrying an internal subset is never touched, since the subset declares "
+            "entities and swapping it would change what the parser resolves.",
         ),
         (
             "prune_invalid_guide_refs",
             "remove guide references whose target is not a content doc (OPF-032)",
-            "remove guide <reference> elements whose href resolves to a "
-            "manifest item that exists but is not an OPS content document "
-            "(the 2026-11-03 census's 125-book lane: the Random House msr "
-            "guide block pointing cover/thumbimage references at JPEGs). The "
-            "guide is furniture, so removal is content-neutral. A reference "
-            "to an UNDECLARED file is OPF-031 (--declare-missing-items' "
-            "lane) and is left alone, as are external schemes and paired "
-            "elements.",
+            "Remove guide `<reference>` elements whose target is declared in the "
+            "manifest but is not an OPS content document (OPF-032; the common "
+            "fingerprint is a Random House guide block pointing cover references at "
+            "JPEGs). Both self-closed and paired elements are removed. The guide is "
+            "furniture, so removal is content-neutral."
+            "\n\n"
+            "A reference to an undeclared file is OPF-031, `--declare-missing-items`' "
+            "lane, and is left alone, as is an external scheme.",
         ),
         (
             "fix_item_properties",
-            "declare scripted/remote-resources on EPUB3 manifest items (OPF-014)",
-            "scan every content document for what epubcheck wants declared "
-            "(OPF-014 'The property X should be declared in the OPF'): a "
-            "<script> element earns `scripted`, an absolute-scheme src, "
-            "remote <link href>, or remote CSS url() earns "
-            "`remote-resources` -- and merge the tokens into the owning "
-            "manifest item's properties attribute, sorted and deduplicated. "
-            "EPUB 3 packages only (properties is EPUB3 vocabulary; below 3 "
-            "the attribute is itself a finding). Declares reality; changes "
-            "no content.",
+            "declare scripted/svg/remote-resources on EPUB3 manifest items (OPF-014)",
+            "Scan each content document for what epubcheck wants declared (OPF-014, "
+            '"The property X should be declared in the OPF"): `scripted` from a '
+            "`<script>` element or a `<form>`, `svg` from an `<svg>` element, and "
+            "`remote-resources` from an absolute-scheme `src`, `link href`, or CSS "
+            "`url()`. The tokens are merged into the owning manifest item's "
+            "`properties` attribute, sorted and deduplicated."
+            "\n\n"
+            "EPUB 3 packages only: on EPUB 2 the attribute is itself a finding, so "
+            "there the flag does nothing and the finding stays in the report. "
+            "Declares reality and changes no content.",
         ),
     ],
     "lossy strips (these delete converter-injected content; accepted on a no-worse bar)": [
         (
             "strip_pagination",
             "LOSSY: page numbers/running heads baked into the body text",
-            "remove print page numbers and running headers that a PDF/OCR "
-            "conversion baked into the body text as literal paragraphs (so they "
-            "reflow into the middle of a sentence). It removes only that "
-            "injected furniture, never the author's prose: where a number split "
-            "a sentence it rejoins the two paragraphs, and it preserves roman "
-            "chapter numbers, page-list nav anchors, and years. Three safety "
-            "nets guard every edit (character conservation, tag balance, and "
-            "the epubcheck no-regression check); any failure leaves the "
-            "document untouched.",
+            "Remove print page numbers and running headers that a PDF or OCR "
+            "conversion baked into the body text as literal paragraphs, where they "
+            'reflow into the middle of a sentence ("where the hay cart **16** was '
+            'taking him"). It removes only that injected furniture, never the '
+            "author's prose. Where a number split a sentence it rejoins the two "
+            "paragraphs, closing up a word split like `compli-` / `mentary`, and it "
+            "preserves roman chapter numbers, page-list nav anchors, and years."
+            "\n\n"
+            "A roman numeral counts as a page number only when it is well-formed and "
+            "under 100, so ordinary words (`mid`, `mix`, `civil`) are never mistaken "
+            "for pages. A book is treated as paginated only when it has both a dense "
+            "run of arabic numbers and several confident mid-sentence interrupts, so "
+            "a merely chapter-numbered book is left alone. Navigation anchors are "
+            "real ids only (`id` and `xml:id`); a `data-id` is arbitrary data no "
+            "reader can resolve."
+            "\n\n"
+            "Every removal requires prose flow. A digit enclosed by foreign markup on "
+            "both sides (a lone recipe-quantity table cell) is layout content, never "
+            "page furniture, and a confident merge runs only when the whole corridor "
+            "between the merged paragraphs is plain text. A document whose "
+            "standalone-number values are substantially shared with other documents "
+            "(25% or more) carries the book's own numbering (verse stanzas, sections "
+            "that restart per unit, so their values reappear, unlike page numbers, "
+            "which are unique), and the strip takes no numbers from it."
+            "\n\n"
+            "Four safety nets guard every edit: character conservation, `p`/`a` tag "
+            "balance, an all-tag open/close delta check, and the epubcheck "
+            "no-regression check. Any failure leaves the document untouched.",
         ),
         (
             "strip_broken_tags",
             "LOSSY: leaked close tags rendered as text (</p> without <)",
-            "remove leaked HTML closing tags missing their open brackets (e.g. "
-            "</p> rendered as raw text in the reader).",
+            "Remove leaked HTML closing tags that are missing their open brackets "
+            "(`</p>` rendered as raw text in the reader).",
         ),
         (
             "strip_watermarks",
             "LOSSY: producer stamps (OceanofPDF ...) and marker files",
-            "remove known producer and distributor watermarks and stray marker "
-            "files. It locates the stamp and deletes the outermost wrapper "
-            "whose entire visible text is the watermark, so prose that merely "
-            "mentions the URL is preserved. An inline stamp link is deleted "
-            "only when it holds nothing but the stamp; a match too large to be "
-            "safe is refused and reported for manual repair rather than "
-            "deleted.",
+            "Remove known producer and distributor watermarks (OceanofPDF, ABC Amber "
+            "LIT Converter, and the like) and stray marker files. The pass locates "
+            "the stamp and deletes the outermost wrapper whose entire visible text is "
+            "the stamp, so prose that merely mentions the URL is preserved."
+            "\n\n"
+            "When the stamp link sits inline, the bare `<a>` element is deleted under "
+            "one of two conditions: it is the only `<a>` in the match and its body is "
+            "tag-free text no longer than a stamp (120 normalized characters), "
+            "whatever that text says; or its visible text is exactly the watermark. "
+            "Anything larger, such as an unclosed stamp anchor that swallowed prose, "
+            "is refused, counted, and reported for manual repair rather than deleted.",
         ),
         (
             "strip_stub_docs",
             "LOSSY: repeated placeholder spine docs, full manifest/NCX cascade",
-            "drop spine documents whose entire visible body text is one "
-            "identical short placeholder repeated across the spine: the "
-            "Bookmate-style export whose chapters are all the same 'content "
-            "unavailable' notice. The drop cascades (archive entries, manifest "
-            "items, spine order, NCX navPoints, nav toc entries), so the book "
-            "opens straight into its real chapters. Deliberately conservative "
-            "(the pool is the <body> span, image-carrier divider pages are "
-            "exempt) and a book whose every spine doc is the stub is refused "
-            "outright: that book is empty and needs a re-source, never a "
-            "repair.",
+            "Drop spine documents whose entire visible body text is one identical "
+            "short placeholder repeated across the spine: the Bookmate-style export "
+            'whose chapters are all the same "content unavailable" notice, which '
+            "passes epubcheck because the placeholder is valid XHTML."
+            "\n\n"
+            "The drop cascades through the archive entries, manifest items, spine "
+            "order, NCX navPoints, nav toc entries, and the OPF guide references "
+            "naming a dropped file. The dropped files also count as absent to the "
+            "broken-reference machinery, so when `--prune-missing-resources` runs in "
+            "the same pass, a surviving document's link into a dropped stub is "
+            "stripped, with its anchor text kept, instead of dangling. The book then "
+            "opens straight into its real chapters."
+            "\n\n"
+            "The identity rule is deliberately conservative: the same body text in at "
+            "least 3 documents covering at least 30% of the spine, each short but not "
+            "blank, with the pool taken from the `<body>` span. Pages that carry an "
+            "`<img>` or `<image>` are exempt whatever short text they hold, since a "
+            "cover or an illustrated divider is never a stub however it is stamped."
+            "\n\n"
+            "A book whose every spine doc is the stub is refused outright: that book "
+            "is empty and needs a re-source, never a repair.",
         ),
     ],
 }
+
+
+# The reference preamble, shared verbatim by `--help-repairs` and
+# docs/repairs.md.
+_REPAIR_REFERENCE_PREAMBLE: tuple[str, ...] = (
+    "The always-on core pass is exactly five well-formedness fixes (strip "
+    "prolog junk, drop duplicate xmlns, escape bare ampersands, fix named "
+    "entities, self-close void tags), the NCX pipeline, and the mimetype fix. "
+    "Everything below is opt-in, and every repair is epubcheck-gated: a "
+    "candidate is applied only when epubcheck accepts it under one of three "
+    "acceptance bars. The default gate demands a measured improvement. The "
+    "no-worse bar, for the lossy strips, `--fix-cover`, `--encode-url-spaces`, "
+    "and `--fix-media-types`, only forbids a regression, because their gains "
+    "sit where epubcheck's counts do not look. `--encode-ref-delims` rides a "
+    "bar keyed on its fix having fired. `--all` enables every flag below at "
+    "once, and library mode is dry-run by default.",
+    "Statuses a record can carry: accept (gate-applied), partial (improved "
+    "but still failing epubcheck; written only by the single-file form with "
+    "an output path, never applied to a library), reject (the gate refused), "
+    "error, unreadable, "
+    "nochange (nothing to do), equal (already as good as the result), "
+    "unvalidated (applied under `--no-validate`, never gate-checked).",
+)
+
+# docs/repairs.md's static prose, around the generated flag entries.
+_REPAIRS_DOC_INTRO = (
+    "Everything on this page is off until its flag is passed, or all at once "
+    "via `--all`. It is the same reference `bindery repair --help-repairs` "
+    "prints, generated from the CLI's own flag table so the two cannot drift. "
+    "`bindery --help-json` dumps the whole surface machine-readable, and "
+    "[spec.md](../spec.md) is the contract this page describes."
+)
+_REPAIRS_DOC_ACCEPTED_INTRO = (
+    "Three acceptance bars apply. The safety contract in the README explains "
+    "why each exists, and spec.md is the contract."
+)
+_REPAIRS_DOC_ACCEPTED: tuple[tuple[str, str], ...] = (
+    (
+        "`gate` (the default)",
+        "the candidate is applied only when it measurably improves the book: "
+        "strictly fewer fatals on a book that had fatals, or strictly fewer "
+        "errors on one that did not. A run with no measurable gain applies "
+        "nothing to a library and writes nothing on a probe. The single-file "
+        "form with an output path still writes such a candidate (a known "
+        "limitation).",
+    ),
+    (
+        "`no_worse`",
+        "`--fix-cover`, `--encode-url-spaces`, `--fix-media-types`, and the "
+        "four lossy strips are accepted when the result is not worse (no "
+        "net-new fatals, and no new errors unless fatals were already masking "
+        "them), because their gains sit on axes "
+        "epubcheck's counts do not measure: cover wiring is not a schema "
+        "finding, the rename half's PKG-010 gain sits on the warning axis, "
+        "the font half's CSS-007 gain on the INFO axis, and a lossy strip's "
+        "gain is invisible to epubcheck.",
+    ),
+    (
+        "the delimiter bar",
+        "`--encode-ref-delims` is accepted by a bar keyed on its fix having "
+        "fired (the missing-file mask): net-new fatals reject, a still-fatal "
+        "candidate stays partial, and a fatal-free candidate accepts whatever "
+        "the unmasking did to the error count.",
+    ),
+)
+_REPAIRS_DOC_ACCEPTED_TAIL = (
+    "The bar is chosen per candidate, keyed on whether one of these fixes "
+    "fired in it: in a candidate where a no-worse fix fired, every fix in "
+    "that candidate is judged by the no-worse bar. One structural veto rides "
+    "above all three: a candidate whose spine "
+    "resolves worse than the source's (more dangling itemrefs, or fewer than "
+    "half the documents resolved after a dead-spine prune) is rejected "
+    "whatever the counts say."
+)
+
+# A wrapped line that starts like a markdown list marker or blockquote would
+# be rendered as one, so the page wrapper never breaks before these.
+_MD_MARKER_RE = re.compile(r"^(?:\d+[.)]|[-+*]\s|>)")
+
+
+def _doc_wrap(text: str) -> list[str]:
+    """Wrap one paragraph for the committed page: 79 columns, never inside a
+    token, and never onto a line that markdown would read as a marker."""
+    fixed: list[str] = []
+    for line in textwrap.wrap(
+        text, width=79, break_long_words=False, break_on_hyphens=False
+    ):
+        if fixed and _MD_MARKER_RE.match(line):
+            fixed[-1] += " " + line
+        else:
+            fixed.append(line)
+    return fixed
+
+
+def render_repairs_doc() -> str:
+    """docs/repairs.md, rendered from the same rows `--help-repairs` prints.
+    `scripts/render_repairs_doc.py` writes the file and
+    tests/test_repairs_doc.py pins the committed copy to this output, so the
+    page and the terminal reference cannot drift apart."""
+    out = [
+        "# Opt-in repairs reference",
+        "",
+        "<!-- Generated from _REPAIR_FLAG_TABLE in src/bindery/cli.py by",
+        "     scripts/render_repairs_doc.py and pinned by tests/test_repairs_doc.py.",
+        "     Edit the table, not this page. -->",
+        "",
+        *_doc_wrap(_REPAIRS_DOC_INTRO),
+        "",
+    ]
+    for para in _REPAIR_REFERENCE_PREAMBLE:
+        out += [*_doc_wrap(para), ""]
+    out += [
+        "## How repairs are accepted",
+        "",
+        *_doc_wrap(_REPAIRS_DOC_ACCEPTED_INTRO),
+        "",
+    ]
+    for label, text in _REPAIRS_DOC_ACCEPTED:
+        out += [*_doc_wrap(f"- **{label}**: {text}"), ""]
+    out += [*_doc_wrap(_REPAIRS_DOC_ACCEPTED_TAIL), ""]
+    for title, rows in _REPAIR_FLAG_TABLE.items():
+        name, sep, rest = title.partition(" (")
+        out += [f"## {name[0].upper()}{name[1:]}", ""]
+        if sep:
+            note = rest.rstrip(")")
+            out += [f"*{note[0].upper()}{note[1:]}.*", ""]
+        for dest, short, long_help in rows:
+            flag = "--" + dest.replace("_", "-")
+            lead = short if short.endswith(".") else short + "."
+            out += [
+                f"### `{flag}`",
+                "",
+                html.escape(lead, quote=False),
+                "",
+            ]
+            for para in long_help.split("\n\n"):
+                out += [*_doc_wrap(para), ""]
+    return "\n".join(out).rstrip("\n") + "\n"
 
 
 # The --help-repairs page is custom-rendered (not argparse output), so it
@@ -2271,6 +2576,19 @@ def _can_color_help() -> bool:
     return can_colorize()
 
 
+def _terminal_wrap(text: str, indent: str = "") -> list[str]:
+    """Wrap one reference paragraph for the terminal page: 88 columns, never
+    inside a token (a split flag name cannot be copied or grepped)."""
+    return textwrap.wrap(
+        text,
+        width=88,
+        initial_indent=indent,
+        subsequent_indent=indent,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+
+
 def _repair_flag_reference(color: bool | None = None) -> str:
     """The full repair-flag reference: the _REPAIR_FLAG_TABLE rows with
     their long descriptions. `color=None` decides by the same gate argparse
@@ -2295,38 +2613,21 @@ def _repair_flag_reference(color: bool | None = None) -> str:
         + " repair-flag reference (shared by `bindery repair` and "
         "`bindery library`)",
         "",
-        "The always-on core pass is exactly five well-formedness fixes",
-        "(strip prolog junk, drop duplicate xmlns, escape bare ampersands,",
-        "fix named entities, self-close void tags), the NCX pipeline, and",
-        "the mimetype fix. Everything below is opt-in, and every repair is",
-        "epubcheck-gated: applied only when the measured result improved",
-        "(strictly fewer findings than before); the lossy strips, the",
-        "cover wiring repairs, and the space-entry renames are held to the",
-        "weaker no-worse bar (not more findings). Library mode is dry-run",
-        "by default; `--all` enables every flag below at once. Statuses a",
-        "record can carry: accept (gate-applied), partial (written but",
-        "still failing epubcheck), reject (the gate refused), error,",
-        "unreadable, nochange (nothing to do), equal (already as good as",
-        "the result), unvalidated (applied under --no-validate, never",
-        "gate-checked). The README and spec.md carry the full rationale",
-        "for each repair.",
     ]
+    for para in _REPAIR_REFERENCE_PREAMBLE:
+        if lines[-1] != "":
+            lines.append("")
+        lines.extend(_terminal_wrap(para))
     for title, rows in _REPAIR_FLAG_TABLE.items():
         lines.append("")
         lines.append(heading + title + reset)
         lines.append("")
         for dest, _short, long_help in rows:
             lines.append("  " + option + "--" + dest.replace("_", "-") + reset)
-            for para in long_help.split("\n"):
-                lines.extend(
-                    textwrap.wrap(
-                        para,
-                        width=88,
-                        initial_indent="      ",
-                        subsequent_indent="      ",
-                    )
-                    or ["     "]
-                )
+            for para in long_help.split("\n\n"):
+                lines.extend(_terminal_wrap(para, indent="      "))
+                lines.append("")
+            lines.pop()
     return "\n".join(lines)
 
 
@@ -2572,9 +2873,10 @@ def build_parser() -> argparse.ArgumentParser:
     audit = sub.add_parser(
         "audit",
         help="audit EPUB body text to detect non-schema content flaws (OCR damage, hardcoded page numbers, empty books, non-English text)",
-        description="Read-only content audit (nine analyzers: monolithic "
+        description="Read-only content audit (ten analyzers: monolithic "
         "scans, completeness, cover wiring, toc drift, fan-bundle "
-        "contamination, and the body-text battery over OCR damage, "
+        "contamination, the shell detector, and the body-text battery over "
+        "OCR damage, "
         "hardcoded page numbers, empty/thin books, and non-English text). "
         "Library mode resolves the Calibre "
         "library from the CURRENT DIRECTORY's metadata.db, or pass a "

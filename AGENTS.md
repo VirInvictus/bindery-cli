@@ -2,359 +2,493 @@
 
 Per-project guidance. Overrides the global file where they conflict.
 
+This file is for human programmers and AI agents alike. It carries rules, decisions,
+and constraints, stated in the present tense. How a rule came to be, and the specimen
+behind it, is in `patchnotes.md` under the release that shipped it. The behavior each
+rule protects is specified in `spec.md`.
+
 ## What this is
 
-A focused EPUB repair and diagnostic tool: deterministic well-formedness fixes, gated by epubcheck,
-with atomic in-place replacement in a Calibre library. Absorbed the retired oceanstrip at
-v0.12.0 (2026-08-22) as the lossy `--strip-watermarks` flag; the standalone repo is gone from
-the workspace (2026-08-26), and any instruction that runs `python -m oceanstrip` is dead.
-Born from the 2026 library audit (see the user memory `calibre-library-epubcheck-audit`).
+A focused EPUB repair and diagnostic tool: deterministic well-formedness fixes, gated
+by epubcheck, with atomic in-place replacement in a Calibre library. It absorbed the
+retired oceanstrip tool as the lossy `--strip-watermarks` flag; any instruction that
+runs `python -m oceanstrip` is dead.
+
+## Docs layout (decided 2026-11-24)
+
+- **README.md** is all user-facing documentation: the manual a Calibre user reads. It
+  is the only home for behavior prose aimed at users. No version numbers, issue
+  numbers, or internal history in it.
+- **docs/repairs.md** is generated from `_REPAIR_FLAG_TABLE` in `src/bindery/cli.py`
+  by `scripts/render_repairs_doc.py`, and pinned to the live table by
+  `tests/test_repairs_doc.py`. It is the same text `--help-repairs` prints. Never
+  edit it by hand. Edit the table, then re-run the script, in any change that touches
+  a flag's short or long text.
+- **docs/audits.md** and **docs/plugin.md** are hand-written reference detail.
+- **spec.md** is the contract: present-tense behavior, never stale. A behavior change
+  that ships without its spec line is an incomplete change.
+- **roadmap.md** is the plan plus the shipped ledger, collapsed every pass (the global
+  rule). Its Open section is the only living part. A release is not a phase and earns
+  no ledger row.
+- **patchnotes.md** is the versioned record: one entry per release, tied one-to-one to
+  its annotated tag (the tag message is the entry), so a published entry is frozen.
+- **docs/research/** keeps dated research reports that other docs cite (evidence
+  archives, not living documentation).
+- **AGENTS.md** (this file) carries programmer-facing rules, decisions, and
+  constraints only. Version narratives do not belong here either.
+
+When the code and a documented rule disagree, the documentation states what the code
+does and the gap gets an issue. Never leave a rule in the docs that the code does not
+implement.
 
 ## Hard constraints
 
-- **Minimal Dependencies.** Runtime deps are exactly: `tqdm` (progress/output),
-  `vir-tui` (shared TUI rendering) and `cquarry` (read-only Calibre `metadata.db` access,
-  adopted in v0.16.0), pinned as PyPI ranges in pyproject.toml (`vir-tui>=2.5.0`,
-  `cquarry>=1.19.0`); `uv.lock` records the resolved versions. Since v0.40.0 both
-  VirInvictus pins carry `; python_version >= '3.14'` markers (every release they
-  ship declares requires-python >=3.14) and the package floor is 3.12: a 3.12/3.13
-  install runs the stack-free repair core, and the audit/library surfaces degrade
-  through cli.py's dispatch guard instead of failing resolution. `html5lib` remains the one approved
-  heavy-parsing exception (used only for the `--reserialize` fix, imported lazily so every
-  other mode runs without it). Tests use the standard `unittest` framework. epubcheck is an
-  external CLI dependency expected on PATH; `--install-to-calibre` needs no external
-  binary, it re-registers the format through cquarry's write module (the calibredb
-  subprocess was retired in v0.24.0). Before adding any further Python package, stop and ask.
-- **CLI surface contract.** bindery is a reference implementation of the workspace CLI
-  machine-surface contract (`~/.gitrepos/CLAUDE.md`, Throughlines): machine help carries
-  exit contracts and gate annotations (`--help-json`), errors are one clean line on stderr
-  (never a traceback), missing-input paths are usage-class errors on stderr, and user-facing
-  surfaces are additive-only post-1.0 (spec-stated). Keep it that way.
-- **Semantics-preserving transforms by default, everything else fenced behind a flag.**
-  The always-on core is exactly five well-formedness fixes (prolog junk, duplicate
-  `xmlns`, bare `&`, named entities, void self-closing), the NCX pipeline, and the
-  mimetype fix (added/normalized/first-stored, epub.py's archive rewrite); every core
-  fix must render identically to the author's intent: never add, remove, or reorder
-  visible content. The canonical opt-in inventory lives in spec.md: thirty-five structural
-  repairs, four lossy strips, five safe opt-ins, plus `--reserialize` (the
-  seven v0.62.x/v0.63.0 flags -- `--fix-package-version`, `--fix-doctype`,
-  `--prune-invalid-guide-refs`, `--fix-item-properties`,
-  `--fix-double-colon-tags`, `--strip-presentational-attrs`,
-  `--encode-ref-brackets` -- are in both inventories since v0.62.0+).
-  * **Structural repairs** (`--fix-empty-body`, `--fix-missing-title`, `--fix-id-colons`,
-    `--fix-page-map`, `--strip-epub3-attrs`, `--downgrade-epub3-tags`,
-    `--unwrap-block-in-inline`, `--strip-invalid-value`, `--unwrap-illegal-tags`,
-    `--prune-missing-resources`, `--declare-missing-items`, `--strip-broken-anchors`,
-    `--prune-dangling-ncx-targets`, `--encode-url-spaces`,
-    `--fix-container`, `--fix-media-types`, `--fix-cover`,
-    `--fix-comment-double-hyphen`, `--fix-svg-dup-ids`, `--fix-duplicate-ids`,
-    `--fix-cdata-terminator`,
-    `--fix-misnested-inline`, `--fix-stray-close`, `--fix-unterminated-attr`,
-    `--fix-unbound-prefix`, `--fix-package-version`, `--fix-doctype`,
-    `--prune-invalid-guide-refs`, `--fix-item-properties`,
-    `--strip-presentational-attrs`, `--encode-ref-brackets`,
-    `--encode-ref-delims`, `--strip-dead-font-faces`,
-    `--prune-dead-spine`;
-    transforms.py, threaded through epub.py). The v0.47.0 five (the 2026-10-06
-    issue batch): `--fix-svg-dup-ids` renames duplicate glyph ids inside
-    standalone `.svg` entries (first keeps its name, references resolve to the
-    first definition so they are never rewritten); `--fix-cdata-terminator`
-    completes a truncated `/*]]>` CDATA-terminator comment inside inline
-    `<style>` blocks (CSS-008); `--fix-misnested-inline` normalizes the
-    Mobipocket drop-cap mis-nest `<i><b>X</i></b>` (punctuation between the
-    reversed closers survives outside both spans; a letter run is refused);
-    `--fix-stray-close` removes an end tag with no open start frame (a merely
-    mis-nested pair is never touched); `--fix-unterminated-attr` closes an
-    attribute value open to the tag's own `>` (bare-word values, no quote
-    before the next `<`); all normal `gate`. `--fix-comment-double-hyphen` (v0.46.0, the RSC-016 fatal)
-    replaces `--` inside XML comments with an en-dash: comment bodies only (text
-    nodes and CDATA never touched, the one deliberate exception to the
-    never-rewrite-comments invariant), in content documents, the NCX, and the OPF
-    alike; normal `gate` (clearing the fatal IS the measurable gain). Since v0.44.0 `--encode-url-spaces` also RENAMES the
-    archive entries whose names carry raw spaces to their underscore spellings
-    and rewrites every reference (OPF, NCX, content, CSS `url()`); underscore,
-    never percent-encoding (epubcheck decodes references before entry lookup,
-    verified against 5.3), ambiguous renames refused per entry (`space_rename_map`),
-    accepted under `no_worse` because PKG-010 sits on the warning axis the gate
-    does not measure. Since v0.58.0 (issue #19) the rewritten references
-    percent-encode `[`/`]` (raw brackets are RSC-020 "Illegal character in
-    path segment"; the encoded form decodes to the raw-spelled entry), and
-    BOTH halves rewrite only attributes inside real start tags and processing
-    instructions (`_START_TAG_OR_PI_RE`, comments/CDATA excluded): a book that
-    TEACHES HTML carries `href="..."` in display text, and the bare attribute
-    regex paired the phantom quote with the next real tag -- two RSC-016
-    parse fatals on Hacking: The Next Generation. `--strip-broken-anchors`
-    (v0.58.0, issue #21) also strips broken fragments from OPF guide
-    `<reference href>` (the guide is not a content document; its broken
-    fragment hid until the target's own links were fixed -- Fools Crow), and
-    the always-on playOrder pass re-runs after the NCX fragment strip so
-    collapsed navTargets cannot violate the same-target contract (Troubled
-    Man). The shared href resolver decodes the five predefined XML entities
-    and the OPF item/itemref/reference matchers accept a namespace prefix
-    (issue #20: `href="K&amp;C.png"` names the entry `K&C.png`, and the
-    `<opf:item>` blindness made the census re-declare whole manifests while
-    the prune deleted live declarations on the raw-ampersand D&D books).
-    `--fix-unbound-prefix` (v0.51.0, issue #9, the Calibre
-    embed scar; element half v0.57.0, issue #22) binds a prefix the OPF
-    never declares in scope inline on the element that uses it: the
-    attribute half (`<dc:identifier id="ID1" ns0:scheme="calibre">`
-    whose `xmlns:ns0` sits on a sibling, out of XML scope; two RSC-016 fatals
-    plus OPF-030) and, since v0.57.0, the element half (the Calibre 9.7.0
-    writer self-declares `xmlns:dc` on every dc: element but one, so that
-    element's own name dies with `FATAL(RSC-016): The prefix "dc" for
-    element "dc:date" is not bound`; the scope walk now checks each start
-    tag's own name and binds it on the element): URI evidence is the same
-    prefix declared elsewhere in the
-    document (all declarations must agree) or the use site's own namespace
-    for a Dublin Core site under an OPF-namespaced package (the OPF
-    namespace for a DC element's attributes, the DC namespace for a literal
-    `dc:` element name), anything else refuses the whole
-    document; scope-tracked over a comment/CDATA-aware tokenizer, OPF only
-    (content docs have the `--strip-bad-attrs` drop); normal `gate`.
-    The v0.55.0 two (the 2026-10-25 issue batch): `--declare-missing-items`
-    (issue #16) is the RSC-008 inverse of the prune -- it ADDS manifest
-    `<item>` declarations for files the archive carries and the book
-    references (content img/link, CSS url(), OPF guide refs) but the OPF
-    never declared; deterministic sorted-order `bindery-dN` ids, blessed
-    extension-map media types only, no itemref ever written (the spine is
-    untouched; an itemref with no manifest item stays unrepaired -- which
-    file it meant is underdetermined); normal `gate`. `--fix-duplicate-ids`
-    (issue #14) is the content-doc half of the SVG duplicate-id rename:
-    same first-keeps-name rule, references resolve to the first definition
-    and are never rewritten; since v0.58.0 (issue #21) commented-out and
-    CDATA-hidden tags do not count (counting them renamed the REAL
-    definition away from its name and dangled every fragment referencing
-    it); normal `gate`. The same lane's RSC-001 verdict:
-    95.3% of its mass is spine documents whose files exist under a
-    different spelling (the spine guard correctly refuses; the mass carrier
-    is `--encode-url-spaces` territory), so the prune's coverage boundary is
-    documented, not widened.
-    The v0.56.0 one (the boxed OPF-030 recipe, built same-day on Brandon's
-    call): `--fix-unique-identifier` wires the package's dangling
-    unique-identifier id onto the first `dc:identifier` start tag
-    (`unique_identifier_wired`), with the masked-NCX coordination: the uid
-    sync predicts the post-wiring uid before the loop (the same pure
-    function on the same input region, never a snapshot of a different
-    layout), so one run both wires the OPF and aligns the NCX dtb:uid the
-    broken wiring was masking. Refusals: absent/empty attribute, non-NCName
-    id, already-wired, no dc:identifier, first-identifier-has-id; normal
-    `gate`. The CSS-007 font half shipped the same release inside
-    `--fix-media-types` (font/* blessed on both package versions, magic
-    confirmed, `.eot` never touched) with the flag accepted under `no_worse`
-    (its gain sits on the INFO axis).
-    The v0.59.0 one (issue #23, the dangling-NCX class): `--prune-dangling-ncx-targets`
-    removes navPoint/pageTarget/navTarget elements whose `<content src>` names a
-    document absent from the archive (RSC-007 at toc.ncx; the OPF never declared the
-    dropped file, so `--prune-missing-resources` has no item to prune and the navPoint
-    survived `--all` as "no applicable fixes"). Node-exact rule over a balanced
-    stack scanner (`strip_ncx_dangling_targets`, quote-aware possessive token regex,
-    navTarget legacy spelling included): a dead node whose whole subtree dies with it
-    drops as one span; a dead node above surviving descendants is SPLICED (tags plus
-    its own navLabel/dead `<content>` header go, children re-homed one level up --
-    dropping live navigation to repair a dead label is no repair); scheme URLs,
-    bare fragments, contentless nodes, and comment-hidden elements are never this
-    class; the token walk tracks the navMap/pageList containers too, so an
-    unbalanced walk (stray close, wrapper crossing a node's span) aborts AND a
-    prune that would empty a container refuses (the NCX wants navPoint+/pageTarget+;
-    an empty navMap is itself RSC-005 per epubcheck 5.3, so the gate would otherwise
-    apply a TOC-less NCX). When it fires, the
-    contract-gated playOrder pass re-runs in the same branch (the survivors' values
-    start gapped; the fixture went 0f/1e/0w -> 0f/0e/0w in one gate, one navPoint
-    pruned, 389 playOrder values re-sequenced); normal `gate`.
-    The v1.1.0 one (issue #26, the Elminster bookmate conversion: 36 of 38
-    manifest hrefs carried `#01`, each parsed as file `Elminster_` plus a
-    fragment, RSC-001, and the gate's ACCEPTED candidate was the shell prune
-    amputating all 36 live documents): `--encode-ref-delims` percent-encodes
-    literal `#`/`?` in internal src/href references whose raw delimiter
-    defeats their own resolution. Two gates, both required: the reference's
-    PATH PORTION (read the way the oracle parses it, first `#`/`?` starts
-    fragment/query) must miss the archive -- bindery's own `_resolve_href`
-    keeps a raw `?` in the path, so the pass follows the oracle, not the
-    spine probe, on that split -- and the delimiter-encoded spelling must
-    match an archive entry (the issue #19 decode-before-lookup mechanism);
-    a working `doc.xhtml#intro` is never touched, `a`-and-`a#b`-both-exist
-    keeps the RFC spelling, a genuinely missing file stays as written, entry
-    names stay raw. Anchored on the brackets pass's matcher (start tags/PIs,
-    outside comments and CDATA), applied on content docs, the OPF, the NCX,
-    and stylesheet url(); runs beside `--encode-ref-brackets` at all four
-    sites, and the OPF branch dispatch now lists BOTH bracket and delim
-    flags (the dispatch omission was a latent gap: `--encode-ref-brackets`
-    documented OPF coverage but a standalone selection never reached the OPF
-    branch; the stylesheet decode gained the markup branches' non-UTF-8
-    guard for the same reason -- the reference encodes alone select that
-    branch). Wholesale refusals (the code-review pass on this fix): any
-    value whose attribute text carries a numeric character reference
-    (`&#` -- the entity's own spelling holds a raw `#` and the verbatim
-    rewrite would corrupt a working reference into a malformed entity),
-    and any empty-path value (`#intro` is an in-document anchor, never
-    filename damage). The shell census's dead set EXCLUDES delim-recoverable items
-    (not flag-gated: a correctness predicate), so the Elminster shape can
-    never cross the 50% shell signature and the prune cannot amputate; a
-    mixed book (genuine dead + recoverable) prunes only the genuine dead.
-    The keyed promotion (`refs_delim_encoded`) carries the acceptance bar
-    (the missing-file mask: a manifest item whose file the archive lacks is
-    never parsed, so the document's own schema errors stay invisible until
-    the encode opens it; the error-cleanup branch's strict decrease reads
-    the mask lifting as a regression and the amputation won the gate fight,
-    0f/3e -> 0f/1e against the encode's 0f/3e -> 0f/6e): net-new fatals
-    reject, still-fatal stays partial, fatal-free accepts whatever the
-    unmasking did to the error count; the spine veto still overrides. The
-    audit side names the same class honestly: the loader counts
-    `spine_missing_delim` (itemrefs whose delim-encoded href variant
-    resolves), `analyze_shell` subtracts it (`genuine_missing`/`genuine_frac`
-    drive the verdict), and a fully-recoverable book reads ADVISORY naming
-    `--encode-ref-delims`, never SHELL/re-source.
-    They alter markup structure or fabricate minimal content. v0.14–v0.16 ran these unconditionally, which broke this rule;
-    v0.17.0 restored it. `--unwrap-illegal-tags` additionally protects any illegal-tag
-    name that an EPUB stylesheet styles as an element selector (`css_protected_tags`,
-    book-wide, inline `<style>` blocks included). The two EPUB2-targeted fixes
-    (`--strip-epub3-attrs`, `--downgrade-epub3-tags`) are additionally gated on the
-    package version in the OPF (`package_version()`): inert on EPUB 3 books and when
-    no version can be read, since their target defects only exist below EPUB 3; the
-    version read accepts a namespace-prefixed package element since v1.2.7
-    (`<opf:package version="2.0">` is an EPUB 2 declaration; the bare-`<package`
-    regex left every prefixed OPF unversioned and both fixes inert behind the
-    book's whole EPUB3-on-EPUB2 error mass -- the issue #20 matcher lesson reaching
-    the version read); the attribute scrub is anchored to real start tags via
-    `transforms.strip_attrs_in_start_tags` (prose mentioning the attributes and
-    CDATA/comment content are preserved); since v0.55.0 (issue #11) the set also
-    covers `role` and `aria-hidden` (the 2026-10-25 census: the dominant
-    EPUB3-semantics-on-legacy-package family, DPUB-ARIA doc-* values only; the
-    package-version gate stays, verified aligned with epubcheck's profile-driven
-    rejection; `hidden` deliberately NOT covered, stripping it would reveal
-    hidden content), and `strip_invalid_value` matches the
-    attribute name with a `(?<![\w:.-])value` lookbehind so `data-value` survives.
-    Since v1.2.7 `EPUB3_DOWNGRADE_TAGS` also carries `nav: div` and `header: div`
-    (nav on the named RSC-005 element finding, the EPUB3-on-EPUB2
-    toc/landmarks/page-list class; header through the unmasking door -- epubcheck
-    never reported it while the enclosing illegal `<section>` held the file's
-    parse, so the section→div repair surfaced 91 header findings on the same
-    book, and one gate pass must converge, not trade one named class for
-    another); both follow the section rules (block children kept, semantic name
-    in class, `css_protected_tags` protection book-wide -- a book styling
-    `nav#toc ol` keeps its nav findings honestly).
-  * **Lossy strips** (`--strip-pagination`, `--strip-broken-tags`,
-    `--strip-watermarks`; pagination.py, watermark.py; `--strip-stub-docs`,
-    epub.py's `detect_stub_docs`): remove only what a converter injected (page numbers,
-    running headers, leaked tags, watermarks, repeated placeholder chapters), fenced behind
-    character conservation, tag
-    balance, and the epubcheck no-regression bar. The watermark anchored pass's
-    whole-match fallback only fires when the match holds nothing but the stamp; a
-    larger match (an unclosed stamp anchor that swallowed prose) is refused, counted
-    in `RepairReport.watermark_refusals`, and surfaced as a `manual_watermark_repair`
-    decision by `run phase1` on both the read-only and apply paths. `--strip-stub-docs`
-    (2026-09-15) mirrors emptytext's placeholder signals: identical short text across
-    >= 3 spine docs and >= 30% of the spine; since v0.47.0 the pool is the `<body>`
-    span and image-carrier pages are exempt, so identical head `<title>`s can never
-    weld illustrated divider pages into a fake stub class (the Great Change misfire);
-    since v1.2.7 the exemption keys on the `<img>`/`<image>` presence ALONE, whatever
-    short text the page carries (the oceanofpdf shells stamp a one-line ad on every
-    page they gut, and placeholder text stamped onto the cover/titlepage welded them
-    and 23 gutted-but-illustrated pages into the stub class -- carriers also leave the
-    license count and the returned set; the audit side deliberately keeps its
-    empty-text carrier rule so an ad-stamped gutting still reads as the placeholder
-    class it is); the whole-spine-stubs book is refused
-    (EMPTY, re-source), and the drop cascades to archive entries, manifest, spine,
-    NCX navPoints, nav toc entries, and since v1.2.7 the OPF guide `<reference>`
-    elements naming a dropped file (`prune_guide_refs_to`: a left-behind reference
-    reads OPF-031 + RSC-007, errors the drop manufactured -- the same href-edge sweep
-    runs beside the id-edge rewrite on the manifest prune and the shell prune,
-    comment/CDATA-protected like the guide's own fragment fixer). Since v1.2.8 the
-    drop's set also reaches the broken-reference machinery: `anchor_present`/
-    `anchor_present_src` (= `present`/`present_src` minus `stub_hrefs`) feed both
-    `prune_missing_resources_doc` call sites and the dropped docs' ids leave
-    `ids_by_doc`, so a surviving doc's link INTO a dropped stub strips (anchor text
-    kept) instead of dangling -- the Goldfinger ten were gate-rejected for exactly
-    that (26 RSC-007s into dropped split docs) from the stub strip's first ship
-    until v1.2.8; the rename/encode passes keep the full sets deliberately (the
-    #10/v1.2.2 layout rule).
-  Do not let any NEW fix touch content without its own flag; if a candidate repair cannot
-  be made deterministically safe, it does not belong here: report it for manual repair
-  instead.
-- **The gate is the safety contract.** Never apply a repair epubcheck has not accepted.
-  Respect the two-mode logic in `validate.gate` (fatal-fixing tolerates error unmasking;
-  error-cleanup does not). The lossy strips (`--strip-pagination`, `--strip-broken-tags`,
-  `--strip-watermarks`, `--strip-stub-docs`) are accepted by `validate.no_worse` instead
-  (their gain is invisible to epubcheck, so it only forbids a regression, never demands
-  a measured improvement). The structural opt-ins go through the normal `gate` (their
-  gain IS visible, so a run with no measurable improvement is a noop and nothing is
-  applied) except the three whose gains sit on axes epubcheck does not measure:
-  `--fix-cover`, `--encode-url-spaces`, and `--fix-media-types` (the font half,
-  v0.56.0), accepted under the same `no_worse` bar with
-  the partial rule intact. One masked-axis rule (v0.51.0, issue #9, for the
-  NCX sync; generalized v0.57.0, issue #22, to every fired fix): when the gate
-  answers noop on a book that started AND stayed fatal, `process_book`
-  reclassifies the verdict to `partial` (a still-fatal package keeps
-  epubcheck's per-file halt, so whatever the fix cleared below the halt --
-  the dtb:uid comparison, an error axis, a second latent fatal unmasked by the
-  fix that cleared the first: `unbound_prefixes_bound:1`, 1f/1e -> 1f/0e,
-  fatals read 1 -> 1 -- measures as no gain, and a silent `equal` buries a
-  book that still will not open instead of landing it on the manual list);
-  application behavior is unchanged, since still-fatal
-  books are never applied, and clean books are untouched (no fatals on both
-  sides, no reclassification). One structural veto rides above the counts (v0.52.0,
-  issue #10): `process_book` probes source and candidate with `epub.spine_resolution`
-  (total/resolved/dangles; itemref -> manifest item -> archive entry, resolved
-  through the same helper the repair's existence checks use) and rejects any
-  candidate whose dangle count rises (`(spine collapse)` in the summary) — a repair
-  that orphans live itemrefs removes the broken documents' errors from the
-  measurement, so a destroyed book can read as an error reduction. The veto's
-  second arm (v1.2.2, issue #35) covers the prune class the dangle count cannot
-  see: pruning removes the dangling declarations along with the rest, so an
-  amputation LOWERS the dangle count while epubcheck measures an error win on the
-  smaller book (the Flux specimen: 0f/38e/31w -> 0f/30e/0w with 31 of 32 spine
-  documents pruned). A `dead_spine_items_pruned` candidate whose spine resolves to
-  less than half of what resolved before the repair is a REJECT (`(spine halved)`
-  in the summary), regardless of the counts or the promotion; the comparison counts
-  documents that RESOLVE on both sides, so the genuine shell keeps its v0.64.0
-  contract (only never-resolving positions dropped: same resolution before and
-  after, no veto) and "less than half" is strict. The probe needs evidence on both
-  sides (an unreadable package vetoes nothing); `--no-validate` skips both arms
-  with the rest of the gate. Changing either
-  bar (or the veto) means re-running the library dry run.
-- **Library writes are sacred.** Replacement must stay atomic (temp in same dir, then
-  `os.replace`), touch only the `.epub`, preserve mode, and be dry-run by default.
-  Calibre format installation goes through cquarry's write module (`--install-to-calibre`;
-  the calibredb subprocess was retired in v0.24.0). Never write to the library without
-  `--apply`. Test every change on `/tmp` copies first.
+- **Minimal dependencies.** Runtime deps are exactly `tqdm` (progress), `vir-tui`
+  (shared TUI rendering, `>=2.5.0`) and `cquarry` (read-only Calibre `metadata.db`
+  access, `>=1.19.0`). The last two carry `; python_version >= '3.14'` markers because
+  every release they publish requires 3.14. The package floor is 3.12: a 3.12/3.13
+  install runs the stack-free repair core, and the audit, library, and run surfaces
+  degrade through `cli.py`'s dispatch guard instead of failing resolution. `html5lib`
+  is the one approved heavy-parsing exception, imported lazily and used only by
+  `--reserialize`. Tests use `unittest`. epubcheck is an external CLI expected on
+  `PATH`. `--install-to-calibre` needs no external binary; it goes through cquarry's
+  write module. Before adding any further Python package, stop and ask.
+- **CLI surface contract.** bindery is the reference implementation of the workspace
+  CLI machine-surface contract (`~/.gitrepos/CLAUDE.md`, Throughlines). Machine help
+  carries exit contracts and gate annotations (`--help-json`). Errors are one clean
+  line on stderr, never a traceback. Missing-input paths are usage-class errors on
+  stderr. User-facing surfaces are additive-only after 1.0 (spec-stated).
+- **Semantics-preserving by default; everything else behind a flag.** The always-on
+  core is exactly five well-formedness fixes (prolog junk, duplicate `xmlns`, bare
+  `&`, named entities, void self-closing), the NCX pipeline, and the mimetype fix.
+  Every core fix must render identically to the author's intent: never add, remove,
+  or reorder visible content. Everything else is opt-in (35 structural repairs, four
+  lossy strips, five safe opt-ins, plus `--reserialize`; the inventory is `_REPAIR_FLAG_TABLE`
+  and spec.md). A new fix never touches content without its own flag. If a candidate
+  repair cannot be made deterministically safe, it does not belong here: report it
+  for manual repair instead.
+- **The gate is the safety contract.** Never apply a repair epubcheck has not
+  accepted. Respect the two-mode logic in `validate.gate` (fatal-fixing tolerates
+  error unmasking; error-cleanup does not). The lossy strips, `--fix-cover`,
+  `--encode-url-spaces`, and `--fix-media-types` are accepted by `validate.no_worse`
+  or its promotion, because their gain is invisible to epubcheck, so it only forbids
+  a regression. `--encode-ref-delims` rides its own keyed bar. Changing any bar, or
+  the veto, means re-running the library dry run.
+- **Library writes are sacred.** Replacement stays atomic (a temp file in the same
+  directory, then `os.replace`), touches only the `.epub`, preserves mode, and is
+  dry-run by default. Never write to the library without `--apply`. Test every
+  change on `/tmp` copies first.
+
+## Working invariants
+
+The rules that bite. Each states the rule and the one reason behind it.
+
+### Text matching (transforms.py, epub.py)
+
+- **Every greedy loop in a quote-aware tag matcher is possessive (`*+`).** The
+  alternation (`"..." | '...' | [^>]`) overlaps, because `[^>]` matches quotes too,
+  so a plain `*` re-partitions exponentially on a failing candidate. This is why `re`
+  3.11+ is the floor. Lazy siblings use the disjoint catch-all `[^>"']`, so an
+  unterminated quote fails to match rather than pairing across markup. Attribute
+  values use the tempered-quote idiom `(["'])((?:(?!\1).)*)\1`.
+  `tests/test_matcher_hardening.py` pins the census of every site; a new matcher
+  joins it.
+- **An attribute matcher must not match inside a longer name.** Use the
+  `(?<![\w:.-])attr=` lookbehind or a whitespace anchor. `data-id`, `data-value`,
+  `data-class`, `data-fallback`, `data-toc`, `data-content`, `data-name`,
+  `data-version`, and `data-type` have each been mistaken for the real attribute.
+- **Anchor id sets include `xml:id`.** `ids_by_doc` collects through
+  `_ANCHOR_ID_RE`, and the id matchers (`_ITEM_ID_RE`, `_XML_ID_RE`,
+  `_SVG_ID_ATTR_RE`) carry the `(?<![\w:.-])` lookbehind. epubcheck resolves
+  fragments against `xml:id`, so dropping it from the anchor set would strip links
+  the oracle never flagged. A `data-id` is not an id: counting one renamed real ids
+  away from their fragments. OPF edge attributes (`fallback`, `media-overlay`,
+  `spine toc`, the cover `meta content`) are never namespaced, so their matchers are
+  unprefixed-only.
+- **CSS comment spans are whole-comment intersections.** `_CSS_COMMENT_SPAN_RE`
+  spans are intersected over the whole match. A `}` inside a comment truncates a
+  flat-brace match, and a start-keyed drop would leave comment garbage in the
+  stylesheet.
+- **Rewrite only inside real start tags and processing instructions.** Comments,
+  CDATA, and display text are never touched. A book that teaches HTML carries
+  `href="..."` in its prose, and a bare attribute regex pairs the phantom quote with
+  the next real tag. `transforms._outside_protected_map` is the wrapper and
+  `_START_TAG_OR_PI_RE` the matcher.
+- **CDATA and comments are never rewritten**, except comment bodies under the opt-in
+  `--fix-comment-double-hyphen`. `_PROTECTED_RE` protects the Calibre
+  `/*<![CDATA[*/ ... /*]]>*/` wrapper as one unit: a bare CDATA span ends inside the
+  closing `/*]]>`, which exposes the trailing `*/` to the prolog strip.
+- **Decode before you resolve.** `_resolve_href` decodes the five predefined XML
+  entities and numeric character references, then splits the fragment. `_norm_fragment`
+  decodes a fragment the same way before any anchor-cleaner existence check.
+  Attribute text arrives escaped and archive entries are raw.
+- **Package matchers accept a namespace prefix.** `<opf:item>`, `<opf:package>`, and
+  `<ncx:meta>` are legal spellings, and a bare `<package` or `</manifest>` literal
+  reads a prefixed file as absent. `_MANIFEST_CLOSE_RE` handles prefixed and
+  whitespace close tags. `package_version()` reads a prefixed package element.
+- **OPF and NCX passes run in a fixed order, and later passes read the text as it
+  stands.** The manifest prune derives its spine protection from the text it prunes,
+  never from a snapshot taken before `fix_manifest_ids` renames ids ahead of it. The
+  anchor pass runs last, against an id snapshot that replicates each id-moving fix.
+  `fix_ncx_playorder` is contract-gated and re-runs after any NCX structural change
+  (the fragment strip, the dangling-target prune, the dead-spine prune). It compares
+  values with quotes stripped, because regex groups carry the quote characters.
+- **Existence checks consult the layout the text is written in.** With
+  `--encode-url-spaces` active, a raw-space href whose file exists in the source is
+  rename material, never prune material: the manifest prune and the dead-spine count
+  read `present_src`, and the rename and encode passes keep the full sets. When
+  `--strip-stub-docs` drops documents, the prune's existence set (`anchor_present`)
+  excludes them, so `--prune-missing-resources` strips links into dropped stubs
+  instead of leaving them dangling.
+- **A scope walk aborts rather than guesses.** `strip_ncx_dangling_targets` is
+  node-exact over a balanced stack scanner. An unbalanced walk returns its input
+  unchanged, and a prune that would empty a container refuses, because an empty
+  navMap is itself an RSC-005. `_scan_doctype_span` refuses an unterminated
+  declaration.
+
+### Lossy strips
+
+- `--strip-pagination` needs four nets to pass on every edit: character
+  conservation; `p`/`a` balance plus the all-tag delta net (`_tag_deltas` compares
+  per-element deltas, not absolute counts); prose flow (`_in_prose_flow`,
+  `_flat_run`); and the `no_worse` gate. A self-closing start tag never opens a
+  block. Only `id` and `xml:id` are navigation anchors; `data-id` is not.
+  `collect_internal_numbering` flags any document whose standalone-number values are
+  25% or more shared with other documents, and the strip takes no numbers from a
+  flagged document, because stanza and section numbering is text-shape-identical to
+  page numbers. epub.py passes the per-document verdict through a `content_idx`
+  counter aligned with the `htmls` list.
+- `--strip-watermarks` deletes the outermost wrapper whose entire visible text is
+  the stamp. An inline stamp link with no wrapper is deleted only under the
+  fallback's two conditions: it is the only `<a>` in the match and its body is
+  tag-free text of at most 120 normalized characters, or its visible text is exactly
+  the watermark. Anything larger is refused, counted in
+  `RepairReport.watermark_refusals`, and surfaced by `run phase1` as a
+  `manual_watermark_repair` decision. The first condition is looser than it sounds
+  (see #40 under Known limitations).
+- `--strip-stub-docs` keys on identical body text across at least three documents
+  and 30% of the spine, pooled from the `<body>` span. A page carrying an `<img>` or
+  `<image>` is exempt whatever short text it holds. A book whose whole spine is the
+  stub is refused: it is empty and needs a re-source. The drop cascades through
+  archive entries, manifest, spine, NCX navPoints, nav toc entries, and the OPF
+  guide references (`prune_guide_refs_to`, wired on all three prune cascades).
+
+### The gate (validate.py, cli.py `process_book`)
+
+- The spine-resolution veto rides above every verdict path, promotions included.
+  Arm one: a candidate whose dangle count rises is `reject` with `(spine collapse)`.
+  Arm two: a `dead_spine_items_pruned` candidate resolving less than half the
+  documents the source resolved is `reject` with `(spine halved)`. The comparison is
+  strict and counts documents that resolve on both sides. `spine_resolution` returns
+  None on an unreadable package: the veto needs evidence and never fires on a probe
+  failure.
+- Masked-axis rule: a gate `noop` on a book that started and stayed fatal is
+  reclassified `partial`, because epubcheck's per-file halt hides whatever the fix
+  cleared below it. Application behavior is unchanged, and clean books are untouched.
+- `refs_delim_encoded` promotes through the missing-file mask bar: net-new fatals
+  reject, a still-fatal candidate stays partial, and a fatal-free candidate accepts
+  whatever the unmasking did to the error count. The veto still overrides.
+- The no-worse promotion keys on fired counters, not on flags. In a candidate where
+  one of those fixes fired, every fix in the candidate is judged by the no-worse bar.
+- `oracle_timeout_for` scales the budget on decimal MB and on archive entry count:
+  a 300 s base, plus 60 s per started 10 MB above 10 MB, plus 60 s per started 500
+  entries above 1,000, capped at 1,800 s. One subprocess retry follows a timeout.
+  Only a double timeout raises `OracleTimeout`, which reads `(epubcheck timeout)` and
+  keeps the book a candidate.
+
+### Archive writing (epub.py)
+
+- **Every `zout.writestr` gets a private `ZipInfo`** (a `copy.copy` of the source's,
+  a fresh one on a rename). `writestr` stamps the info it is handed with the
+  destination's offsets. A shared info repoints the open source archive's name
+  lookups into the output file mid-loop, and one drifted probe reads whole books as
+  unreadable. The media-type `peek` catches `BadZipFile` too.
+- `mimetype` is written first and stored, with the constant-epoch timestamp and a
+  fresh `ZipInfo`. Repairing a book twice must produce identical bytes.
+- A document that is not valid UTF-8 is copied byte-for-byte and counted
+  (`non_utf8_docs_skipped`), never decoded with replacement. The same guard covers
+  the stylesheet branches that the reference encodes select.
+
+### Audit (audit.py)
+
+- Audit is read-only. The only write path is `--tag`, through
+  `cquarry.write.WritableCalibreDB`, and it is lock-class (refused with exit 1 while
+  Calibre runs). The scan loop reuses `tag` as its per-book display column, so the
+  argument is captured as `audit_tag` at function entry. Do not collapse them.
+- `run_directory` and `run_single` dispatch analyzers through `_dir_dispatch`, one
+  entry per analyzer in `ALL`. `tests/test_contamination.py` pins the key set.
+- Advisory analyzers (`completeness`, `cover`, `tocdrift`, `contamination`, `shell`)
+  never flag a book and never move the exit code.
+- Untrusted metadata XML goes through `_safe_xml_parse`: DOCTYPE and ENTITY
+  declarations are refused before `xml.etree` sees them, and a refused metadata file
+  yields the shell book. A single entry above `_MAX_ENTRY_BYTES` (32 MiB) is refused
+  before decompression. `Book.extra_docs` retains non-spine html under a 64 MiB cap.
+- `analyze_cover` resolves manifest hrefs against the OPF's directory
+  (`Book.opf_path`), not the archive root.
+- The console renderer loads through the module-level `_LazyUI` proxy. A plain
+  `import vir_tui` at module level would make 3.12/3.13 installs unimportable, and
+  `LOAD_GLOBAL` never consults a module `__getattr__`, so a proxy object is the lazy
+  shape that works.
+
+### CLI (cli.py)
+
+- `_REPAIR_FLAG_TABLE` is the one flag inventory, with three renderings: the compact
+  `--help` groups, the `--help-repairs` page, and `docs/repairs.md`. Long text is
+  plain sentences with backticked code and blank lines between paragraphs. It is
+  printed in a terminal and rendered as markdown, so it carries no em-dashes, no
+  double-hyphen stand-ins, and no version or issue numbers. The preamble and the
+  acceptance section live in the `_REPAIRS_DOC_*` and `_REPAIR_REFERENCE_PREAMBLE`
+  constants beside it.
+- **`RepairFlags` is immutable in a caller's hands.** The all-off instance is the
+  default pass, and a bare `repair_epub(src, dst)` builds exactly that. The EPUB 2
+  version gate swaps in a `dataclasses.replace` copy and never mutates the caller's
+  instance (`tests/test_epub.py`, `TestVersionGateKeepsFlagsIntact`).
+- `_flags_from_args` is the one place argparse names map onto `RepairFlags` fields
+  (each `or --all`). The run verbs drive the shipped `run_library` through the real
+  parser, so no flag can drift between a verb and the command it wraps.
+- `--help-repairs` is a custom argparse Action, deliberately not `store_true`, so the
+  wiring test's selection count ignores it. Its colors come from argparse's own
+  `_colorize.can_colorize` detection, so the two help levels always agree. Colored
+  output with codes stripped must equal plain output byte for byte.
+- `_require_closed_calibre` (pgrep, fail-closed, exit 1) guards `audit --tag` and
+  `library --apply --install-to-calibre`. `run phase3` reaches the second
+  transitively.
+- The single-file verb without an output path is a probe: the gate runs and nothing
+  is written. Writing needs an explicit DST.
+- `library --workers N` parallelizes only the sweep's candidate pass, in windows of
+  N consumed in order so `--limit` stays lazy. The repair phase is never parallel:
+  it owns the shared workdir and the atomic-replacement contract.
+- `main()` turns a missing `vir_tui` or `cquarry` into one stderr line and exit 2.
+  Anything else missing still raises.
+- `_phase1_decisions` reads the structured record fields (`fixes`,
+  `ncx_uid_synced`, `watermark_refusals`), never the rendered `summary`.
+  CalibreQuarry's lossy-consent mirror reads the same fields, so the fix-breakdown
+  keys are contract.
+- `run phase3`'s summary sums real post-run states only: applied repairs at their
+  after counts, unapplied books at their before counts. A refused candidate's
+  projected after-state is its own labeled `rejected_projection` line, never summed
+  into the totals.
+
+### Library replacement (library.py)
+
+- The book id comes from `metadata.db` through one lazy path-to-id map per run
+  (`CalibreDB.format_path_index()`, re-normalized with `resolve().lower()`). The
+  `(id)` directory-name regex is only the no-catalog fallback. Never reintroduce
+  directory-name guessing as the primary source: a renamed directory would replace
+  the wrong book. A guessed id drives a row update only when `_verify_guess` finds
+  the book row, the file in the book's own directory, and the catalogued
+  `data.name`.
+- `make_backup` never overwrites the first backup, which is the only copy of the
+  author original. Later ones rotate `.bak2`, `.bak3`, and so on. `--backup-keep N`
+  (minimum 2) bounds the rotation and never deletes the original `.bak`.
+
+### Plugin compatibility (plugin/, scripts/build_plugin.py)
+
+- The vendored modules (`transforms.py`, `epub.py`, `pagination.py`,
+  `watermark.py`, `reserialize.py`) are byte-identical to `src/bindery/`, and a
+  drift test pins the equality. The zip root is a package, so their relative imports
+  resolve unchanged.
+- **Grammar floor: everything Calibre embeds must parse these modules.** Calibre 7.x
+  and 8.x embed Python 3.11, and 9.0+ embeds 3.14. So: parenthesized `except (A, B):`
+  tuples everywhere (PEP 758's bare form is a `SyntaxError` on 3.11); ruff's
+  `target-version = "py312"` pin (inference from requires-python would rewrite the
+  parens back off); the parse guard in `tests/test_version.py`; and CI's
+  `plugin-compat` job byte-compiling the built zip under 3.11 to 3.14. Any new
+  syntax in a vendored module clears that job before it ships.
+- `minimum_calibre_version` is `(7, 0, 0)` and `supported_platforms` is
+  `["linux"]`. Both state what is verified, no more.
+- The plugin runs only the default pass, never raises, is byte-idempotent, and
+  `testzip()`-verifies its output. Load it in tests through the
+  `tests/test_plugin.py` stubs (the `calibre` namespace in `sys.modules`, a two-dir
+  `__path__`), which is the shape of Calibre's zipplugin loader.
+
+## Known limitations
+
+Open defects where the code does less than its rule promises. The documentation
+states the real behavior; remove a line here, and its "known limitation" sentence in
+the flag table and spec, when the fix lands.
+
+- **#39 `--fix-double-colon-tags`** can escape the next real tag. When the
+  pseudo-tag's own closing bracket is entity-escaped, the match's tail runs to the
+  next raw `>`. The result parses, so the gate can accept it.
+- **#40 `--strip-watermarks`** deletes an inline stamp link whenever its body is
+  tag-free and at most 120 characters, whatever the text says.
+- **#41 `--fix-missing-title`** fills an empty SVG `<title>` in a document that has
+  no `<head>` (the head scoping only applies when a head exists).
+- **#42 `repair SRC DST`** writes the output for an `equal` result too. `run_repair`
+  has no `equal` branch.
 
 ## Layout
 
-- `src/bindery/transforms.py`: pure `str -> (str, int)` text transforms (including `strip_broken_tags`). Since v0.55.0 `fix_svg_dup_ids` and `fix_duplicate_ids` share `_rename_duplicate_ids` (first-keeps-name, `_2`/`_3` suffixes, references never rewritten; since v0.58.0 comment/CDATA-hidden tags do not count -- counting them renamed the real definition away, issue #21); the SVG flag owns standalone `.svg` entries, the content-doc flag owns `.xhtml`/`.html`/`.htm`/`.xml`. Since v0.58.0 (issue #19) `encode_url_spaces` anchors on `_START_TAG_OR_PI_RE` (start tags plus xml-stylesheet-style processing instructions, prefix-disjoint branches, possessive loops) instead of the bare attribute regex: display text that TEACHES HTML carries `href="..."`, and the unanchored regex paired the phantom quote with the next real tag, encoding a space into the element name (two RSC-016 fatals on Hacking: The Next Generation); epub.py's `rewrite_space_renames` anchors on the same matcher (its PI branch is what keeps xml-stylesheet hrefs rewritten after the anchoring). Since v0.32.0: `strip_attrs_in_start_tags` anchors attribute edits on the quote-aware start-tag matcher, `_outside_protected` forwards arguments (context-carrying transforms can be decorated), `fix_id_colons` matches only the bare `id` attribute and only internal fragments (`fix_ncx_src_fragments` carries renames into the NCX), `fix_ncx_playorder` is anchored to `<navPoint>` start tags, and the css selector boundary covers namespaced and functional selector forms. HAZARD (the 0.41.0 spin): the quote-aware tag-prefix alternation (double-quoted | single-quoted | [^>]) OVERLAPS ([^>] matches quotes too), so a plain `*` re-partitions exponentially on failing candidates; every such greedy loop must carry the possessive `*+` (re 3.11+, the plugin's minimum Calibre). Since v0.42.0 the census is complete and pinned by tests/test_matcher_hardening.py: every greedy loop of this family is possessive (the three 0.41.1 rewrites plus _START_TAG_RE, _COVER_META_RE, _GUIDE_REF_RE, prune_dangling_edges' spine|item|itemref matcher, _ITEM_TAG_RE, _SPINE_ITEM_RE; possessive is byte-identical on success because the loop is always followed by a literal `>` the [^>] branch cannot consume), and the five LAZY siblings (_VOID_RE, the transforms <img> matcher, and epub's link/a/img matchers) use the disjoint catch-all `[^>"']` instead: mutually exclusive branches cannot re-partition, and an unterminated quote inside a tag now fails to match rather than pairing across markup. NEW tag matchers: quote-aware possessive for greedy loops, the disjoint catch-all for lazy ones, and the tempered-quote idiom (["'])((?:(?!\1).)*)\1 for attribute values. Since v0.37.0: `fix_ncx_playorder` strips quotes before its already-correct comparison (regex groups carry quote characters; comparing quoted values against bare numbers counted phantom fixes on every sequential NCX and rewrote single-quoted correct attributes to double quotes). Since v0.54.0 (the 2026-10-24 surgery): `fix_ncx_playorder` is CONTRACT-GATED -- it tokenizes navPoint/navTarget/pageTarget start tags plus their `<content src>` targets, returns unchanged when the NCX already satisfies epubcheck's playOrder contract (same target shares one value, distinct targets distinct values, values contiguous 1..K), and re-sequences by first-appearance target order only on a violation; the old unconditional 1..N renumbering rewrote valid TOCs into violations (211 of 579 firings gate-rejected, 17 real fixes, 347 no-ops). The same fix extends `_PROTECTED_RE` with the Calibre `/*<![CDATA[*/ ... /*]]>*/` wrapper as one protected unit (the bare CDATA alternative ends inside the closing `/*]]>`, which exposed the trailing `*/` to strip_prolog_junk's amputation: 111 phantom-fix rejections). Since v1.1.1 (issue #28) `fix_ncx_src_fragments` follows the FULL `fix_id_colons` predicate (`_is_invalid_ncname` + `_ncname_rename`, not colon-only: a digit-led ToC fragment follows the `id_` rename instead of dangling, a digit-led colon-bearing id translates to the same spelling on both sides) and both fragment passes (NCX `src` and the content `href`) carry the tempered-quote idiom, so an apostrophe in a double-quoted value (`#Lisey's_story`) translates whole instead of truncating at the apostrophe; the matchers are whitespace-anchored with the optional namespace prefix (`xlink:href` in, `data-href`/`data-src` out), and an ESCAPED fragment (a percent-escape or an entity reference) is refused outright -- it names its target under decoding, not NCName spelling, and renaming the encoded form would manufacture a target that exists nowhere, undoing the #29 decode match whenever both flags run (`--all` always does); the same release gives `_SVG_ID_ATTR_RE` the `(?<![\w:.-])` lookbehind (issue #30: `\bid=` fired right after the hyphen of `data-id`, making the real `id="c1"` a "duplicate" and renaming it away from its fragments).
-- `src/bindery/pagination.py`: the opt-in lossy page-number strip (runhead detection, page-layer decision, block-centric removal/merge, safety nets). Since v1.1.1 (issue #31) `_P_RE` refuses a self-closing start tag (`(?<!/)` before the closing `>`): `<p class="divider"/>` has no `</p>` of its own, so a match starting there ran to the NEXT paragraph's close and welded the divider markup into a block whose text could read as a page number. Since v1.2.1 (issue #34) `_ID_ANCHOR_RE`/`_OPEN_ID_RE` anchor on `(?:\s)(?:xml:)?id=` instead of `\bid=`: `data-id="page7"` (arbitrary data no reader can resolve) over-protected a number block from the strip, while `xml:id` IS a real XML id the oracle resolves fragments against and stays protected. Since v1.2.5 (the All About Cake cookbook fixture) every destructive decision requires **prose flow**: `_in_prose_flow` refuses a digit whose immediate gaps to BOTH neighboring blocks hold foreign markup (a lone recipe-quantity cell), while one-sided furniture (the #31 divider shape) stays in scope; `_is_baked` takes `html_text` now (both callers pass it) and its confident term additionally requires `_flat_run` over the pp..np corridor -- every gap between the prose, the number, and the continuation pure whitespace -- so the merge splice can never consume markup the block model does not own (the cookbook merged across `<p class="rec_line"/><table><td>`, discarded the table openers, and orphaned the rest of the table: RSC-016 on the candidate, gate REJECT); `detect_page_layer`'s confident count rides the same gate (the cookbook's 110 cell digits + 4 cell-boundary interrupts no longer license the sweep); the runhead cascade only reaches runheads flat-reachable from the number (`_flat_run(i, side)`); and `_safe` grew the all-tag delta net (`_tag_deltas`: per-element open/close balance must be IDENTICAL before and after -- deltas, not absolute counts, so a pre-existing stray close keeps running) because the p/a net reads only two names and the table-opener loss sailed through it. The runhead classifier itself (`collect_runheads`) is unchanged: it still harvests "1 tsp"-style cell text, but the flat gates keep every destructive path out of table cells. Since v1.2.6 (issue #38, the Don Juan damage audit) `collect_internal_numbering` flags every document whose standalone-number values are substantially shared with other documents (>= 25%: stanza/section numbering restarts per unit so its values reappear; page numbers are unique by construction) and the strip takes no numbers from a flagged doc -- enjambed stanzas (comma-ended, lowercase-starting) are homologous with real page bleeds and no text-shape signal can tell them apart, so the discriminator is book-level and order-independent; `detect_page_layer` gained `internal_flags` (self-computed when None) and excludes flagged docs from both license signals, and `strip_pagination_doc` gained `internal_numbering`; epub.py computes the flags beside `collect_runheads` and passes a per-doc verdict through a `content_idx` counter aligned with the htmls list (built from the same infolist filter).
-- `src/bindery/watermark.py`: the opt-in lossy watermark strip (anchored and anchorless signature removal).
-- `src/bindery/reserialize.py`: structural repair via `html5lib`.
-- `src/bindery/audit.py`: read-only body-text audits (`content`, `pagenumbers`, `emptytext`, `ocr`, `monolithic` since v0.21.0 with `--max-doc-chars N`, and `completeness` since v0.36.0, `shell` since v0.63.0, v0.64.0 wires `--prune-dead-spine` (the shell repair, 50%-signature-gated, playOrder force re-sequence); since v1.1.0 (issue #26) the loader counts `spine_missing_delim` (itemrefs whose raw `#`/`?` defeated resolution while the delim-encoded spelling finds the shipped file) and the shell verdict runs on the genuine fraction, so a fully-recoverable book reads ADVISORY naming `--encode-ref-delims`, never SHELL/re-source) behind the `audit` subcommand (v0.15.0). Since v0.18.0 library mode resolves EPUB paths through `cquarry.get_format_path()` and can apply a tag to flagged books via `cquarry.write.WritableCalibreDB` (only with explicit `--tag`; the only sanctioned write path). Since v0.19.0 `audit --id BOOK_ID` audits a single library book through cquarry's single-entity `get_book()` fetch (no library-wide cache; supports `--tag`; incompatible with the directory argument; comma lists since v0.23.0). Since v0.22.0 every archive entry is fully read (CRC + decompression) before analysis (a damaged entry reports its own CORRUPT verdict instead of feeding emptytext) and manifest/NCX references to absent files classify as `convention` (bloated ToC, consecutive span) or `fragment` (broken span). Hazard: the scan loop reuses `tag` as its per-book display column, so the `--tag` argument is captured as `audit_tag` at function entry; do not collapse them again. Since v0.29.0 `audit --json FILE` writes per-file analyzer verdicts in the `library --json` shape (directory, library, and single-book modes; with `--id`, exactly one id; emptytext omitted from a record when the archive verdict owns the body-text story). Since v0.44.0 two more advisory analyzers ride the single pass: `cover` (the EPUB3 `properties~="cover-image"` slice of the ruled hybrid: dangling EPUB2 meta, EPUB3 declaration, cover-file presence) and `tocdrift` (the NCX navMap vs EPUB3 nav toc structural diff, fragments included; audit-only, ToC synthesis out of charter permanently); the loader now exposes the parsed OPF, the NCX text, and the nav HTML on `Book`. Since v0.50.0 a ninth analyzer, `contamination` (issue #8, the judge-and-import class, advisory by contract like completeness/cover/tocdrift, never moves the exit code): foreign-title template stamps (head `<title>` repeats or a volume/book marker with named words in front of it, judged against the OPF's own title/creator/publisher/series with a marker-stripped comparison; a part label whose marker leads never flags), fan-bundle ad signatures (jnovels, kokoro connect, zerobooks, a light-novel plug), and review-paste fingerprints (strong flags alone, weak needs corroboration) in the first five content docs; its corpus is spine PLUS `Book.extra_docs` (the archive's non-spine html, retained by the loader in archive order under a 64 MiB cap, because a broken manifest can leave the junk entirely off the spine: Hothouse). Since v0.50.0 `run_directory`/`run_single` dispatch analyzers through `_dir_dispatch` (one entry per ALL key; the old if/elif chain's `else` ran ocr for cover/tocdrift in those modes since v0.44.0) and `tests/test_contamination.py` pins the map's key set to ALL. Since v0.36.0 the completeness analyzer (Phase 15) reports the phase-1 spot-check per book: spine/prose-doc counts (prose = >= 400 visible chars), first/middle/last prose-doc opening/closing excerpts, trailing-ToC classification (`_trailing_toc`: short link lines dominate, no paragraph-length blocks), and the unreadable fraction. It is ADVISORY by contract (problem always False; ADVISORY on a trailing ToC or unreadable fraction >= 10%), never moves the exit code, and is skipped like emptytext when the archive verdict owns the book. Since v0.38.0 the archive verdict distinguishes font obfuscation from DRM (`OBFUSCATION_ALGOS`: IDPF 2008/embedding + both Adobe URIs; readable obfuscated entries are the benign OBFUSCATED advisory, an unreadable one is CORRUPT, and only non-obfuscation algorithms give ENCRYPTED). Since v0.43.0 untrusted metadata XML is parsed through `_safe_xml_parse` (DOCTYPE/ENTITY declarations refused before xml.etree sees them; the stdlib shape of defusedxml's entity protection) and single entries above `_MAX_ENTRY_BYTES` (32 MB) are refused before decompression; a refused metadata file returns the shell book. Since v0.40.0 the vir-tui console renderer loads through the module-level `_LazyUI` proxy (a plain `import vir_tui as ui` at module level would make 3.12/3.13 installs unimportable now that the stack is marker-gated; LOAD_GLOBAL never consults module `__getattr__`, so a proxy object is the lazy shape that works). Since v1.2.4 (issue #36, PR #37 adopted) the loader also exposes `Book.opf_path` (the archive-relative package path) and `analyze_cover` resolves manifest hrefs against the OPF's directory (the spine-resolution basis), not the archive root: subdirectory-OPF books no longer read `cover file absent`, and a root-level image can no longer satisfy a nested package's cover reference.
-- `src/bindery/epub.py`: archive rewrite, NCX uid sync, RepairReport, mismatch detection, and the opt-in structural-repair plumbing (including the CSS precondition scan). Since v0.59.0 (issue #23) `strip_ncx_dangling_targets` is the NCX dangling-target prune (`--prune-dangling-ncx-targets`): a balanced stack scanner over navPoint/navTarget/pageTarget tokens (quote-aware possessive regex, `_NcxTargetNode` tree, iterative post-order survival pass; header_end delimits the node's own navLabel+`<content>` so a splice removes the tags AND the dead header while the children re-home; an unbalanced walk aborts the part unchanged) and the NCX branch re-runs `fix_ncx_playorder` when it fires, alongside the anchor pass's own re-run. Since v0.58.0 (issue #18) the copy loop hands every `zout.writestr` a PRIVATE ZipInfo (`copy.copy(item)`, a fresh one on a rename) and the media-type `peek` catches `zipfile.BadZipFile` too. HAZARD: `writestr` STAMPS the ZipInfo it is handed with the DESTINATION offsets (header_offset, sizes land on it for the central directory); sharing the source's info repointed zin's own name lookups into the output file mid-loop, and one drifted probe killed whole books as "unreadable" -- 56 books "Bad magic number for file header" plus the "possible zip bomb" Development as Freedom (the drifted offset landed on a valid header whose data overlaps its neighbor), all one root cause. Since v0.58.0 (issue #21) `strip_broken_guide_fragments` gives the OPF guide the NCX fragment-strip's document-precision fallback, and the NCX branch re-runs `fix_ncx_playorder` after the anchor pass fires (the pre-strip sequence goes stale when fragments collapse onto their document). Since v0.58.0 (issue #20) `_resolve_href` decodes the five predefined XML entities plus numeric
-    character references before the fragment split (attribute text arrives
-    escaped; entries are raw; decoding first keeps the `#` inside `&#38;`
-    from cutting the target), `_ITEM_TAG_RE`/`_SPINE_ITEM_RE`/`_GUIDE_REF_RE`/prune_dangling_edges' matcher accept an optional ns prefix (`<opf:item>`), and the renamed-reference spellings percent-encode `[`/`]` (`_encode_ref_path`). Since v0.52.0 (issue #10): `spine_dangles(src)` walks itemref -> manifest item -> archive entry through `_resolve_href`+`_norm_path` (None on an unreadable package: the veto needs evidence, never fires on a probe failure), and `prune_missing_manifest_items` derives its spine protection from the text it prunes (no snapshot parameter: fix_manifest_ids renames ids ahead of it, and the existence set it checks against must be the layout its hrefs are written in — `present_src` when space renames are active, matching the content-doc prune). Since v1.2.2 (issue #35) the probe is `spine_resolution(src)` returning a `SpineResolution(total, resolved, dangles)` NamedTuple (`spine_dangles` delegates for the #10 read), and the `--prune-dead-spine` shell census obeys the same layout rule the v0.52.0 lesson set for the manifest prune: its plain-href existence check consults `present_src` before judging an item dead, because when `--encode-url-spaces` co-fires, a raw-space href whose file exists in the source layout is the rename pass's repair class, never prune material (the Flux specimen manufactured a 97% shell signature — 31 of 32 — on a book whose files were all present, and the census fed the amputating prune). Since v0.46.0 the opt-in selection is the `RepairFlags` dataclass (one field per flag, all off by default; the all-off instance IS the default pass): `repair_epub(src, dst, flags)` and `process_book(..., flags)` take one object instead of a ~25-kwarg signature, the EPUB2-targeted fixes' version gate swaps in a `dataclasses.replace` copy (never mutating the caller's instance), and the plugin's bare `repair_epub(src, dst)` call constructs exactly the all-off default pass. Since v0.55.0 (issue #16) the RSC-008 half lives beside the prune: `collect_undeclared_resources` (one whole-book census: content img/link, inline `<style>` url(), stylesheet url(), OPF guide refs) + `declare_missing_manifest_items` (sorted `bindery-dN` items before `</manifest>`, `_DECLARE_MEDIA_TYPES` blessed extensions only), gated and threaded through `RepairFlags.declare_missing`. Since v0.38.0/v0.39.0 (Phase 16): `generate_container` + the `--fix-container` gateway (insert after mimetype when missing, replace in-loop when stale; constant-epoch timestamp keeps bytes deterministic), `prune_dangling_edges` (prune_missing_manifest_items returns the pruned ids and the edges that pointed at them (spine@toc, media-overlay, fallback, EPUB2 cover meta) are rewritten so pruning cannot manufacture the regression the gate rejects), and `fix_manifest_media_types` (extension map + magic-byte confirmation via a `peek` callable over the open source zip; jpg/png/gif only), and `fix_cover_meta` (the ruling's deterministic half: dangling EPUB2 cover meta re-pointed from the guide's cover reference when exactly one manifest item carries that file, removed otherwise; accepted under no_worse like the lossy strips because cover wiring is invisible to epubcheck). Since v0.62.0/0.62.1 (the 2026-11-03 observatory batch): the playOrder contract is base-free (epubcheck polices sharing/distinctness/gaps, never the base; verified at singleton/pair/offset scales), `fix_pagelist_class` inserts the collision-checked `bindery-pagelist` id beside the class (class-only insertion made epubcheck demand the id it enabled), `fix_missing_title` fills the self-closed `<title/>` head-scoped only (an empty SVG `<title>` is visible text the gate cannot measure), and four new flags live beside them: `fix_package_version` (literal 1.0 -> 2.0 only; `_PACKAGE_VERSION_ONE_RE`), `fix_doctype` (present-but-forbidden declarations only; `_scan_doctype_span` walks bracket depth and refuses unterminated spans), `prune_invalid_guide_refs` (declared-but-not-a-content-doc targets, both element shapes), and `fix_manifest_item_properties` + `collect_item_properties` (EPUB3-only census: scripted from `<script>`/`<form>`, svg from `<svg>`, remote-resources from absolute-scheme src/link/CSS url(); the insert branch appends before a self-closed item's solidus, never after it -- the v0.62.1 review caught the malformed `/ properties` shape). Since v0.62.1 `fix_double_colon_tags` escapes `::`-named pseudo-tags (a QName carries at most one colon, so such a construct is never markup; nested templates escape inner-first until stable; the tail is bounded at 120 chars so an escaped-bracket construct cannot swallow prose). Since v1.1.1 (the audit batch, issues #28-#33): `_norm_fragment` decodes a fragment the way `_resolve_href` decodes a path (XML entities, then RFC 3986 percent) before every anchor-cleaner existence check, so `#caf%C3%A9` matches `id="café"` instead of reading as broken (#29, the content/NCX/guide halves alike); `_ITEM_ID_RE`/`_XML_ID_RE` carry the `(?<![\w:.-])id=` lookbehind (`data-id`/`xml:id` are not ids: the manifest half renamed a `data-id` while the item's real id stayed; #30), while `ids_by_doc` collects through the dedicated `_ANCHOR_ID_RE` (`(?:xml:)?id`) because xml:id is a real XML id the oracle resolves fragments against -- dropping it from the anchor set would strip links the oracle never flagged; `downgrade_epub3_tags` runs through `outside_protected_map` and `_append_class`'s class matcher is whitespace-anchored (the unshielded `re.sub` downgraded commented-out markup and the bare `class=` merged into `data-class`; #32); and `declare_missing_manifest_items` locates the manifest close tag through `_MANIFEST_CLOSE_RE` (`</(?:[\w.-]+:)?manifest\s*>`: the literal `"</manifest>"` check/replace silently no-opped on prefixed and whitespace spellings; #33). Since v1.2.0 (issue #27) `strip_dead_font_faces` is the CSS-side dead `@font-face` drop (`--strip-dead-font-faces`): ebook-convert azw3->epub carries the source's font declarations without the payloads, filling the page_styles sheets with `url(styles/XXXXXXXXXXXXXXXX)` placeholders (one RSC-007 per dead reference; the manifest prune has no item to answer, so `--all` never converges); a block whose EVERY url() misses the archive drops rendering-neutral (the font never loaded), one live url() -- or a scheme/query/fragment/raw-space/local()-only reference (first #/? starts fragment/query, the #26 oracle model), or nested braces the flat-brace matcher cannot read exactly -- keeps it; resolution walks `_resolve_href` against the existence set (`present_src` when renames are licensed: the pass runs FIRST in the CSS branch, before `rewrite_space_renames_css`); XML comments/CDATA (`outside_protected_map`) AND plain CSS comments (`_CSS_COMMENT_SPAN_RE` spans, an INTERSECTION over the whole match: a `}` inside a comment truncates the match and a start-keyed drop would leave comment garbage -- `_PROTECTED_RE` covers XML comments only) are never rewritten; runs on `.css` entries only, and the flag joins the CSS branch gate and the `present`/`present_src` condition list. Since v1.2.1 (issue #34) every edge-attribute matcher in `fix_manifest_ids` (`fallback=`, `media-overlay=`, `spine toc=`, both `meta content=` cover forms), the `_DTB_UID_RE`/`_DTB_UID_RE_REV` pair, and `_COVER_META_RE`'s lookahead carry the #30 lookbehind (`\b(?<![\w:.-])<attr>=`): `\b` fired right after a hyphen, so `data-fallback=`/`data-media-overlay=`/`data-toc=`/`data-name=`/`data-content=` read as the manifest edge attribute and a rename-plan collision would have rewritten arbitrary data; unprefixed-only is the `_IDREF_ATTR_RE` precedent (OPF edge attributes are never namespaced), and `_EDGE_ATTR_RES`/`_COVER_CONTENT_RE` were already whitespace-anchored. The v1.2.1 review pass completed the class: `_PACKAGE_VERSION_ONE_RE` (a `data-version="1.0"` was rewritten to 2.0), the guide cover-statement scan `\btype=` (a `data-type="cover"` reference drove cover-meta repointing -- a real misfire), and `fix_pagelist_class`'s satisfaction checks (`(?:^|\s)`-anchored plain `id`/`class`: epubcheck demands the PLAIN attributes, so `data-class`/`xml:id` never read as satisfied and an xml:id pageList gets the plain id inserted beside it). Since v1.2.7 (the Morimoto cookbook, the testing_facility oceanofpdf export whose gated `--all` rose 0f/8e/0w -> 0f/11e/0w): `_PACKAGE_VERSION_RE` accepts a namespace-prefixed package element (`<opf:package version="2.0">` read as unversioned and both EPUB2-targeted fixes went inert); `_stub_is_image_carrier` keys on the `<img>`/`<image>` presence alone and carriers leave the stub count and the returned set (shared `_manifest_href_map` replaced detect_stub_docs' inline item loop); `prune_guide_refs_to` drops guide `<reference>` elements whose resolved path is in the caller's gone set, wired beside `prune_dangling_edges` on all three prune cascades (`stub_guide_refs_dropped`, `prune_guide_refs_dropped`, `dead_spine_guide_refs_dropped`), and `EPUB3_DOWNGRADE_TAGS` gained nav and header. Since v1.2.8 (the Goldfinger ten, the first real work v1.2.7 unblocked): `anchor_present`/`anchor_present_src` subtract `stub_hrefs` from the broken-reference existence sets at both `prune_missing_resources_doc` call sites and the dropped docs' ids leave `ids_by_doc` -- a surviving doc's link INTO a dropped stub read as live against the source archive and dangled on the pruned book (Goldfinger 0f/3e -> 0f/29e); the ten now repair accepted.
-- `src/bindery/validate.py`: epubcheck wrapper, the `gate` (improvement) and `no_worse` (no-regression, for the lossy strips) acceptance bars. Since v0.55.0 (issue #15) the default oracle budget is size-scaled (`oracle_timeout_for`: 300s at or under 10 MB, +60s per started 10 MB above, 1800s cap), one subprocess retry follows a timed-out attempt (the daemon path's subprocess fallback is that attempt), and only a double timeout raises `OracleTimeout`, which the gate surfaces as `(epubcheck timeout)` instead of `(epubcheck failed)` (the sweep selectors catch it and keep the book a candidate). Since v0.60.0 (issue #24) the size term counts decimal MB (10,440,245 bytes is 9.96 binary MiB, so the book the docs call 10.4 MB computed the flat 300s base with no size chunk), and the budget also scales on archive entry count (+60s per started 500 entries above 1,000; a path that does not open as a zip falls back to size-only): the Summa Theologica is entry-count-bound, not bytes-bound (3,831 entries / 3,808 spine docs; measured 384s source and 445s candidate), and now computes 720s.
-- `src/bindery/library.py`: Calibre walk, atomic replace, backups, and native format installation. Since v0.19.0 `CalibreIdResolver` resolves the book id from `metadata.db` through cquarry (one lazy path→id map per run; since v0.20.0 the map comes from `CalibreDB.format_path_index()`, re-normalized with `resolve().lower()` for the resolver's symlinked-directory and case-insensitive matching); the `(id)` directory-name regex is only the no-catalog fallback. Since v0.24.0 `install_format()` places the repaired file atomically and updates the `data` row through `cquarry.write.WritableCalibreDB` (since v0.31.0 via `set_format`, cquarry 1.17's sanctioned remove+add in one transaction); the external `calibredb` CLI is gone. Since v0.32.0 a guessed id drives a row update only when metadata.db corroborates it (`_verify_guess`: books row exists, file in the book's own directory, catalogued `data.name` when a row exists); anything else saves in place and leaves the catalog untouched: never reintroduce directory-name guessing as the primary source: renamed/mismatched directories would replace the wrong book. Since 2026-09-15 `make_backup` takes the opt-in `--backup-keep N` ring: at most N backup files per book, the author original `.bak` never deleted, newest content at the highest name; default remains an unbounded rotation.
-- `src/bindery/cli.py`: `repair` and `library` subcommands, including `--all` and `--install-to-calibre`; since v0.52.0 `process_book` carries the spine-resolution veto (issue #10) above every verdict path, promotions included: a candidate whose spine dangles more than the source's is `reject` with `(spine collapse)` appended to the summary, whatever the counts say; since v1.2.2 (issue #35) the veto's second arm rejects a `dead_spine_items_pruned` candidate whose post-prune resolved-spine count is under half the source's with `(spine halved)` (the prune class the dangle count cannot see; the entries_renamed and refs_delim_encoded promotions rank below it). Since v1.1.0 (issue #26) the `refs_delim_encoded` keyed promotion carries the missing-file mask bar above the gate's error-cleanup answer (net-new fatals reject, still-fatal partial, fatal-free accepts the unmasking rise; the veto still overrides). `repair --json` emits the library per-book record vocabulary (2026-09-15; since v0.45.0 every per-book record, the phase1 payload included, also carries the structured fix breakdown: the `fixes` dict plus `ncx_uid_synced`/`watermark_refusals` off the `Outcome`, and `_phase1_decisions` reads that data instead of substring-matching the rendered `summary`, which stays for human eyes; CalibreQuarry's lossy-consent mirror is the waiting consumer, floor `bindery>=0.45.0`); since v0.29.0 also the `run` verbs: `phase1` (pre-import vetting over loose files: the audit battery composed with one gated repair sweep; read-only until `--apply-lossy`, which IS the lossy-strip consent) and `phase3` (the scoped post-import apply step: `library --id --sweep --only all --apply --all --install-to-calibre` plus a pre/post summary; mechanically refuses unscoped sweeps with exit 2; since 2026-09-15 the summary sums applied/equal states only and carries rejected projections as `rejected_projection`). Plus `bindery doctor` (2026-09-15): the environment self-check that imports none of the VirInvictus stack, never raises, and always exits 0. The `observe` verb (v0.53.0) writes schema v2 artifacts since v0.55.0 (issue #13): `codes.messages` (renamed from the mislabeled `occurrences`) counts aggregated epubcheck JSON message entries, `codes.occurrences` now carries the true per-site scale (summed `locations`), a `counting` block states both scales in the artifact, and `--against` accepts v1 or v2 (the trend keys exist in both). Both run verbs take `--non-interactive` and surface open questions as `decisions_needed` in their JSON, never prompts. They drive the shipped `run_library` through the real parser, so no flag can drift between the verb and the subcommand it wraps. Since v0.46.0 `cli._flags_from_args(args)` is the one place the argparse names map onto `RepairFlags` fields (each `or --all`), shared by `run_library` and `run_repair`; the old per-verb ~25-kwarg blocks are gone. Since v0.47.1 the help is two-level (the --help-repairs reference is
-  custom-rendered and colors itself with the CPython 3.14 argparse theme,
-  gated by argparse's own _colorize detection so the levels always agree) and the repair-flag inventory is one table: `_REPAIR_FLAG_TABLE` (dest + one-line short help + long reference text) registers the compact grouped `--help` (argparse argument groups, hand-short usage line) and `--help-repairs` renders the long descriptions (a custom argparse Action, deliberately NOT store_true so the wiring test's selection count ignores it); adding a flag means adding a table row and a `docs/repairs.md` bullet (the browsable per-flag reference has lived there since the README slimmed). Since v0.48.0 the metadata.db doors are enforced: `_require_closed_calibre` (pgrep fail-closed, exit 1) guards `audit --tag` and `library --apply --install-to-calibre` (run phase3 transitively), and `--help-json` (a custom argparse Action like --help-repairs, never colored) dumps the per-verb exit contract and the door list; since v0.48.1 the per-verb exit contracts tell the code's truth (repair: 0 probed/written incl. partial / 1 trouble, never 2; audit: 0/1/2 plus 3 for findings+write-failure; library and the run slices: the unified 0/2/1); since v0.49.0 the single-file verb's no-output form is a probe (the gate runs, the record's `output` is null and `applied` false, nothing is written anywhere; the old implicit `(repaired).epub` sibling was issue #7's import litter in a vetted tree, and writing now needs an explicit DST). `library --workers N` (v0.30.0) parallelizes only the sweep's candidate pass, in windows of N consumed in order so `--limit` stays lazy; the repair phase is never parallel (shared workdir, atomic-replacement contract). Since v0.40.0 `main()` guards the VirInvictus stack: a `ModuleNotFoundError` naming `vir_tui`/`cquarry` (marker-gated to 3.14+ on the 3.12 floor) becomes one stderr line and trouble exit 2 instead of a traceback; anything else missing still raises.
-- `plugin/__init__.py` + `scripts/build_plugin.py`: the Bindery Repair Calibre plugin (v0.37.0; identity `Bindery Repair` / `bindery_repair`, approved and built per the scoped spec in roadmap.md Phase 3). The builder vendors `transforms.py`, `epub.py`, `pagination.py`, `watermark.py`, `reserialize.py` byte-identically into the zip (the zip root is a package, so their relative imports resolve unchanged; the suite's drift test pins the equality) with the version tuple substituted from the single-source VERSION; `publish.yml` attaches `BinderyRepair-v<VERSION>.zip` to each release. The plugin runs ONLY the default pass (epubcheck cannot gate inside Calibre), never raises, is byte-idempotent (zero fixes returns the original path), testzip()-verifies its output, logs one line per book, and takes JSON config via `site_customization` (`log`, `log_path`, `max_size_mb` default 150, `max_log_mb` rotation cap default 2, `epubcheck_path` experimental validation default OFF). Load it in tests through the `tests/test_plugin.py` stubs: the calibre namespace is installed in sys.modules and the package loads with a two-dir `__path__` (plugin dir first, then src/bindery) exactly like calibre's zipplugin loader shape. **Plugin/interpreter compatibility (v0.40.0):** v0.39.0 shipped PEP 758 unparenthesized except tuples, and the plugin died with a bare SyntaxError on every released Calibre (7.x and the whole 8.x series embed Python 3.11, 9.0+ embeds 3.14; from calibre's bypy sources.json, checked against the upstream clone). The core is now grammar-pinned: parenthesized except tuples everywhere, `ruff`'s `target-version = "py312"` pin (inference from requires-python would rewrite the parens back off), `tests/test_version.py`'s parse guard, and CI's `plugin-compat` job byte-compiling the built zip under 3.11/3.12/3.13/3.14. `minimum_calibre_version` is (7, 0, 0): the oldest series whose interpreter CI covers, replacing the hollow (2, 0, 0); `supported_platforms` stays `["linux"]` (developed and tested on Linux only). Any new syntax in the vendored modules must clear the guard before it ships.
-- `tests/`: transforms (including the shared duplicate-id rename), end-to-end repair, atomic replace, pagination, watermarks, the audit analyzers (content/pagenumbers/emptytext/ocr/monolithic/completeness, archive integrity, spine classification, contamination since v0.50.0), the library sweep and `CalibreIdResolver`, validate, reserialize, CLI wiring, the version pin and the syntax-floor grammar guard, and the Calibre plugin (build drift + run behavior under calibre stubs). Since the v0.46.0 follow-ups: `tests/test_flags_wiring.py` reflectively pins the RepairFlags inventory to the argparse dests and `_flags_from_args` mapping (a flag added without a field, a field without a flag, or a remapped line fails there), the all-off defaults, and the version gate's caller-immutability contract (test_epub's `TestVersionGateKeepsFlagsIntact`); `tests/test_comment_hyphens.py` carries the RSC-016 fix; `tests/test_flags_real_core.py` drives every repair flag from argv through the unmocked core (--no-validate; the gate itself stays pinned by the mocked-oracle tests and runs for real wherever epubcheck exists). `tests/test_contamination.py` (v0.50.0) carries the three contamination sweeps, the advisory contract, the `_dir_dispatch` key pin, and the cover-routing regression. The v0.46.0 trio (test_flags_wiring, test_comment_hyphens, test_flags_real_core) rides CI's core-compat 3.12/3.13 leg; the hand-listed module list there must gain an entry for every new stack-free test module (audit-side test modules like test_contamination stay on the 3.14 leg by convention). The v0.55.0 batch (issues #11-#16): `tests/test_validate.py` pins the size-scaled timeout and the retry-then-OracleTimeout contract, `tests/test_observe.py` the v2 line format (`CODE:messages:occurrences`), the renamed codes block, the counting envelope, and v1 `--against` acceptance, `tests/test_epub.py::TestDeclareMissingItems` the RSC-008 declarer (sorted deterministic items, blessed media types only, id collisions prefixed, schemes/fragments/spaces/declared skipped), `tests/test_transforms.py::TestFixDuplicateIds` the content-doc rename, and `tests/test_flags_real_core.py` drives `--fix-duplicate-ids`, `--declare-missing-items`, and the extended `--strip-epub3-attrs` set through the real argv-to-fix path. The v0.59.0 addition (issue #23): `tests/test_epub.py::TestPruneDanglingNcxTargets` pins the node-exact prune rule (dead leaf dropped, dead parent spliced above live children, dead subtree one span, scheme/bare-fragment/contentless/comment-hidden untouched, escaped-ampersand src resolves, pageTarget and legacy navTarget covered, wrapper-crossing and unclosed walks abort, a wholesale-dead container refuses) plus the end-to-end prune+resequence, and `tests/test_flags_real_core.py` drives `--prune-dangling-ncx-targets` through argv. The v0.60.0 addition (issue #24): `tests/test_validate.py` pins the decimal-MB size term (exactly 10 MiB earns its 360s chunk) and the entry term (the 3,831-entry shape at <= 10 MB computes 660s; the full Summa shape computes 720s; exactly 1,000 entries stays at the size budget; 1,001 adds the first chunk; 2,500 computes 540s). The v0.62.x additions: `tests/test_transforms.py::TestFixNcxPlayorder`'s base-free clause tests (zero-based/offset untouched, gap fires) and `TestFixMissingTitleSelfClosed`/`TestFixMissingTitleHeadScope` (self-closed fill, SVG-title protection), `tests/test_epub.py::TestItemPropertiesInsertionBranch` (the self-closed well-formedness pin) and the five `TestFlag*EndToEnd` classes, `tests/test_transforms.py::TestFixDoubleColonTags(+Bounds)` (book shape, closing tags, nesting, bounds, raw-ampersand), the four new-flag fixtures + rows in `tests/test_flags_real_core.py`, and the five mapping entries in `tests/test_flags_wiring.py`. The v1.1.0 additions (issue #26): `tests/test_epub.py::TestEncodeDelimRefs` (the two gates, CSS/NCX/OPF shapes, display-text and comment exclusion, idempotence, and the repair-level guard+encode end-to-end) plus `TestPruneDeadSpine`'s mixed-census case (genuine dead + recoverable prunes only the genuine), `tests/test_spine_guard.py::DelimPromotionTests` (accept under the unmasking rise, net-new fatals reject, still-fatal partial, the veto still overrides) and `DelimFixtureRegressionTests` over the real facility fixture (no amputation, 36 encoded, spine 0 dangles), and `tests/test_contamination.py::TestShellAnalyzer`'s recoverable/mixed/true-shell trio. The v1.1.1 additions (issues #28-#33): `tests/test_transforms.py::TestIssue28FragmentSync` (digit-led/apostrophe NCX and href fragments follow the full predicate; valid and external fragments untouched) and `TestIssue30DataIdLookbehind` (data-id/xml:id never seed a duplicate rename; the real duplicate beside one still renames), `tests/test_epub.py::TestIssue29PercentDecodedFragments` (percent-encoded café/Cyrillic fragments survive across the anchor/NCX/guide halves; the ghost controls still strip, one per cleaner), `TestIssue30OpfIdLookbehind` (manifest/NCX `data-id` not renamed; the real digit-led id renames beside it), `TestIssue32DowngradeGuards` (`data-class` never merged, comment/CDATA untouched beside a real downgrade), `TestIssue33ManifestCloseTag` (prefixed and whitespace close tags declare; the original spelling survives), and `tests/test_pagination.py::TestSelfClosingParagraphs` (a self-closing divider never welds into a stripped block; the conservative path tolerates it). The pre-commit review additions: `tests/test_transforms.py::TestIssue28EscapedFragmentRefusal` (percent-encoded/entity-ref fragments refused in both passes, data-href/data-src out of scope, xlink:href still covered) and `tests/test_epub.py::TestIssue30XmlIdAnchorTarget` (a link targeting an xml:id-declared anchor survives `--strip-broken-anchors`). The v1.2.0 additions (issue #27): `tests/test_epub.py::TestStripDeadFontFaces` (dead block dropped, live/mixed/scheme/local-only/fragment/space blocks kept, nested-brace refusal, XML- and CSS-comment protection, idempotence, the repair-level end-to-end) and `TestStripDeadFontFacesReviewEdges` (query-carrying references refused live or dead, the comment-`}` truncation refusing the drop) plus the fixture + row in `tests/test_flags_real_core.py` and the wiring entry in `tests/test_flags_wiring.py`. The v1.2.1 additions (issue #34): `tests/test_epub.py::TestIssue34AttrLookbehind` (data-fallback/media-overlay/toc/content refused while the real edge attribute renames beside it, dtb:uid data attributes ignored by the uid sync, a data-name cover meta neither wired nor removed), `TestIssue34AttrLookbehindCompletion` (package data-version untouched, a data-type-only guide reference is not the cover statement, pagelist data-id/data-class satisfy nothing, the interleaved attribute orders for the forward cover matcher and the reverse dtb:uid matcher) and `tests/test_pagination.py::TestIssue34DataIdProtection` (a data-id block strippable, a real id block still shelled, an xml:id anchor still hoisted). The v1.2.2 additions (issue #35): `tests/test_spine_guard.py::SpineResolutionTests` (the three-count probe: healthy book, missing file, unreadable archive) and `SpineHalvedVetoTests` (the amputating prune rejects improving counts and overrides the delim mask promotion, exactly half keeps the normal verdict, the genuine-shell prune sails with resolution unchanged, the prune-counter-keyed no-veto case, and the probe's fail-open contract), plus `FluxFixtureRegressionTests` over the real facility fixture (no prune fired, 31 entries renamed, spine 32 itemrefs 0 dangles). The v1.2.4 additions (issue #36): `tests/test_cover_tocdrift.py`'s `test_cover_paths_are_relative_to_the_opf` (root/nested/parent-walk/percent-encoded/fragment hrefs through both EPUB 2 meta and EPUB 3 properties wiring) and `test_root_image_does_not_satisfy_a_nested_cover_reference` (the inverse hazard), with the `_epub` helper parameterized over the OPF's archive path.
+| Path | Owns |
+|---|---|
+| `src/bindery/transforms.py` | Pure `str -> (str, int)` text transforms, the regex matchers, and the matcher hardening rules |
+| `src/bindery/epub.py` | `RepairFlags`, `RepairReport`, the archive rewrite, the NCX pipeline, `spine_resolution`, and every opt-in repair's package-level plumbing |
+| `src/bindery/pagination.py` | The page-number strip, and the canonical roman and number grammar (audit imports from it; it vendors into the plugin) |
+| `src/bindery/watermark.py` | The watermark strip |
+| `src/bindery/reserialize.py` | The html5lib rebuild |
+| `src/bindery/validate.py` | The epubcheck wrapper, `gate`, `no_worse`, `oracle_timeout_for`, the daemon |
+| `src/bindery/library.py` | The Calibre walk, `atomic_replace`, `make_backup`, `CalibreIdResolver`, `install_format` |
+| `src/bindery/audit.py` | The ten read-only analyzers and the `_LazyUI` console proxy |
+| `src/bindery/observe.py` | The whole-library census harness and the `.observe` artifact |
+| `src/bindery/cli.py` | The parser, `_REPAIR_FLAG_TABLE`, the renderers, the exit contracts, `process_book`, the run verbs |
+| `plugin/__init__.py`, `scripts/build_plugin.py` | The Bindery Repair Calibre plugin and its builder |
+| `scripts/render_repairs_doc.py` | Regenerates `docs/repairs.md` |
+| `scripts/fast_sweep.py`, `scripts/FastSweep.java` | The standalone parallel epubcheck sweep |
+
+## Tests
+
+`./run_tests.sh` runs ruff (CI's pin) and the `unittest` suite. The suite builds its
+own synthetic EPUBs and needs no Calibre library.
+
+| Module | Pins |
+|---|---|
+| `test_transforms.py` | Every text transform, the shared duplicate-id rename, the playOrder contract |
+| `test_matcher_hardening.py` | The possessive and disjoint catch-all rules, with alarm-guarded spin shapes |
+| `test_epub.py` | End-to-end repairs per flag, the prune cascades, the encodes, the declarer, `RepairFlags` caller immutability |
+| `test_flags_wiring.py` | The flag inventory reflected against argparse dests and `_flags_from_args` |
+| `test_flags_real_core.py` | Every flag driven from argv through the unmocked core (`--no-validate`) |
+| `test_spine_guard.py` | The spine-resolution veto's arms and the keyed promotions |
+| `test_validate.py` | `gate`, `no_worse`, the oracle budget, retry then `OracleTimeout` |
+| `test_pagination.py`, `test_watermark.py`, `test_reserialize.py` | The lossy strips' nets and refusals; the html5lib rebuild |
+| `test_library.py` | Atomic replace, backups, `CalibreIdResolver` |
+| `test_cli.py` | The parser surface, the two help levels, the JSON records, exit codes |
+| `test_help.py` | The closed-Calibre doors and `--help-json` |
+| `test_observe.py` | The `.observe` artifact schema and trend blocks |
+| `test_audit.py`, `test_contamination.py`, `test_cover_tocdrift.py`, `test_comment_hyphens.py`, `test_space_renames.py`, `test_xml_hardening.py` | The analyzers, the comment fix, the space renames, the XML hardening |
+| `test_plugin.py` | The plugin build's byte-equality drift and its run behavior under Calibre stubs |
+| `test_version.py` | The version carriers, the syntax-floor grammar guard, the newest patchnotes heading |
+| `test_repairs_doc.py` | `docs/repairs.md` equals the live flag table |
+
+CI runs three legs: `test` on 3.14 (the whole suite), `core-compat` on 3.12 and 3.13
+(a hand-listed set of stack-free modules in `ci.yml`; a new stack-free test module
+joins that list), and `plugin-compat` (the built zip byte-compiled under 3.11 to
+3.14). The suite count goes into the patchnotes entry as `Suite: N tests.`,
+written last, after the final count is known.
+
+### Environment traps
+
+- `uv run --python X` rebuilds `.venv` for interpreter X, and the version markers
+  then gate `vir-tui` and `cquarry` out of it below 3.14. After an interpreter
+  experiment, rebuild with `uv run --python 3.14` before running the suite.
+- A plain `uv sync` strips the `reserialize` extra. Use `uv sync --extra
+  reserialize`.
+- `uv.lock`'s root version lags a bump until the next `uv run` or `uv lock`.
+- A bare `git checkout -- <file>` in a tool call discards every uncommitted edit to
+  that file, including your own from earlier in the session. Commit or stash work
+  in progress before any command that resets a path.
+
+### Adding a flag
+
+1. Add the transform and its `RepairFlags` field, and thread it through
+   `repair_epub`.
+2. Add the `_REPAIR_FLAG_TABLE` row, then run
+   `.venv/bin/python scripts/render_repairs_doc.py`.
+3. Add the `_flags_from_args` line. The wiring test fails until you do.
+4. Add the spec.md entry and a test in the module that owns the behavior, plus a
+   row and fixture in `test_flags_real_core.py` when the flag changes bytes.
+5. If the flag needs a gate promotion, add it beside the existing ones and pin it in
+   `test_spine_guard.py`.
 
 ## Conventions
 
-- Python style follows the global conventions (type hints, `from __future__ import annotations`, ruff for lint and format; `~/.zcode/AGENTS.md`).
-- `./run_tests.sh` runs the suite in the project venv. Since the 3.12 floor, `uv run --python X` REBUILDS `.venv` for interpreter X, and the `python_version >= '3.14'` markers then gate vir-tui/cquarry OUT of it below 3.14 (the suite goes red with ModuleNotFoundError: cquarry). After interpreter experiments, rebuild with `uv run --python 3.14` before running the suite again.
-- `VERSION` lives in `src/bindery/__init__.py`, mirrored in `pyproject.toml`. Bump both.
-- Run tests with `./run_tests.sh`.
+- Python style follows the global conventions: type hints,
+  `from __future__ import annotations`, ruff for lint and format.
+- `VERSION` lives in `src/bindery/__init__.py` and is mirrored in `pyproject.toml`.
+  Bump both.
+- No em-dashes in anything a reader sees rendered: README, spec, roadmap,
+  patchnotes, tag messages, commit messages, PR text, issue replies. En-dashes in
+  numeric ranges are correct and stay.
 
 ## Validation workflow
 
 The library is real data. The loop is always: dry run on `/tmp` copies, inspect the
-report, then apply with backups. epubcheck is the oracle; a repaired book that still has
-fatals is `partial` and must be left for manual work, never auto-applied.
+report, then apply with backups. `--backup DIR` is opt-in on `bindery library
+--apply`, so compose it into every apply. epubcheck is the oracle. A repaired book
+that still has fatals is `partial` and is left for manual work, never auto-applied.
 
 ## Release flow
 
-Commit and push verified work (the standing push grant in the global file; force-pushes
-still need approval), wait for CI to go green, then tag: annotated `vX.Y.Z` at the release
-commit, message = that release's patchnotes entry verbatim (`--cleanup=verbatim`; the full
-tag procedure lives in `~/.zcode/AGENTS.md`). The tag drives `publish.yml`: the PyPI push
-plus the Bindery Repair plugin zip attached to the GitHub release. Version carriers:
-`src/bindery/__init__.py`'s VERSION and `pyproject.toml`; bump both.
+Commit and push verified work (the standing push grant; force-pushes still need
+approval), wait for CI to go green, then tag: an annotated `vX.Y.Z` at the release
+commit, with that release's patchnotes entry verbatim as the message
+(`--cleanup=verbatim`; the full tag procedure is in the global file). The tag drives
+`publish.yml`: the PyPI push and the Bindery Repair plugin zip attached to the
+GitHub release.
+
+The patchnotes entry pattern is `## vX.Y.Z (YYYY-MM-DD)`, then one `###` headline
+naming the change, then prose on what changed and why, ending with
+`Suite: N tests.` Older entries that predate the pattern are frozen with their tags.
+
+## Decisions
+
+Recorded calls that constrain the work. The reasoning behind each is in the
+patchnotes entry that shipped it.
+
+- **Docs layout (2026-11-24).** The roles listed at the top of this file. One flag
+  text is canonical (the CLI table), and the page and the terminal reference are
+  renderings of it.
+- **The plugin shape (2026-08-09, corrected 2026-09-05).** A `FileTypePlugin` with
+  `on_import`. `run(path)` returns a `temporary_file()` replacement before the file
+  lands, so the original on disk is never touched and `metadata.db` is never
+  written. A raising plugin cannot abort an import and cannot lose the file, but the
+  failure would be silent, so the plugin never raises and keeps its own log. The
+  hook also fires on `add_format`, so the plugin is byte-idempotent. The active set
+  is the default pass only, because epubcheck cannot gate inside Calibre (no JVM,
+  seconds-per-book latency). This latency ruling also keeps the plugin off upgrades.
+- **Exit-code contracts (2026-09-10, "unify on trouble").** Argparse-level misuse
+  exits 2 before the tool's validation. The tool's own usage errors exit 1. Trouble
+  (rejected, errored, unreadable, partial books) exits 2 in `library` and both run
+  slices. `audit` inverts the repair shape (findings exit 1), and a failed
+  `--json` or `--tag` write on top of findings exits 3. `repair` never exits 2.
+- **The daemon: reconcile, not retire (2026-09-10).** epubcheck's human summary
+  counts occurrences while its JSON counts aggregated messages, and the gate has
+  always measured the aggregated scale. So the daemon reads the JSON that
+  epubcheck's own `CheckingReport` serializes and matches the subprocess by
+  construction. It launches through Java's single-file source launcher (no javac,
+  no version skew).
+- **Tag policy (2026-09-11).** Every release from v0.27.0 on is tagged at its
+  release commit with the full patchnotes entry as the tag message. The 39 entries
+  from v0.1.0 to v0.26.0 are untagged by decision (v0.16.3 and v0.17.0 excepted):
+  no backfill tags. patchnotes and PyPI carry them.
+- **requires-python 3.12 with markers.** Every `cquarry` and `vir-tui` release on
+  PyPI declares 3.14, so the pins carry version markers. A 3.14 install is
+  byte-identical, and 3.12/3.13 installs run the stack-free repair core with a
+  one-line dispatch guard. `minimum_calibre_version` is `(7, 0, 0)`.
+- **The metadata-validity carve-out (2026-09-12).** Invalid dc: metadata (OPF-085
+  and the thin date/language tail) routes to cquarry and CalibreQuarry. bindery's
+  side is closed, and dc: metadata stays a non-goal.
+- **Privacy record.** `testing_facility/top500candidates/REPORT.md` is untracked,
+  forward-only. The local book collections never enter git: `testing_facility/` is
+  gitignored and `test_facility/` is untracked, because most of their contents are
+  commercial books.
+- **One number grammar.** `pagination.py` is the canonical home of the roman and
+  number logic. It vendors into the plugin and audit imports from it. Never write a
+  third copy.
+- **Ecosystem parity dispositions (2026-09-29).** In the Calibre-parity program,
+  bindery's lane is the repair and acceptance domain, where it is past parity
+  (ebook-polish has no acceptance oracle, no determinism contract, and no atomic
+  library replacement). Conversion between formats stays out permanently: the
+  Calibre conversion engine is orchestration-lane territory (CalibreQuarry). The
+  ebook-polish content-improving actions bindery lacks stay declined: embed and
+  subset fonts, jacket, smarten punctuation, remove-unused-css, compress-images,
+  upgrade-book, download-external-resources, the OPF rewrite, cover. A bindery-side
+  book-metadata write-back is also declined. The planned EPUB 2 to EPUB 3 upgrade
+  lane (roadmap.md, the 2.0 program) is neither of those: it is EPUB-to-EPUB
+  migration by bindery's own gated transforms, and its charter amendment lands with
+  its first flag.
+- **Non-goals kept with reasons.** ToC synthesis is out of the repair charter
+  permanently (`tocdrift` is detector-only). Bulk RSC-005 repair is rejected;
+  narrowly bounded sub-cases stay opt-in under their own flags. No spine-item
+  manifest pruning, because missing spine documents mean a corrupt archive or
+  broken fragments. No text deletion in anchor unwrapping: character conservation is
+  absolute. No auto-split of monolithic documents and no auto-trim of bloated ToCs
+  (flag, and re-source). No repair of corrupt archive entries (re-source). No PDF or
+  DJVU work. `--add-img-alt` stays opt-in, because `alt=""` asserts "decorative".
+  `defusedxml` stays declined: `_safe_xml_parse` delivers the entity protection,
+  and the vendored-plugin cost was the objection. The plugin never gates on
+  epubcheck. bindery has no manifest format ownership (CalibreQuarry owns
+  `acquisition-manifest` and the orchestration).
+- **A documented caveat is kept, not hidden (2026-11-04).** `--strip-presentational-attrs`
+  changes rendering in readers that honor presentational hints. The flag ships with
+  that caveat stated in its reference text, by the maintainer's decision.

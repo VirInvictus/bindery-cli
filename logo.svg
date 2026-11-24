@@ -1,15 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="bindery-cli logo">
   <rect width="128" height="128" rx="24" fill="#181616"/>
-  <!-- book spine / cover being rebound -->
-  <rect x="30" y="26" width="68" height="76" rx="5" fill="none" stroke="#c5c9c5" stroke-width="5"/>
-  <line x1="46" y1="26" x2="46" y2="102" stroke="#c5c9c5" stroke-width="4"/>
-  <!-- binding stitches down the spine -->
-  <g stroke="#8a9a7b" stroke-width="4" stroke-linecap="round">
-    <line x1="38" y1="40" x2="38" y2="50"/>
-    <line x1="38" y1="60" x2="38" y2="70"/>
-    <line x1="38" y1="80" x2="38" y2="90"/>
-  </g>
-  <!-- a torn page line, mended -->
-  <path d="M62 44 l18 8 l-16 10 l18 8 l-16 10" fill="none" stroke="#c4746e" stroke-width="4"
-        stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- an open book, seen from the front -->
+  <path d="M64 38 C55 29 39 27 27 31 L27 93 C39 89 55 91 64 100 C73 91 89 89 101 93 L101 31 C89 27 73 29 64 38 Z"
+        fill="none" stroke="#c5c9c5" stroke-width="7" stroke-linejoin="round"/>
+  <!-- the thread sewn down the gutter, and three stitches across it -->
+  <path d="M64 39 V99" fill="none" stroke="#c4b28a" stroke-width="4" stroke-linecap="round"/>
+  <path d="M53 53 H75 M53 69 H75 M53 85 H75" fill="none" stroke="#c4b28a" stroke-width="5" stroke-linecap="round"/>
 </svg>

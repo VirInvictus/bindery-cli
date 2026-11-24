@@ -3,7 +3,7 @@
 The repair side: an always-on core of five well-formedness fixes plus the NCX
 pipeline and the mimetype fix, with the structural repairs, the four lossy
 strips (page numbers, broken tags, watermarks, stub documents), and the safe opt-ins behind
-explicit flags. Around it: the read-only `audit` verb (nine body-text and
+explicit flags. Around it: the read-only `audit` verb (ten body-text and
 structural analyzers), the read-only `observe` census (one warm-JVM whole-library pass writing a versioned `.observe` artifact), the `library` sweep with atomic in-place replacement in a Calibre
 library, the `run phase1`/`phase3` acquisition slices, and the Bindery Repair
 Calibre plugin built from this core.
@@ -11,7 +11,7 @@ Calibre plugin built from this core.
 Single source of truth for the version. pyproject.toml must match VERSION below.
 """
 
-VERSION = "1.2.8"
+VERSION = "1.2.9"
 __version__ = VERSION
 
 from .epub import RepairReport, repair_epub  # noqa: E402
