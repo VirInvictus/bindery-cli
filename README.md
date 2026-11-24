@@ -475,7 +475,8 @@ but fall outside the repair contract:
 
 The suite builds its own synthetic EPUBs and needs no Calibre library. The contract is
 [spec.md](spec.md); programmer-facing rules, decisions, and the module map are in
-[AGENTS.md](AGENTS.md); [roadmap.md](roadmap.md) holds the plan.
+[AGENTS.md](AGENTS.md); [roadmap.md](roadmap.md) holds the plan. Setup and the
+ground rules for changes are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Reference pages: [docs/repairs.md](docs/repairs.md) for every opt-in flag,
 [docs/audits.md](docs/audits.md) for the audit analyzers, and

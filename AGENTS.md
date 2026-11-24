@@ -36,6 +36,9 @@ runs `python -m oceanstrip` is dead.
   archives, not living documentation).
 - **AGENTS.md** (this file) carries programmer-facing rules, decisions, and
   constraints only. Version narratives do not belong here either.
+- **CONTRIBUTING.md** is the short contributor guide: setup, where the rules
+  live, how to report a bug. It states no rule that spec.md and this file do
+  not carry, so when a rule changes, those two change first.
 
 When the code and a documented rule disagree, the documentation states what the code
 does and the gap gets an issue. Never leave a rule in the docs that the code does not
